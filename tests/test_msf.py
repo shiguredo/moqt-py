@@ -732,6 +732,28 @@ def test_delta_update_rejects_a_clone_of_a_missing_parent() -> None:
         catalog.apply_delta_update(delta)
 
 
+def test_delta_update_rejects_a_clone_with_an_invalid_language() -> None:
+    """
+    複製で再定義した言語タグが BCP 47 に反する場合の適用を拒否することを確認する。
+
+    draft-ietf-moq-msf-01 §5.2.32 (Language): lang は BCP 47 言語タグでなければ
+    ならない (MUST)。親から継承した値だけでなく複製で再定義した値も検証される。
+    拒否された更新はカタログを変更しない。
+    """
+    catalog = Catalog()
+    catalog.add_track(Track("video", "loc", True))
+    clone = CloneTrack("video-low", "video")
+    # プライマリ言語サブタグに使えない `_` を含む不正な言語タグ
+    clone.lang = "ja_JP"
+    delta = DeltaUpdate()
+    delta.clone_tracks([clone])
+
+    with pytest.raises(ValueError, match="invalid language tag 'ja_JP'"):
+        catalog.apply_delta_update(delta)
+
+    assert [track["name"] for track in catalog.tracks] == ["video"]
+
+
 def test_delta_update_rejects_an_add_to_a_complete_catalog() -> None:
     """
     isComplete が真のカタログへのトラック追加を拒否することを確認する。
