@@ -16,8 +16,7 @@ from moqt.moq import (
     Fetch,
     MoqtObject,
     PeerGoaway,
-    Server,
-    ServerSession,
+    Publication,
     Subscription,
 )
 from moqt.moq._runtime import (
@@ -25,14 +24,18 @@ from moqt.moq._runtime import (
     MoqtError,
     Runtime,
 )
-from moqt.moq.server import (
+from moqt.moq.testing import (
+    ClientFactory,
     FetchRequest,
     FetchResponse,
-    Publication,
+    MoqPair,
     PublisherRequest,
+    Server,
+    ServerSession,
     SubscriptionRequest,
+    collect_objects,
+    wait_until,
 )
-from moqt.moq.testing import ClientFactory, MoqPair, collect_objects, wait_until
 
 # テストで使う Track
 NAMESPACE = [b"moqt-py", b"test"]
@@ -1432,8 +1435,8 @@ def test_high_level_names_are_exported_from_moqt_moq() -> None:
     """
     `moqt.moq` の `__all__` に挙げた名前がすべて取り出せることを確認する。
 
-    利用者が `moqt.moq.client` や `moqt.moq.server` ではなく `moqt.moq` から
-    import できることを検証する。
+    利用者が `moqt.moq.client` ではなく `moqt.moq` から import できることを
+    検証する。
     """
     package = importlib.import_module("moqt.moq")
     for name in package.__all__:

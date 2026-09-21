@@ -1,6 +1,6 @@
 """MOQT セッションと WebTransport ストリームを接続する内部ランタイム。
 
-このモジュールは公開 API ではない。`moqt.moq.client` と `moqt.moq.server` が
+このモジュールは公開 API ではない。`moqt.moq.client` と `moqt.moq.testing.server` が
 共通で使うストリーム振り分けとイベント処理をまとめる。
 
 役割分担は次のとおりである。

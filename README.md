@@ -19,8 +19,10 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 moqt-py は Media over QUIC Transport (MOQT) を扱う Python ライブラリです。中継 (relay) は含みません。API は 2 層に分かれています。
 
-- `moqt.moq`: WebTransport 上で MOQT セッションを扱う高レベル API (client / server)
+- `moqt.moq`: WebTransport 上で MOQT セッションを扱う client
 - `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT の codec と sans I/O セッション状態機械、LOC と MSF の codec を直接扱う低レベル API
+
+他プロジェクトの E2E テストから使う server と pytest fixture は `moqt.moq.testing` が提供します。`moqt.moq` は client のみを公開します。
 
 実装には次のライブラリを利用しています。
 
@@ -58,10 +60,10 @@ uv add moqt-py
 
 ## 使い方 (高レベル API)
 
-`moqt.moq` が提供する高レベル API です。WebTransport の接続と MOQT セッションをまとめて扱います。
+`moqt.moq` が提供する client API です。WebTransport の接続と MOQT セッションをまとめて扱います。
 
-- `moqt.moq.Client` で MOQT セッションを張り、`moqt.moq.Server` で受けます
-- `moqt.moq.testing` で他プロジェクトのテストから client と server の組を用意できます
+- `moqt.moq.Client` で MOQT セッションを張ります
+- E2E テストで使う server と、client と server の組を用意する fixture は `moqt.moq.testing` が提供します
 - 低レベル API は [moqt.moqt](#moqtmoqt) / [moqt.loc](#moqtloc) / [moqt.msf](#moqtmsf) を参照してください
 
 ### client
@@ -89,42 +91,19 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### server
+Track を配信する場合は `Client.publish` で `Publication` を作ります。
 
 ```python
-import asyncio
-
-from moqt.moq import Server
-from moqt.moq.server import SubscriptionRequest
-
-
-async def main() -> None:
-    server = Server(
-        host="127.0.0.1",
-        port=4433,
-        certfile="cert.pem",
-        keyfile="key.pem",
-    )
-
-    async def on_subscribe(request: SubscriptionRequest) -> None:
-        # SUBSCRIBE_OK を返して配信を開始する
-        publication = await request.subscribe_ok(1)
-        await publication.send_object(0, 0, b"hello")
-        await publication.close()
-
-    server.on_subscribe(on_subscribe)
-    await server.start()
-    await server.run()
-
-
-asyncio.run(main())
+publication = await client.publish([b"moqt-py", b"test"], b"video", 1)
+await publication.send_object(0, 0, b"payload")
+await publication.close()
 ```
 
-`certfile` と `keyfile` には WebTransport のサーバー証明書を指定します。開発用の自己署名証明書は `moqt.moq.testing.generate_certificates` が `cert.pem` と `key.pem` を書き出します (`moqt-py[testing]` が必要です)。
+送信の詳細は [オブジェクトの送信](#オブジェクトの送信) を参照してください。
 
 ### オブジェクトの送信
 
-`Publication.send_object` は subgroup ストリームで、`Publication.send_datagram` はデータグラムで送ります。Subgroup ID のモードは Group ごとに固定されるため、モードを変えるときは Group を分けます (draft-ietf-moq-transport-21 §11.3.1)。
+`Client.publish` や `moqt.moq.testing` の `subscribe_ok` が返す `Publication` からオブジェクトを送ります。`Publication.send_object` は subgroup ストリームで、`Publication.send_datagram` はデータグラムで送ります。Subgroup ID のモードは Group ごとに固定されるため、モードを変えるときは Group を分けます (draft-ietf-moq-transport-21 §11.3.1)。
 
 ```python
 from moqt import moqt
@@ -163,6 +142,8 @@ await publication.send_datagram(5, 0, b"datagram payload")
 
 ### moqt.moq.testing
 
+E2E テスト向けの server と pytest fixture です。`moqt.moq` は client のみを公開するため、client の相手役となる `Server` はここにあります。
+
 pytest の rootdir に置いた `conftest.py` で宣言すると、client と server の組を用意する fixture が使えます。
 
 ```python
@@ -170,8 +151,8 @@ pytest_plugins = ["moqt.moq.testing"]
 ```
 
 ```python
-from moqt.moq.server import Publication, SubscriptionRequest
-from moqt.moq.testing import MoqPair, collect_objects, wait_until
+from moqt.moq import Publication
+from moqt.moq.testing import MoqPair, SubscriptionRequest, collect_objects, wait_until
 
 
 async def test_objects_are_delivered(moq_pair: MoqPair) -> None:
@@ -190,6 +171,38 @@ async def test_objects_are_delivered(moq_pair: MoqPair) -> None:
     received = await collect_objects(subscription.objects(), 1, 5.0)
     assert received[0].payload == b"hello"
 ```
+
+fixture を使わずに `Server` を直接起動することもできます。
+
+```python
+import asyncio
+
+from moqt.moq.testing import Server, SubscriptionRequest
+
+
+async def main() -> None:
+    server = Server(
+        host="127.0.0.1",
+        port=4433,
+        certfile="cert.pem",
+        keyfile="key.pem",
+    )
+
+    async def on_subscribe(request: SubscriptionRequest) -> None:
+        # SUBSCRIBE_OK を返して配信を開始する
+        publication = await request.subscribe_ok(1)
+        await publication.send_object(0, 0, b"hello")
+        await publication.close()
+
+    server.on_subscribe(on_subscribe)
+    await server.start()
+    await server.run()
+
+
+asyncio.run(main())
+```
+
+`certfile` と `keyfile` には WebTransport のサーバー証明書を指定します。開発用の自己署名証明書は `generate_certificates` が `cert.pem` と `key.pem` を書き出します。
 
 `moqt.moq.testing` は `pytest` / `pytest-asyncio` / `cryptography` を使います。非同期のテストを実行するため、`pyproject.toml` で `asyncio_mode = "auto"` を設定するか、テストに `@pytest.mark.asyncio` を付けます。
 

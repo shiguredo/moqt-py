@@ -1,4 +1,4 @@
-"""WebTransport 接続上で MOQT セッションを扱う高レベル API。
+"""WebTransport 接続上で MOQT セッションを扱う client。
 
 `webtransport-py` の asyncio API が WebTransport over HTTP/3 の I/O を担当し、
 `moqt._native` の MOQT 状態機械と接続する。下位層である `moqt.moqt` の codec や
@@ -7,14 +7,13 @@ sans I/O 状態機械を直接扱う必要はない。
 公開 API:
 
 - `Client`: WebTransport 接続を張って MOQT セッションを開始する
-- `Server`: WebTransport 接続を受け入れて MOQT セッションを開始する
 - `Subscription` / `Fetch` / `TrackStatus`: client 側の要求
-- `Publication`: 配信中の Track。client と server の両方から使う
-- `SubscriptionRequest` / `FetchRequest` / `PublisherRequest`: server 側の応答
-- `moqt.moq.testing`: 他プロジェクトのテストから使う pytest fixture 群
+- `Publication`: 配信中の Track
+- `MoqtObject`: 受信したオブジェクト
+- `PeerGoaway`: peer から受信した GOAWAY
 
-`moqt.moq.testing` は `pytest` と `cryptography` を必要とするため、このモジュール
-からは再輸出しない。`from moqt.moq import testing` のように明示して取り出す。
+server は公開しない。E2E テストで client の相手役として使う server と pytest
+fixture は `moqt.moq.testing` が提供する。
 
 relay は含まない。MOQT は draft 由来であり、将来の改訂で変更される可能性がある。
 """
@@ -27,15 +26,7 @@ from moqt.moq.client import (
     Subscription,
     TrackStatus,
 )
-from moqt.moq.server import (
-    FetchRequest,
-    FetchResponse,
-    Publication,
-    PublisherRequest,
-    Server,
-    ServerSession,
-    SubscriptionRequest,
-)
+from moqt.moq.publisher import Publication
 
 # Subgroup Header の Subgroup ID エンコードモード。
 # `Publication.send_object` の `subgroup_id_mode` に渡す
@@ -50,15 +41,9 @@ __all__ = [
     "SUBGROUP_ID_MODE_ZERO",
     "Client",
     "Fetch",
-    "FetchRequest",
-    "FetchResponse",
     "MoqtObject",
     "PeerGoaway",
     "Publication",
-    "PublisherRequest",
-    "Server",
-    "ServerSession",
     "Subscription",
-    "SubscriptionRequest",
     "TrackStatus",
 ]

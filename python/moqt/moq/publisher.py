@@ -1,7 +1,7 @@
 """Track を配信する側の公開 API。
 
 SUBSCRIBE_OK で確立した配信と、PUBLISH で確立した配信の両方を扱う。
-`moqt.moq.server` と `moqt.moq.client` が同じ形で参照する。
+`moqt.moq.client` と `moqt.moq.testing.server` が同じ形で参照する。
 
 `_runtime` だけに依存し、client / server のどちらからも読み込めるようにする。
 """

@@ -1,4 +1,8 @@
-"""他プロジェクトのテストから moqt-py を使うための pytest fixture 群。
+"""E2E テスト向けの MOQT server と pytest fixture 群。
+
+``moqt.moq`` は client のみを公開する。server は E2E テストで client の相手役として
+だけ使うため、このパッケージに置く。``Server`` とサーバー側の型は
+:mod:`moqt.moq.testing.server` が定義し、このモジュールからも取り出せる。
 
 ``conftest.py`` (pytest の rootdir に置くもの) で次のように宣言すると使える。
 
@@ -35,7 +39,14 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from moqt.moq.client import Client
-from moqt.moq.server import Server, ServerSession
+from moqt.moq.testing.server import (
+    FetchRequest,
+    FetchResponse,
+    PublisherRequest,
+    Server,
+    ServerSession,
+    SubscriptionRequest,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -263,7 +274,13 @@ async def moq_pair(
 __all__ = [
     "DEFAULT_TIMEOUT",
     "ClientFactory",
+    "FetchRequest",
+    "FetchResponse",
     "MoqPair",
+    "PublisherRequest",
+    "Server",
+    "ServerSession",
+    "SubscriptionRequest",
     "collect_objects",
     "generate_certificates",
     "moq_certificates",

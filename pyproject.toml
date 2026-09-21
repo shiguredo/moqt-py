@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 他プロジェクトのテストから moqt.moq.testing の fixture を使うための依存
+# 他プロジェクトのテストから moqt.moq.testing の server と fixture を使うための依存
 testing = [
   # moqt.moq.testing の pytest fixture
   "pytest>=9.0,<10",
