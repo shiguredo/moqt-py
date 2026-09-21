@@ -39,3 +39,10 @@ moqt-py 自身の suite も `moq_transport` fixture の上書きで QUIC を回�
 ## 完了条件
 
 - QUIC 直接接続で E2E テスト (SETUP / SUBSCRIBE / オブジェクト送受信 / データグラム) が通ること
+
+## pending にする理由
+
+webtransport-py の `quic.Server` にストリームの reset / STOP_SENDING / 接続 close を
+送る API が無く、moqt-py だけでは MOQT の server 役を実装できない。
+
+webtransport-py が対応した時点で reopened にして対応する。
