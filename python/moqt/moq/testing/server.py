@@ -13,7 +13,7 @@ from moqt import moqt
 from moqt.moq._runtime import (
     TICK_INTERVAL,
     MessageBody,
-    MoqtError,
+    MOQTError,
     NativeEvent,
     Runtime,
     RuntimeEvents,
@@ -52,7 +52,7 @@ class ServerSession:
 
         `new_session_uri` は移行先のセッション URI である。Server はこれで移行先を
         通知でき、Client は空の URI しか送れない。`MAX_NEW_SESSION_URI_LENGTH` を
-        超える値は送信せずに `MoqtError` になる
+        超える値は送信せずに `MOQTError` になる
         (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
         """
         await self.runtime.send_goaway(timeout, new_session_uri)
@@ -275,12 +275,12 @@ class FetchResponse:
         """fetch stream へオブジェクトを書き込む。
 
         オブジェクトは `GROUP_ORDER` で要求された向きの順に送る。逆向きの Group を
-        送ろうとすると `MoqtError` になる
+        送ろうとすると `MOQTError` になる
         (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない
-        場合は `MoqtError` になる
+        場合は `MOQTError` になる
         (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
 
         `datagram_origin` を真にすると、もともとデータグラムで届いたオブジェクトで
@@ -563,7 +563,7 @@ class Server:
 
         async def open_bidi_stream() -> int:
             # WebTransport は server 起点の双方向ストリームを規定していない
-            raise MoqtError(
+            raise MOQTError(
                 "the server cannot open a bidirectional stream; "
                 "server-initiated requests are not available over WebTransport"
             )

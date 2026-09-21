@@ -17,17 +17,16 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## moqt-py について
 
-moqt-py は Media over QUIC Transport (MOQT) を扱う Python ライブラリです。中継 (relay) は含みません。API は 2 層に分かれています。
+moqt-py は Media over QUIC Transport (MOQT) のクライアントライブラリです。本体は MOQT / LOC / MSF の codec と sans I/O セッション状態機械です。
 
-- `moqt.moq`: WebTransport 上で MOQT セッションを扱う client
-- `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT の codec と sans I/O セッション状態機械、LOC と MSF の codec を直接扱う低レベル API
-
-他プロジェクトの E2E テストから使う server と pytest fixture は `moqt.moq.testing` が提供します。`moqt.moq` は client のみを公開します。
+- `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT / LOC / MSF の codec と sans I/O セッション状態機械
+- `moqt.moq`: QUIC、WebTransport over HTTP/2 (WT-H2)、WebTransport over HTTP/3 (WT-H3) で接続する MOQT クライアント
+- `moqt.moq.testing`: server と pytest fixture
 
 実装には次のライブラリを利用しています。
 
 - MOQT の codec とセッション状態機械、LOC と MSF の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
-- WebTransport over HTTP/3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
+- QUIC / WT-H2 / WT-H3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
 
 ## 対応仕様
 
@@ -60,13 +59,34 @@ uv add moqt-py
 
 ## 使い方 (高レベル API)
 
-`moqt.moq` が提供する client API です。WebTransport の接続と MOQT セッションをまとめて扱います。
+`moqt.moq` が提供する client API です。
 
 - `moqt.moq.Client` で MOQT セッションを張ります
-- E2E テストで使う server と、client と server の組を用意する fixture は `moqt.moq.testing` が提供します
 - 低レベル API は [moqt.moqt](#moqtmoqt) / [moqt.loc](#moqtloc) / [moqt.msf](#moqtmsf) を参照してください
 
 ### client
+
+接続先は MOQT の URI (`moqt://host:port/path`) であり、接続方式は `transport` で選びます (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。
+
+- `Transport.Quic`: QUIC 直接接続。URI の authority、path、query を SETUP の AUTHORITY と PATH で通知し、ALPN は `moqt-21` (§6.2.2 (Native QUIC))
+- `Transport.WebTransportOverHTTP3` (省略時) / `Transport.WebTransportOverHTTP2`: WebTransport。URI のスキームを `https` に置き換えて extended CONNECT を送る (§6.2.1 (WebTransport))
+
+```python
+from moqt.moq import Client, Transport
+
+# QUIC 直接接続
+client = Client(url="moqt://127.0.0.1:4433/live", transport=Transport.Quic, verify_peer=False)
+
+# WebTransport over HTTP/3 (省略時)
+client = Client(url="moqt://127.0.0.1:4433/live", verify_peer=False)
+
+# WebTransport over HTTP/2
+client = Client(
+    url="moqt://127.0.0.1:4433/live",
+    transport=Transport.WebTransportOverHTTP2,
+    verify_peer=False,
+)
+```
 
 ```python
 import asyncio
@@ -76,7 +96,7 @@ from moqt.moq import Client
 
 async def main() -> None:
     # verify_peer=False は自己署名証明書を使う開発時の設定
-    client = Client(url="https://127.0.0.1:4433/webtransport", verify_peer=False)
+    client = Client(url="moqt://127.0.0.1:4433/webtransport", verify_peer=False)
     await client.connect()
     print(client.established)
 
@@ -134,15 +154,13 @@ await publication.send_datagram(5, 0, b"datagram payload")
 
 同じ Location のオブジェクトは subgroup とデータグラムのどちらか一方しか届きません。データグラムで送るオブジェクトには、subgroup で送ったオブジェクトと重複しない Location を選んでください。
 
-受信側では、Subgroup ID を最初の Object ID として決めるモードでも、最初のオブジェクトを受信した時点で `MoqtObject.subgroup_id` に値が入ります (draft-ietf-moq-transport-21 §11.3.1)。
+受信側では、Subgroup ID を最初の Object ID として決めるモードでも、最初のオブジェクトを受信した時点で `MOQTObject.subgroup_id` に値が入ります (draft-ietf-moq-transport-21 §11.3.1)。
 
 > [!WARNING]
 >
 > - データグラムは経路 MTU を超えると通知なく破棄され、送信側からは検知できません (draft-ietf-moq-transport-21 §11.2.1)。`moqt.moqt.MAX_DATAGRAM_SIZE` を超えるデータグラムを送ると警告を記録します。大きいオブジェクトは subgroup ストリームで送ってください
 
 ### moqt.moq.testing
-
-E2E テスト向けの server と pytest fixture です。`moqt.moq` は client のみを公開するため、client の相手役となる `Server` はここにあります。
 
 pytest の rootdir に置いた `conftest.py` で宣言すると、client と server の組を用意する fixture が使えます。
 
@@ -152,10 +170,10 @@ pytest_plugins = ["moqt.moq.testing"]
 
 ```python
 from moqt.moq import Publication
-from moqt.moq.testing import MoqPair, SubscriptionRequest, collect_objects, wait_until
+from moqt.moq.testing import MOQTPair, SubscriptionRequest, collect_objects, wait_until
 
 
-async def test_objects_are_delivered(moq_pair: MoqPair) -> None:
+async def test_objects_are_delivered(moq_pair: MOQTPair) -> None:
     """server が送ったオブジェクトを client が受け取れることを確認する。"""
     published: list[Publication] = []
 

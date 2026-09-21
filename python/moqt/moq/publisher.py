@@ -85,7 +85,7 @@ class Publication:
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない場合は
-        `MoqtError` になる。Properties の有無は subgroup ヘッダで固定されるため、
+        `MOQTError` になる。Properties の有無は subgroup ヘッダで固定されるため、
         同じ subgroup の最初のオブジェクトで決める
         (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
         """
@@ -117,14 +117,14 @@ class Publication:
 
         `publisher_priority` を省略すると DEFAULT_PRIORITY bit が立ち、購読を確立した
         制御メッセージで指定された優先度を継承する。受信側では
-        `MoqtObject.publisher_priority` が `None` になる
+        `MOQTObject.publisher_priority` が `None` になる
         (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
 
         `status` の扱いは `send_object` と同じである。
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない場合は
-        `MoqtError` になる。データグラムは Properties Length = 0 を持てず、非 Normal の
+        `MOQTError` になる。データグラムは Properties Length = 0 を持てず、非 Normal の
         `status` に Properties を付けることもできない
         (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram) / §11.1.3 (Object Properties))。
 

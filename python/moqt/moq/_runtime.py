@@ -197,11 +197,11 @@ _STREAM_REQUEST = "request"
 _STREAM_DATA = "data"
 
 
-class MoqtError(Exception):
+class MOQTError(Exception):
     """MOQT のプロトコルエラー。"""
 
 
-class SessionClosedError(MoqtError):
+class SessionClosedError(MOQTError):
     """セッションが閉じられた。"""
 
     def __init__(self, code: int, reason: str) -> None:
@@ -926,7 +926,7 @@ class Runtime:
         """開いた fetch stream へオブジェクトを書き込む。"""
         writer = self._fetch_streams.get(stream_id)
         if writer is None:
-            raise MoqtError(f"fetch stream {stream_id} is not open")
+            raise MOQTError(f"fetch stream {stream_id} is not open")
         # 状態機械へ通知する前にバイト列を組み立て、不正な組み合わせでは送信しない。
         # 宣言長と実データ長が一致しない Properties もここで拒否する
         # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
@@ -963,7 +963,7 @@ class Runtime:
         """
         writer = self._fetch_streams.get(stream_id)
         if writer is None:
-            raise MoqtError(f"fetch stream {stream_id} is not open")
+            raise MOQTError(f"fetch stream {stream_id} is not open")
         data = _encode_fetch_end_of_range(kind, group_id, object_id)
         await self._apply_events(self._core.send_fetch_object(stream_id))
         await self._ops.send_stream_data(stream_id, data, False)
@@ -1019,7 +1019,7 @@ class Runtime:
                     on_request_id(request_id)
             await self._apply_events([event])
         if request_id is None:
-            raise MoqtError("request message did not produce a send_request event")
+            raise MOQTError("request message did not produce a send_request event")
         try:
             return request_id, await pending.future
         except SessionClosedError:
@@ -1087,11 +1087,11 @@ class Runtime:
 
         `new_session_uri` は移行先のセッション URI である。Server はこれで移行先を
         通知でき、Client は空の URI しか送れない。`MAX_NEW_SESSION_URI_LENGTH` を
-        超える値は送信せずに `MoqtError` にする
+        超える値は送信せずに `MOQTError` にする
         (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
         """
         if len(new_session_uri) > moqt.MAX_NEW_SESSION_URI_LENGTH:
-            raise MoqtError(
+            raise MOQTError(
                 f"new_session_uri must be at most {moqt.MAX_NEW_SESSION_URI_LENGTH} bytes: "
                 f"got {len(new_session_uri)} bytes"
             )
@@ -1117,7 +1117,7 @@ class Runtime:
         """
         writer = self._subgroups.pop(request_id, None)
         if writer is None:
-            raise MoqtError(f"subscription {request_id} has no subgroup stream")
+            raise MOQTError(f"subscription {request_id} has no subgroup stream")
         self._local_streams.discard(writer.stream_id)
         self._streams.pop(writer.stream_id, None)
         await self._apply_events(
@@ -1133,7 +1133,7 @@ class Runtime:
         """
         writer = self._subgroups.pop(request_id, None)
         if writer is None:
-            raise MoqtError(f"subscription {request_id} has no subgroup stream")
+            raise MOQTError(f"subscription {request_id} has no subgroup stream")
         self._local_streams.discard(writer.stream_id)
         self._streams.pop(writer.stream_id, None)
         await self._apply_events(
@@ -1166,13 +1166,13 @@ class Runtime:
         `subgroup_id` を渡せば `explicit`、渡さなければ `zero` になる。
         `first_object_id` を選ぶと Subgroup ID フィールドを送らず、このストリームの
         最初の Object ID が Subgroup ID になる。モードは Group ごとに固定され、
-        同じ Group の途中で違うモードを指定すると `MoqtError` になる
+        同じ Group の途中で違うモードを指定すると `MOQTError` になる
         (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
 
         `properties_data` の有無は、そのストリームの最初のオブジェクトでヘッダの
         PROPERTIES bit に固定される
         (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。以降のオブジェクトの
-        Properties の有無がヘッダと食い違うと `MoqtError` になる。
+        Properties の有無がヘッダと食い違うと `MOQTError` になる。
         """
         mode = _resolve_subgroup_id_mode(subgroup_id, subgroup_id_mode)
         # 状態を進める前にバイト列を組み立て、不正な組み合わせでは送信も状態更新もしない
@@ -1182,14 +1182,14 @@ class Runtime:
         # ならない。食い違うオブジェクトを書くとヘッダと矛盾した wire になる
         if not opens_stream and writer.has_properties != (properties_data is not None):
             expected = "with" if writer.has_properties else "without"
-            raise MoqtError(
+            raise MOQTError(
                 f"stream for request {request_id} carries objects {expected} properties; "
                 "properties must be consistent within a subgroup"
             )
         # SUBGROUP_ID_MODE も subgroup 内で一貫していなければならない。ヘッダと
         # 食い違うモードで書くと受信側が Subgroup ID を解決できなくなる
         if not opens_stream and writer.subgroup_id_mode != mode:
-            raise MoqtError(
+            raise MOQTError(
                 f"stream for request {request_id} uses subgroup id mode "
                 f"{writer.subgroup_id_mode}; a subgroup cannot change its subgroup id mode"
             )
@@ -1310,7 +1310,7 @@ class Runtime:
         """オブジェクトデータグラムを送信する。"""
         track_alias = self._core.subscription_track_alias(request_id)
         if track_alias is None:
-            raise MoqtError(f"subscription {request_id} has no track alias")
+            raise MOQTError(f"subscription {request_id} has no track alias")
         # 状態機械がフィルタ評価に使うバイト列と wire へ書くバイト列を同一にする。
         # 宣言長と実データ長が一致しない Properties はここで拒否する
         # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
@@ -1417,7 +1417,7 @@ class Runtime:
         """制御ストリームへメッセージを書き込む。"""
         stream_id = self._local_control_stream_id
         if stream_id is None:
-            raise MoqtError("local control stream is not open")
+            raise MOQTError("local control stream is not open")
         await self._ops.send_stream_data(stream_id, _event_bytes(event, "data"), False)
 
     async def _send_request(self, event: NativeEvent, request_id: int | None) -> None:
@@ -1428,7 +1428,7 @@ class Runtime:
         # 応答メッセージは Request ID を運ばないため、ストリームとの対応を登録する
         actual_request_id = request_id if request_id is not None else event.request_id
         if actual_request_id is None:
-            raise MoqtError("send_request event without a request id")
+            raise MOQTError("send_request event without a request id")
         # 応答は Python 側から report されるため、ストリームは常に応答として扱う
         self._core.register_local_request_stream(stream_id, actual_request_id)
         self._local_streams.add(stream_id)
@@ -1444,7 +1444,7 @@ class Runtime:
         if stream_id is None:
             stream_id = self._find_incoming_request_stream(request_id)
         if stream_id is None:
-            raise MoqtError(f"no request stream for request id {request_id}")
+            raise MOQTError(f"no request stream for request id {request_id}")
         fin = bool(event.fin)
         await self._ops.send_stream_data(stream_id, _event_bytes(event, "message_data"), fin)
         if fin:
@@ -1651,7 +1651,7 @@ class Runtime:
             return
         body = event.message or {}
         pending.future.set_exception(
-            MoqtError(f"request {request_id} failed: {body.get('error_code')} {body.get('reason')}")
+            MOQTError(f"request {request_id} failed: {body.get('error_code')} {body.get('reason')}")
         )
 
     async def _handle_close(self, event: NativeEvent) -> None:
@@ -1700,9 +1700,9 @@ def _event_bytes(event: NativeEvent, key: str) -> bytes:
     elif key == "message_data":
         value = event.message_data
     else:
-        raise MoqtError(f"unknown byte attribute: {key}")
+        raise MOQTError(f"unknown byte attribute: {key}")
     if value is None:
-        raise MoqtError(f"event {event.kind} has no {key}")
+        raise MOQTError(f"event {event.kind} has no {key}")
     return value
 
 
@@ -1710,10 +1710,10 @@ def _message_int(event: NativeEvent, key: str) -> int:
     """イベントのメッセージ本体から整数を取り出す。"""
     body = event.message
     if body is None:
-        raise MoqtError(f"event {event.kind} has no message body")
+        raise MOQTError(f"event {event.kind} has no message body")
     value = body.get(key)
     if not isinstance(value, int):
-        raise MoqtError(f"event {event.kind} has no integer field {key}")
+        raise MOQTError(f"event {event.kind} has no integer field {key}")
     return value
 
 
@@ -1748,24 +1748,24 @@ def _resolve_subgroup_id_mode(subgroup_id: int | None, subgroup_id_mode: str | N
     """Subgroup ID のエンコードモードを確定する。
 
     モードを省略した場合は `subgroup_id` の有無から決める。モードと `subgroup_id` の
-    組み合わせが不正な場合は `MoqtError` を送出する
+    組み合わせが不正な場合は `MOQTError` を送出する
     (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
     """
     if subgroup_id_mode is None:
         return SUBGROUP_ID_MODE_EXPLICIT if subgroup_id is not None else SUBGROUP_ID_MODE_ZERO
     if subgroup_id_mode == SUBGROUP_ID_MODE_ZERO:
         if subgroup_id is not None:
-            raise MoqtError("subgroup id must be omitted when the mode is zero")
+            raise MOQTError("subgroup id must be omitted when the mode is zero")
         return subgroup_id_mode
     if subgroup_id_mode == SUBGROUP_ID_MODE_FIRST_OBJECT_ID:
         if subgroup_id is not None:
-            raise MoqtError("subgroup id must be omitted when the mode is first_object_id")
+            raise MOQTError("subgroup id must be omitted when the mode is first_object_id")
         return subgroup_id_mode
     if subgroup_id_mode == SUBGROUP_ID_MODE_EXPLICIT:
         if subgroup_id is None:
-            raise MoqtError("subgroup id is required when the mode is explicit")
+            raise MOQTError("subgroup id is required when the mode is explicit")
         return subgroup_id_mode
-    raise MoqtError(f"unknown subgroup id mode: {subgroup_id_mode}")
+    raise MOQTError(f"unknown subgroup id mode: {subgroup_id_mode}")
 
 
 def _subgroup_type_byte(
@@ -1825,7 +1825,7 @@ def _encode_subgroup_header(
     header += moqt.encode_varint(group_id)
     if subgroup_id_mode == SUBGROUP_ID_MODE_EXPLICIT:
         if subgroup_id is None:
-            raise MoqtError("explicit subgroup id mode requires a subgroup id")
+            raise MOQTError("explicit subgroup id mode requires a subgroup id")
         header += moqt.encode_varint(subgroup_id)
     if publisher_priority is not None:
         header.append(publisher_priority)
@@ -1927,7 +1927,7 @@ def _encode_fetch_end_of_range(kind: str, group_id: int, object_id: int) -> byte
     """
     flags = _FETCH_END_OF_RANGE_FLAGS.get(kind)
     if flags is None:
-        raise MoqtError(f"unknown end of range kind: {kind}")
+        raise MOQTError(f"unknown end of range kind: {kind}")
     data = bytearray()
     data += moqt.encode_varint(flags)
     data += moqt.encode_varint(group_id)
@@ -1941,18 +1941,18 @@ def _fetch_group_id_delta(group_order: int, previous_group_id: int, group_id: in
     Group Order の向きに従い、Ascending では `今回 - 前回 - 1`、Descending では
     `前回 - 今回 - 1` になる
     (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
-    要求と同じ向きで進まない Group は差分で表現できないため `MoqtError` にする。
+    要求と同じ向きで進まない Group は差分で表現できないため `MOQTError` にする。
     この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     """
     if group_order == GROUP_ORDER_DESCENDING:
         if group_id >= previous_group_id:
-            raise MoqtError(
+            raise MOQTError(
                 f"fetch stream with a descending group order cannot send group {group_id} "
                 f"after group {previous_group_id}"
             )
         return previous_group_id - group_id - 1
     if group_id <= previous_group_id:
-        raise MoqtError(
+        raise MOQTError(
             f"fetch stream with an ascending group order cannot send group {group_id} "
             f"after group {previous_group_id}"
         )
@@ -1976,10 +1976,10 @@ def _object_status_to_write(status: int | None, payload: bytes) -> int | None:
         moqt.OBJECT_STATUS_END_OF_GROUP,
         moqt.OBJECT_STATUS_END_OF_TRACK,
     ):
-        raise MoqtError(f"unknown object status: {status:#x}")
+        raise MOQTError(f"unknown object status: {status:#x}")
     if payload:
         if status != moqt.OBJECT_STATUS_NORMAL:
-            raise MoqtError(
+            raise MOQTError(
                 f"object status {status:#x} requires an empty payload, got {len(payload)} bytes"
             )
         # Normal は非 0 長のオブジェクトでは暗黙でありフィールドを書かない
@@ -2002,10 +2002,10 @@ def _properties_content(properties_data: bytes) -> bytes:
         length, consumed = moqt.decode_varint(properties_data)
     except ValueError as error:
         # 空のブロックや途中で切れた Properties Length もここで拒否する
-        raise MoqtError(f"properties length is malformed: {error}") from error
+        raise MOQTError(f"properties length is malformed: {error}") from error
     actual = len(properties_data) - consumed
     if length != actual:
-        raise MoqtError(
+        raise MOQTError(
             f"properties length {length} does not match the actual data length {actual}"
         )
     return properties_data[consumed:]
@@ -2016,7 +2016,7 @@ def _properties_blob(properties_data: bytes) -> bytes:
 
     状態機械へ渡すバイト列と wire へ書くバイト列を同じにするために使う。
     渡す値は `Properties Length` を含む生バイト列でなければならず、宣言長と
-    実データ長が一致しない場合は `MoqtError` になる
+    実データ長が一致しない場合は `MOQTError` になる
     (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
     """
     content = _properties_content(properties_data)
@@ -2073,26 +2073,26 @@ def _encode_object_datagram(
     `properties_bytes` は `Properties Length | Key-Value-Pairs` の形である。
     省略した場合は Properties を書かない。
 
-    draft の MUST に反する組み合わせは wire を組み立てる前に `MoqtError` で拒否する。
+    draft の MUST に反する組み合わせは wire を組み立てる前に `MOQTError` で拒否する。
     この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     """
     written = _object_status_to_write(status, payload)
     # STATUS と END_OF_GROUP を同時に指定すると無効な Type 値になる
     # (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
     if written is not None and end_of_group:
-        raise MoqtError("STATUS and END_OF_GROUP cannot both be set")
+        raise MOQTError("STATUS and END_OF_GROUP cannot both be set")
     if properties_bytes is not None:
         length, _ = moqt.decode_varint(properties_bytes)
         # データグラムは Properties Length = 0 を持てない。Properties を付けるなら
         # 1 バイト以上の内容が要る (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
         if length == 0:
-            raise MoqtError(
+            raise MOQTError(
                 "datagram properties length 0 is invalid when the PROPERTIES bit is set"
             )
         # 非 Normal status のオブジェクトは Properties を持てない
         # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
         if written is not None and written != moqt.OBJECT_STATUS_NORMAL:
-            raise MoqtError("properties on non-Normal status object is not allowed")
+            raise MOQTError("properties on non-Normal status object is not allowed")
     type_byte = 0x00
     if properties_bytes is not None:
         type_byte |= 0x01

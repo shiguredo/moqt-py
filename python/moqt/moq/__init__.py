@@ -6,10 +6,11 @@ sans I/O 状態機械を直接扱う必要はない。
 
 公開 API:
 
-- `Client`: WebTransport 接続を張って MOQT セッションを開始する
+- `Client`: 接続を張って MOQT セッションを開始する
+- `Transport`: 接続方式 (QUIC / WebTransport over HTTP/2 / WebTransport over HTTP/3)
 - `Subscription` / `Fetch` / `TrackStatus`: client 側の要求
 - `Publication`: 配信中の Track
-- `MoqtObject`: 受信したオブジェクト
+- `MOQTObject`: 受信したオブジェクト
 - `PeerGoaway`: peer から受信した GOAWAY
 
 server は公開しない。E2E テストで client の相手役として使う server と pytest
@@ -21,12 +22,13 @@ relay は含まない。MOQT は draft 由来であり、将来の改訂で変�
 from moqt.moq.client import (
     Client,
     Fetch,
-    MoqtObject,
+    MOQTObject,
     PeerGoaway,
     Subscription,
     TrackStatus,
 )
 from moqt.moq.publisher import Publication
+from moqt.moq.transport import Transport
 
 # Subgroup Header の Subgroup ID エンコードモード。
 # `Publication.send_object` の `subgroup_id_mode` に渡す
@@ -41,9 +43,10 @@ __all__ = [
     "SUBGROUP_ID_MODE_ZERO",
     "Client",
     "Fetch",
-    "MoqtObject",
+    "MOQTObject",
     "PeerGoaway",
     "Publication",
     "Subscription",
     "TrackStatus",
+    "Transport",
 ]

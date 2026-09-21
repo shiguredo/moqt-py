@@ -84,7 +84,7 @@ class ClientFactory(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class MoqPair:
+class MOQTPair:
     """接続済みの client / server の組。"""
 
     client: Client
@@ -233,7 +233,7 @@ async def moq_client_factory(moq_server: Server) -> AsyncIterator[ClientFactory]
         control_message_timeout: float | None = None,
         data_stream_timeout: float | None = None,
     ) -> Client:
-        target = url or f"https://127.0.0.1:{moq_server.actual_port}/webtransport"
+        target = url or f"moqt://127.0.0.1:{moq_server.actual_port}/webtransport"
         client = Client(
             url=target,
             verify_peer=verify_peer,
@@ -256,7 +256,7 @@ async def moq_client_factory(moq_server: Server) -> AsyncIterator[ClientFactory]
 async def moq_pair(
     moq_server: Server,
     moq_client_factory: ClientFactory,
-) -> AsyncIterator[MoqPair]:
+) -> AsyncIterator[MOQTPair]:
     """WebTransport で接続し、MOQT SETUP まで終えた client / server の組を返す。"""
     established: list[ServerSession] = []
     established_event = asyncio.Event()
@@ -268,7 +268,7 @@ async def moq_pair(
     moq_server.on_session_established(on_session_established)
     client = await moq_client_factory()
     await asyncio.wait_for(established_event.wait(), timeout=DEFAULT_TIMEOUT)
-    yield MoqPair(client=client, server=moq_server, session=established[0])
+    yield MOQTPair(client=client, server=moq_server, session=established[0])
 
 
 __all__ = [
@@ -276,7 +276,7 @@ __all__ = [
     "ClientFactory",
     "FetchRequest",
     "FetchResponse",
-    "MoqPair",
+    "MOQTPair",
     "PublisherRequest",
     "Server",
     "ServerSession",

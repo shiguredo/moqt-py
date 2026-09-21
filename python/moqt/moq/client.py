@@ -1,4 +1,4 @@
-"""WebTransport over HTTP/3 を利用する MOQT client。"""
+"""QUIC / WebTransport を利用する MOQT client。"""
 
 import asyncio
 import contextlib
@@ -6,19 +6,22 @@ import logging
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
-from webtransport import h3
+from webtransport import h2, h3, quic
 
+from moqt import moqt
 from moqt.moq._runtime import (
     TICK_INTERVAL,
     MessageBody,
-    MoqtError,
+    MOQTError,
     NativeEvent,
     Runtime,
     RuntimeEvents,
     TransportOps,
 )
 from moqt.moq.publisher import Publication
+from moqt.moq.transport import MOQT_PROTOCOL, Transport
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -41,6 +44,66 @@ MAX_PENDING_TERMINATIONS = 64
 
 
 @dataclass(frozen=True, slots=True)
+class _Target:
+    """パース済みの接続先。"""
+
+    authority: str
+    host: str
+    port: int
+    path: str
+
+
+def _parse_target(url: str) -> _Target:
+    """MOQT の URL を接続先へ分解する。
+
+    MOQT の URI は `moqt://` であり、接続方式とは独立である
+    (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。path には query を
+    `?` で連結し、path が空の場合は `/` にする (§9.1.2 (PATH))。
+    """
+    parsed = urlsplit(url)
+    if parsed.scheme != "moqt":
+        raise ValueError(f"unsupported URL scheme: {url} (use moqt://)")
+    host = parsed.hostname
+    if not parsed.netloc or host is None:
+        raise ValueError(f"URL requires an authority: {url}")
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    port = parsed.port if parsed.port is not None else 443
+    return _Target(authority=parsed.netloc, host=host, port=port, path=path)
+
+
+def _create_transport(
+    transport: Transport,
+    target: _Target,
+    *,
+    verify_peer: bool,
+    origin: str,
+    ca_file: str | None,
+) -> h2.Client | h3.Client | quic.Client:
+    """接続方式に応じた webtransport-py のクライアントを作る。"""
+    if transport is Transport.Quic:
+        # 直接 QUIC 接続では MOQT の ALPN を提示する
+        # (draft-ietf-moq-transport-21 §6.2 (Session establishment))。
+        return quic.Client(
+            host=target.host,
+            port=target.port,
+            alpn_protocols=[MOQT_PROTOCOL],
+            verify_peer=verify_peer,
+            ca_file=ca_file,
+        )
+    # WebTransport では moqt URI のスキームを https に置き換えた URI へ
+    # extended CONNECT を送る (draft-ietf-moq-transport-21 §6.2.1 (WebTransport))。
+    https_url = f"https://{target.authority}{target.path}"
+    if transport is Transport.WebTransportOverHTTP2:
+        # webtransport-py の h2 client は ca_file を受け取らない
+        if ca_file is not None:
+            raise ValueError("ca_file is not supported for WebTransport over HTTP/2")
+        return h2.Client(url=https_url, verify_peer=verify_peer, origin=origin)
+    return h3.Client(url=https_url, verify_peer=verify_peer, origin=origin, ca_file=ca_file)
+
+
+@dataclass(frozen=True, slots=True)
 class PeerGoaway:
     """peer から受信した GOAWAY。"""
 
@@ -52,7 +115,7 @@ class PeerGoaway:
 
 
 @dataclass(slots=True)
-class MoqtObject:
+class MOQTObject:
     """受信した MOQT オブジェクト。"""
 
     stream_id: int | None
@@ -137,10 +200,10 @@ class Subscription:
     (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
     """
 
-    _objects: asyncio.Queue[MoqtObject | None] = field(default_factory=asyncio.Queue)
+    _objects: asyncio.Queue[MOQTObject | None] = field(default_factory=asyncio.Queue)
     _runtime: Runtime | None = None
 
-    async def objects(self) -> AsyncIterator[MoqtObject]:
+    async def objects(self) -> AsyncIterator[MOQTObject]:
         """受信したオブジェクトを順に返す。
 
         subscription が終了すると反復も終わる。
@@ -164,10 +227,10 @@ class Subscription:
         """
         runtime = self._runtime
         if runtime is None:
-            raise MoqtError("subscription has no runtime")
+            raise MOQTError("subscription has no runtime")
         await runtime.send_request_update(self.request_id, parameters)
 
-    def _push(self, item: MoqtObject) -> None:
+    def _push(self, item: MOQTObject) -> None:
         """受信したオブジェクトをキューへ積む。"""
         self._objects.put_nowait(item)
 
@@ -195,11 +258,11 @@ class Fetch:
     end_location: tuple[int, int]
     """取得範囲の終端 Location。"""
 
-    _objects: asyncio.Queue[MoqtObject | None] = field(default_factory=asyncio.Queue)
+    _objects: asyncio.Queue[MOQTObject | None] = field(default_factory=asyncio.Queue)
     _ranges: asyncio.Queue[tuple[str, int, int] | None] = field(default_factory=asyncio.Queue)
     _runtime: Runtime | None = None
 
-    async def objects(self) -> AsyncIterator[MoqtObject]:
+    async def objects(self) -> AsyncIterator[MOQTObject]:
         """fetch で届いたオブジェクトを順に返す。
 
         fetch が終了すると反復も終わる。
@@ -232,10 +295,10 @@ class Fetch:
         """
         runtime = self._runtime
         if runtime is None:
-            raise MoqtError("fetch has no runtime")
+            raise MOQTError("fetch has no runtime")
         await runtime.send_fetch_stop_sending(self.request_id)
 
-    def _push(self, item: MoqtObject) -> None:
+    def _push(self, item: MOQTObject) -> None:
         self._objects.put_nowait(item)
 
     def _push_range(self, kind: str, group_id: int, object_id: int) -> None:
@@ -264,12 +327,13 @@ class TrackStatus:
 
 
 class Client:
-    """WebTransport 接続上で MOQT を扱う client。"""
+    """QUIC / WebTransport 接続上で MOQT を扱う client。"""
 
     def __init__(
         self,
         url: str,
         *,
+        transport: Transport | None = None,
         verify_peer: bool = True,
         origin: str = "",
         ca_file: str | None = None,
@@ -279,6 +343,10 @@ class Client:
         setup_options: dict[int, object] | None = None,
     ) -> None:
         """client を作成する。
+
+        `url` は MOQT の URI である (`moqt://host:port/path`)。接続方式は
+        `transport` で選び、省略した場合は `Transport.WebTransportOverHTTP3`
+        になる (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。
 
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
@@ -290,9 +358,16 @@ class Client:
         辞書またはそのリストである。MOQT_IMPLEMENTATION は `implementation` 引数が
         担うため指定できない
         (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+
+        QUIC 直接接続では接続先から AUTHORITY と PATH の Setup Option を作る
+        (draft-ietf-moq-transport-21 §6.2.2 (Native QUIC))。どちらも WebTransport
+        では送ってはならない (§9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
         """
-        self._transport = h3.Client(
-            url=url,
+        target = _parse_target(url)
+        self.transport = Transport.WebTransportOverHTTP3 if transport is None else transport
+        self._transport = _create_transport(
+            self.transport,
+            target,
             verify_peer=verify_peer,
             origin=origin,
             ca_file=ca_file,
@@ -300,7 +375,13 @@ class Client:
         self._implementation = implementation
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
-        self._setup_options = dict(setup_options) if setup_options is not None else None
+        options = dict(setup_options) if setup_options is not None else {}
+        if self.transport is Transport.Quic:
+            options[moqt.SETUP_OPTION_AUTHORITY] = target.authority.encode()
+            options[moqt.SETUP_OPTION_PATH] = target.path.encode()
+        elif moqt.SETUP_OPTION_AUTHORITY in options or moqt.SETUP_OPTION_PATH in options:
+            raise ValueError("AUTHORITY and PATH setup options are only valid for QUIC connections")
+        self._setup_options = options or None
         self._runtime: Runtime | None = None
         self._established_event = asyncio.Event()
         self._connect_error: BaseException | None = None
@@ -308,7 +389,7 @@ class Client:
         self._tick_task: asyncio.Task[None] | None = None
         self._subscriptions: dict[int, Subscription] = {}
         self._subscriptions_by_alias: dict[int, Subscription] = {}
-        self._pending_objects: dict[int, list[MoqtObject]] = {}
+        self._pending_objects: dict[int, list[MOQTObject]] = {}
         # 購読が未登録のまま届いた終了通知 (Request ID)。
         # PUBLISH_DONE と RequestTerminated は購読の登録より先に届くことがあり、
         # その場合は登録時に終了させる必要があるため保持する
@@ -326,11 +407,16 @@ class Client:
         self._peer_goaway: PeerGoaway | None = None
 
         # 受信データはすべてランタイムへ渡す
-        self._transport.on_stream_data(self._on_stream_data)
-        self._transport.on_stream_reset(self._on_stream_reset)
+        if isinstance(self._transport, quic.Client):
+            # QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで受ける
+            self._transport.on_stream_data(self._on_quic_stream_data)
+            self._transport.on_connection_closed(self._on_connection_closed)
+        else:
+            self._transport.on_stream_data(self._on_stream_data)
+            self._transport.on_stream_reset(self._on_stream_closed)
+            self._transport.on_session_closed(self._on_session_closed)
+            self._transport.on_session_ready(self._on_session_ready)
         self._transport.on_datagram(self._on_datagram)
-        self._transport.on_session_closed(self._on_session_closed)
-        self._transport.on_session_ready(self._on_session_ready)
 
     # ─── 接続 ───────────────────────────────────────────────
 
@@ -483,12 +569,17 @@ class Client:
         self._goaway_callback = callback
 
     async def connect(self, timeout: float = 10.0) -> None:
-        """WebTransport へ接続し、MOQT SETUP 交換の完了を待つ。"""
+        """接続し、MOQT SETUP 交換の完了を待つ。"""
         if self._run_task is not None:
             raise RuntimeError("client has already been started")
 
-        # 接続に失敗した場合は webtransport-py が具体的な例外を送出する
-        await self._transport.connect(timeout=timeout)
+        # 接続に失敗した場合、WebTransport は webtransport-py が具体的な例外を
+        # 送出する。QUIC は例外ではなく False を返す
+        if isinstance(self._transport, quic.Client):
+            if not await self._transport.connect(timeout=timeout):
+                raise ConnectionError("failed to establish a QUIC connection")
+        else:
+            await self._transport.connect(timeout=timeout)
 
         self._runtime = Runtime(
             client=True,
@@ -517,7 +608,7 @@ class Client:
             raise error
 
     async def close(self) -> None:
-        """MOQT client と WebTransport 接続を閉じる。"""
+        """MOQT client と接続を閉じる。"""
         if self._tick_task is not None:
             self._tick_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -702,7 +793,7 @@ class Client:
 
         `new_session_uri` は移行先のセッション URI である。URI を通知できるのは
         Server だけであり、Client は空の URI しか送れない。
-        `MAX_NEW_SESSION_URI_LENGTH` を超える値は送信せずに `MoqtError` になる
+        `MAX_NEW_SESSION_URI_LENGTH` を超える値は送信せずに `MOQTError` になる
         (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
         """
         runtime = self._require_runtime()
@@ -714,31 +805,56 @@ class Client:
         """接続済みのランタイムを返す。"""
         runtime = self._runtime
         if runtime is None or not runtime.established:
-            raise MoqtError("client is not connected")
+            raise MOQTError("client is not connected")
         return runtime
 
     def _transport_ops(self) -> TransportOps:
         """トランスポート操作を組み立てる。"""
         transport = self._transport
+        if isinstance(transport, quic.Client):
+            # webtransport-py の QUIC には STOP_SENDING を送る API が無いため、
+            # ストリームを reset して受信を終わらせる
+            return TransportOps(
+                open_uni_stream=lambda: transport.open_stream(bidirectional=False),
+                open_bidi_stream=lambda: transport.open_stream(bidirectional=True),
+                send_stream_data=transport.send_stream_data,
+                reset_stream=transport.shutdown_stream,
+                stop_sending=lambda stream_id, error_code: transport.shutdown_stream(
+                    stream_id, error_code
+                ),
+                send_datagram=transport.send_datagram,
+                close=self._close_transport,
+            )
+        if isinstance(transport, h2.Client):
+            return TransportOps(
+                open_uni_stream=lambda: transport.open_stream(unidirectional=True),
+                open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
+                send_stream_data=transport.send_stream_data,
+                reset_stream=transport.reset_stream,
+                stop_sending=transport.stop_sending,
+                send_datagram=transport.send_datagram,
+                close=self._close_transport,
+            )
         return TransportOps(
             open_uni_stream=lambda: transport.open_stream(unidirectional=True),
             open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
-            send_stream_data=lambda stream_id, data, fin: transport.send_stream_data(
-                stream_id, data, fin
-            ),
-            reset_stream=lambda stream_id, error_code: transport.reset_stream(
+            send_stream_data=transport.send_stream_data,
+            reset_stream=transport.reset_stream,
+            # webtransport-py の h3 には STOP_SENDING を送る API が無いため、
+            # ストリームを reset して受信を終わらせる
+            stop_sending=lambda stream_id, error_code: transport.reset_stream(
                 stream_id, error_code
             ),
-            stop_sending=self._stop_sending,
             send_datagram=transport.send_datagram,
-            close=lambda _code, _reason: transport.close(),
+            close=self._close_transport,
         )
 
-    async def _stop_sending(self, stream_id: int, error_code: int) -> None:
-        """受信ストリームへ STOP_SENDING を送る。"""
-        # webtransport-py の client は STOP_SENDING を公開していないため、
-        # ストリームを reset して受信を終わらせる
-        await self._transport.reset_stream(stream_id, error_code)
+    async def _close_transport(self, code: int, reason: str) -> None:
+        """トランスポートを閉じる。
+
+        MOQT の終了コードと理由はトランスポートへ渡せないため破棄する。
+        """
+        await self._transport.close()
 
     def _runtime_events(self) -> RuntimeEvents:
         """ランタイムのコールバックを組み立てる。"""
@@ -758,7 +874,7 @@ class Client:
         self._established_event.set()
 
     async def _on_close(self, code: int, reason: str) -> None:
-        self._fail_connect(MoqtError(f"session closed: code={code} reason={reason}"))
+        self._fail_connect(MOQTError(f"session closed: code={code} reason={reason}"))
 
     async def _on_fetch_end(self, kind: str, event: NativeEvent) -> None:
         """fetch の範囲終端を fetch へ渡す。"""
@@ -774,7 +890,7 @@ class Client:
         記録した値を使う。
         """
         track_alias = event.track_alias
-        item = MoqtObject(
+        item = MOQTObject(
             stream_id=stream_id,
             group_id=event.group_id or 0,
             object_id=event.object_id or 0,
@@ -797,7 +913,7 @@ class Client:
             return
         subscription._push(item)
 
-    def _buffer_object(self, track_alias: int, item: MoqtObject) -> None:
+    def _buffer_object(self, track_alias: int, item: MOQTObject) -> None:
         """購読が未登録の Track Alias 宛てのオブジェクトを保持する。
 
         保持する数には上限を設ける。上限に達するのは、購読が成立しないまま
@@ -922,6 +1038,7 @@ class Client:
                 await runtime.tick()
 
     async def _on_stream_data(self, stream_id: int, data: bytes) -> None:
+        """受信したストリームデータを状態機械へ渡す。"""
         runtime = self._runtime
         if runtime is None:
             return
@@ -930,7 +1047,17 @@ class Client:
         except Exception as error:
             self._fail_connect(error)
 
-    async def _on_stream_reset(self, stream_id: int, error_code: int | None) -> None:
+    async def _on_quic_stream_data(self, stream_id: int, data: bytes, fin: bool) -> None:
+        """QUIC のストリームデータを受信する。
+
+        QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
+        """
+        await self._on_stream_data(stream_id, data)
+        if fin:
+            await self._on_stream_closed(stream_id, None)
+
+    async def _on_stream_closed(self, stream_id: int, error_code: int | None) -> None:
+        """ストリームの終端を状態機械へ通知する。"""
         runtime = self._runtime
         if runtime is None:
             return
@@ -957,6 +1084,13 @@ class Client:
                 ConnectionError(
                     f"WebTransport session {session_id} closed before MOQT SETUP completed"
                 )
+            )
+
+    async def _on_connection_closed(self) -> None:
+        """SETUP 完了前の QUIC 接続の終了を接続失敗として扱う。"""
+        if not self.established:
+            self._fail_connect(
+                ConnectionError("QUIC connection closed before MOQT SETUP completed")
             )
 
     def _fail_connect(self, error: BaseException) -> None:
@@ -997,7 +1131,7 @@ def _body_int(body: MessageBody | None, key: str) -> int:
 __all__ = [
     "Client",
     "Fetch",
-    "MoqtObject",
+    "MOQTObject",
     "Publication",
     "Subscription",
     "TrackStatus",

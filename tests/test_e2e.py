@@ -14,21 +14,21 @@ from moqt.moq import (
     SUBGROUP_ID_MODE_ZERO,
     Client,
     Fetch,
-    MoqtObject,
+    MOQTObject,
     PeerGoaway,
     Publication,
     Subscription,
 )
 from moqt.moq._runtime import (
     GROUP_ORDER_DESCENDING,
-    MoqtError,
+    MOQTError,
     Runtime,
 )
 from moqt.moq.testing import (
     ClientFactory,
     FetchRequest,
     FetchResponse,
-    MoqPair,
+    MOQTPair,
     PublisherRequest,
     Server,
     ServerSession,
@@ -59,12 +59,12 @@ async def _send_object(
         await publication.send_datagram(1, 0, payload, status=status)
 
 
-async def _take_objects(subscription: Subscription, count: int) -> list[MoqtObject]:
+async def _take_objects(subscription: Subscription, count: int) -> list[MOQTObject]:
     """subscription から指定件数のオブジェクトを取り出す。"""
     return await collect_objects(subscription.objects(), count, OBJECT_TIMEOUT)
 
 
-async def _take_objects_until_end(subscription: Subscription) -> list[MoqtObject]:
+async def _take_objects_until_end(subscription: Subscription) -> list[MOQTObject]:
     """subscription が終了するまでオブジェクトを取り出す。"""
     return [item async for item in subscription.objects()]
 
@@ -73,14 +73,14 @@ async def _take_objects_in_group(
     subscription: Subscription,
     group_id: int,
     limit: int = 4,
-) -> list[MoqtObject]:
+) -> list[MOQTObject]:
     """指定した Group ID のオブジェクトが届くまで取り出す。
 
     reset と競合したオブジェクトは破棄されることもあれば届くこともある
     (RESET_STREAM は送信側の操作であり、到着済みのデータは取り消せない)。
     reset の後に送ったオブジェクトが届いたことを確かめるために使う。
     """
-    collected: list[MoqtObject] = []
+    collected: list[MOQTObject] = []
     async for item in subscription.objects():
         collected.append(item)
         if item.group_id == group_id:
@@ -90,7 +90,7 @@ async def _take_objects_in_group(
     return collected
 
 
-async def _take_fetch_objects(fetch: Fetch, count: int) -> list[MoqtObject]:
+async def _take_fetch_objects(fetch: Fetch, count: int) -> list[MOQTObject]:
     """fetch から指定件数のオブジェクトを取り出す。"""
     return await collect_objects(fetch.objects(), count, OBJECT_TIMEOUT)
 
@@ -133,7 +133,7 @@ def _object_properties(timestamp: int) -> bytes:
     return properties.encode()
 
 
-async def test_client_and_server_exchange_setup_over_webtransport(moq_pair: MoqPair) -> None:
+async def test_client_and_server_exchange_setup_over_webtransport(moq_pair: MOQTPair) -> None:
     """
     localhost の実 WebTransport 接続上で MOQT SETUP が成立することを確認する。
 
@@ -182,7 +182,7 @@ async def test_object_property_filter_selects_objects_by_property(
 
         server.on_subscribe(on_subscribe)
         client = Client(
-            url=f"https://127.0.0.1:{server.actual_port}/webtransport",
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
             verify_peer=False,
         )
         await client.connect()
@@ -246,7 +246,7 @@ async def test_subscribe_carries_all_authorization_token_kinds(
 
         server.on_subscribe(on_subscribe)
         client = Client(
-            url=f"https://127.0.0.1:{server.actual_port}/webtransport",
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
             verify_peer=False,
         )
         await client.connect()
@@ -300,7 +300,7 @@ async def test_two_clients_connect_to_one_server(moq_client_factory: ClientFacto
         await second.close()
 
 
-async def test_subscribe_and_receive_objects_over_subgroup(moq_pair: MoqPair) -> None:
+async def test_subscribe_and_receive_objects_over_subgroup(moq_pair: MOQTPair) -> None:
     """
     SUBSCRIBE / SUBSCRIBE_OK と subgroup ストリームのオブジェクト配送を確認する。
 
@@ -334,7 +334,7 @@ async def test_subscribe_and_receive_objects_over_subgroup(moq_pair: MoqPair) ->
     assert [item.payload for item in received] == [b"first", b"second"]
 
 
-async def test_objects_in_a_second_group_are_delivered(moq_pair: MoqPair) -> None:
+async def test_objects_in_a_second_group_are_delivered(moq_pair: MOQTPair) -> None:
     """
     同じ subscription で Group を進めてもオブジェクトが届くことを確認する。
 
@@ -372,7 +372,7 @@ async def test_objects_in_a_second_group_are_delivered(moq_pair: MoqPair) -> Non
 
 
 async def test_subscription_ends_when_publisher_closes_just_after_subscribe_ok(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
 ) -> None:
     """
     publisher が SUBSCRIBE_OK の直後に PUBLISH_DONE と FIN を送っても購読が終了することを
@@ -405,12 +405,12 @@ async def test_subscription_ends_when_publisher_closes_just_after_subscribe_ok(
     assert [item.payload for item in received] in ([], [b"hello"])
 
 
-async def test_object_properties_are_delivered(moq_pair: MoqPair) -> None:
+async def test_object_properties_are_delivered(moq_pair: MOQTPair) -> None:
     """
     subgroup で送った Object Properties が受信側で参照できることを確認する。
 
     Properties は subgroup ヘッダの has_properties bit で有無が固定される。受信側では
-    `MoqtObject.properties` から生バイトとして取り出し、`ObjectProperties.decode` で
+    `MOQTObject.properties` から生バイトとして取り出し、`ObjectProperties.decode` で
     解釈する。
     """
     published: list[Publication] = []
@@ -436,7 +436,7 @@ async def test_object_properties_are_delivered(moq_pair: MoqPair) -> None:
     assert received[0].publisher_priority is None
 
 
-async def test_subgroup_properties_must_be_consistent(moq_pair: MoqPair) -> None:
+async def test_subgroup_properties_must_be_consistent(moq_pair: MOQTPair) -> None:
     """
     Subgroup 内で Properties の有無が変わると送信が拒否されることを確認する。
 
@@ -461,7 +461,7 @@ async def test_subgroup_properties_must_be_consistent(moq_pair: MoqPair) -> None
 
     # Properties ありで開いた subgroup へ Properties 無しのオブジェクトは送れない
     await publication.send_object(1, 0, b"with-properties", properties_data=properties.encode())
-    with pytest.raises(MoqtError, match="must be consistent within a subgroup"):
+    with pytest.raises(MOQTError, match="must be consistent within a subgroup"):
         await publication.send_object(1, 1, b"without-properties")
     # 先に拒否されたオブジェクトは送られていないため、届くのは 1 件だけである
     received = await _take_objects(subscription, 1)
@@ -472,13 +472,13 @@ async def test_subgroup_properties_must_be_consistent(moq_pair: MoqPair) -> None
     await moq_pair.client.subscribe(NAMESPACE, b"audio")
     await wait_until(lambda: len(published) == 2)
     await published[1].send_object(1, 0, b"without-properties")
-    with pytest.raises(MoqtError, match="must be consistent within a subgroup"):
+    with pytest.raises(MOQTError, match="must be consistent within a subgroup"):
         await published[1].send_object(
             1, 1, b"with-properties", properties_data=properties.encode()
         )
 
 
-async def test_datagram_object_properties_are_delivered(moq_pair: MoqPair) -> None:
+async def test_datagram_object_properties_are_delivered(moq_pair: MOQTPair) -> None:
     """
     データグラムで送った Object Properties が受信側で参照できることを確認する。
 
@@ -514,7 +514,7 @@ async def test_datagram_object_properties_are_delivered(moq_pair: MoqPair) -> No
     assert decoded.object_delivery_timeout == 1000
 
 
-async def test_datagram_properties_reject_an_empty_block(moq_pair: MoqPair) -> None:
+async def test_datagram_properties_reject_an_empty_block(moq_pair: MOQTPair) -> None:
     """
     Properties Length = 0 のデータグラムを送信前に拒否することを確認する。
 
@@ -537,11 +537,11 @@ async def test_datagram_properties_reject_an_empty_block(moq_pair: MoqPair) -> N
     empty = moqt.ObjectProperties().encode()
     assert empty == b"\x00"
 
-    with pytest.raises(MoqtError, match="datagram properties length 0"):
+    with pytest.raises(MOQTError, match="datagram properties length 0"):
         await published[0].send_datagram(1, 0, b"payload", properties_data=empty)
 
 
-async def test_properties_reject_a_length_mismatch(moq_pair: MoqPair) -> None:
+async def test_properties_reject_a_length_mismatch(moq_pair: MOQTPair) -> None:
     """
     Properties Length と実データ長が食い違うブロックを拒否することを確認する。
 
@@ -563,15 +563,15 @@ async def test_properties_reject_a_length_mismatch(moq_pair: MoqPair) -> None:
     # 宣言長 5 に対して実データが 2 バイトしかないブロック
     broken = b"\x05\x01\x02"
 
-    with pytest.raises(MoqtError, match="does not match the actual data length"):
+    with pytest.raises(MOQTError, match="does not match the actual data length"):
         await published[0].send_datagram(1, 0, b"datagram", properties_data=broken)
 
     # subgroup も同じ正規化を使うため、同じブロックを拒否する
-    with pytest.raises(MoqtError, match="does not match the actual data length"):
+    with pytest.raises(MOQTError, match="does not match the actual data length"):
         await published[0].send_object(1, 0, b"object", properties_data=broken)
 
 
-async def test_datagram_properties_reject_a_non_normal_status(moq_pair: MoqPair) -> None:
+async def test_datagram_properties_reject_a_non_normal_status(moq_pair: MOQTPair) -> None:
     """
     非 Normal の Object Status に Properties を付けたデータグラムを拒否することを確認する。
 
@@ -592,7 +592,7 @@ async def test_datagram_properties_reject_a_non_normal_status(moq_pair: MoqPair)
     properties = moqt.ObjectProperties()
     properties.add(moqt.PROP_PRIOR_GROUP_ID_GAP, 2)
 
-    with pytest.raises(MoqtError, match="properties on non-Normal status object"):
+    with pytest.raises(MOQTError, match="properties on non-Normal status object"):
         await published[0].send_datagram(
             1,
             0,
@@ -607,12 +607,12 @@ async def test_datagram_properties_reject_a_non_normal_status(moq_pair: MoqPair)
     assert received[0].payload == b"after-rejection"
 
 
-async def test_datagram_publisher_priority_is_delivered(moq_pair: MoqPair) -> None:
+async def test_datagram_publisher_priority_is_delivered(moq_pair: MOQTPair) -> None:
     """
     データグラムが運ぶ Publisher Priority が受信側で参照できることを確認する。
 
     DEFAULT_PRIORITY bit が立っていないデータグラムは Publisher Priority を明示して
-    おり、その値が `MoqtObject.publisher_priority` に入る。bit が立っている
+    おり、その値が `MOQTObject.publisher_priority` に入る。bit が立っている
     データグラムは購読を確立した制御メッセージの優先度を継承するため `None` になる
     (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
     """
@@ -641,7 +641,7 @@ async def test_datagram_publisher_priority_is_delivered(moq_pair: MoqPair) -> No
     assert default[0].publisher_priority is None
 
 
-async def test_client_publish_and_object_delivery(moq_pair: MoqPair) -> None:
+async def test_client_publish_and_object_delivery(moq_pair: MOQTPair) -> None:
     """
     client が PUBLISH で配信し、送ったオブジェクトが server へ届くことを確認する。
 
@@ -730,7 +730,7 @@ async def test_session_state_accessors_report_the_live_session(
         server.on_fetch(on_fetch)
 
         client = Client(
-            url=f"https://127.0.0.1:{server.actual_port}/webtransport",
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
             verify_peer=False,
         )
         await client.connect()
@@ -803,7 +803,7 @@ async def test_session_state_accessors_report_the_live_session(
             await run_task
 
 
-async def test_server_goaway_is_notified_to_the_client(moq_pair: MoqPair) -> None:
+async def test_server_goaway_is_notified_to_the_client(moq_pair: MOQTPair) -> None:
     """
     server の GOAWAY が client へ通知されることを確認する。
 
@@ -823,7 +823,7 @@ async def test_server_goaway_is_notified_to_the_client(moq_pair: MoqPair) -> Non
     assert moq_pair.client.peer_goaway is not None
 
 
-async def test_server_goaway_carries_a_new_session_uri(moq_pair: MoqPair) -> None:
+async def test_server_goaway_carries_a_new_session_uri(moq_pair: MOQTPair) -> None:
     """
     server の GOAWAY が移行先のセッション URI を運ぶことを確認する。
 
@@ -849,7 +849,7 @@ async def test_server_goaway_carries_a_new_session_uri(moq_pair: MoqPair) -> Non
 
 
 async def test_goaway_rejects_a_new_session_uri_beyond_the_length_limit(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
 ) -> None:
     """
     長さ上限を超える new session URI を GOAWAY が送信前に拒否することを確認する。
@@ -866,9 +866,9 @@ async def test_goaway_rejects_a_new_session_uri_beyond_the_length_limit(
     too_long = b"a" * (moqt.MAX_NEW_SESSION_URI_LENGTH + 1)
 
     # server からも client からも拒否される
-    with pytest.raises(MoqtError, match="new_session_uri"):
+    with pytest.raises(MOQTError, match="new_session_uri"):
         await moq_pair.session.goaway(timeout=0, new_session_uri=too_long)
-    with pytest.raises(MoqtError, match="new_session_uri"):
+    with pytest.raises(MOQTError, match="new_session_uri"):
         await moq_pair.client.goaway(timeout=0, new_session_uri=too_long)
 
     # 拒否された GOAWAY は送信されていない
@@ -883,7 +883,7 @@ async def test_goaway_rejects_a_new_session_uri_beyond_the_length_limit(
     assert received[0].new_session_uri == uri
 
 
-async def test_request_update_is_accepted_by_the_peer(moq_pair: MoqPair) -> None:
+async def test_request_update_is_accepted_by_the_peer(moq_pair: MOQTPair) -> None:
     """
     REQUEST_UPDATE に peer が REQUEST_OK で応答することを確認する。
 
@@ -907,7 +907,7 @@ async def test_request_update_is_accepted_by_the_peer(moq_pair: MoqPair) -> None
     )
 
 
-async def test_object_published_right_after_subscribe_ok_is_delivered(moq_pair: MoqPair) -> None:
+async def test_object_published_right_after_subscribe_ok_is_delivered(moq_pair: MOQTPair) -> None:
     """
     SUBSCRIBE_OK の直後に送ったオブジェクトが取りこぼされないことを確認する。
 
@@ -935,7 +935,7 @@ async def test_object_published_right_after_subscribe_ok_is_delivered(moq_pair: 
 
 
 async def test_datagram_published_right_after_subscribe_ok_is_delivered(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
 ) -> None:
     """
     SUBSCRIBE_OK の直後に送ったデータグラムが取りこぼされないことを確認する。
@@ -968,7 +968,7 @@ async def test_datagram_published_right_after_subscribe_ok_is_delivered(
     ids=["empty", "1byte-max", "2byte-min", "2byte-max", "3byte-min"],
 )
 async def test_subgroup_object_payload_length_boundaries(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
     payload_size: int,
 ) -> None:
     """
@@ -1024,7 +1024,7 @@ async def test_subgroup_object_payload_length_boundaries(
     ],
 )
 async def test_subgroup_header_variants_are_delivered(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
     subgroup_id: int | None,
     publisher_priority: int | None,
     end_of_group: bool,
@@ -1062,7 +1062,7 @@ async def test_subgroup_header_variants_are_delivered(
     assert received[0].payload == b"header variant"
 
 
-async def test_subscribe_and_receive_objects_over_datagram(moq_pair: MoqPair) -> None:
+async def test_subscribe_and_receive_objects_over_datagram(moq_pair: MOQTPair) -> None:
     """
     オブジェクトデータグラムの配送を確認する。
 
@@ -1089,7 +1089,7 @@ async def test_subscribe_and_receive_objects_over_datagram(moq_pair: MoqPair) ->
     assert received[0].payload == b"datagram payload"
 
 
-async def test_datagram_with_an_empty_payload_is_delivered(moq_pair: MoqPair) -> None:
+async def test_datagram_with_an_empty_payload_is_delivered(moq_pair: MOQTPair) -> None:
     """
     ペイロードが空のオブジェクトデータグラムが配送されることを確認する。
 
@@ -1129,7 +1129,7 @@ async def test_datagram_with_an_empty_payload_is_delivered(moq_pair: MoqPair) ->
 )
 @pytest.mark.parametrize("send", ["subgroup", "datagram"], ids=["subgroup", "datagram"])
 async def test_object_status_is_delivered(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
     status: int,
     send: str,
 ) -> None:
@@ -1160,7 +1160,7 @@ async def test_object_status_is_delivered(
 
 
 @pytest.mark.parametrize("send", ["subgroup", "datagram"], ids=["subgroup", "datagram"])
-async def test_object_status_rejects_a_payload(moq_pair: MoqPair, send: str) -> None:
+async def test_object_status_rejects_a_payload(moq_pair: MOQTPair, send: str) -> None:
     """
     Normal 以外の Object Status にペイロードを付けた場合に拒否することを確認する。
 
@@ -1178,12 +1178,12 @@ async def test_object_status_rejects_a_payload(moq_pair: MoqPair, send: str) -> 
     await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
     await wait_until(lambda: bool(published))
 
-    with pytest.raises(MoqtError, match="requires an empty payload"):
+    with pytest.raises(MOQTError, match="requires an empty payload"):
         await _send_object(published[0], send, b"data", moqt.OBJECT_STATUS_END_OF_GROUP)
 
 
 @pytest.mark.parametrize("send", ["subgroup", "datagram"], ids=["subgroup", "datagram"])
-async def test_object_status_rejects_an_unknown_value(moq_pair: MoqPair, send: str) -> None:
+async def test_object_status_rejects_an_unknown_value(moq_pair: MOQTPair, send: str) -> None:
     """
     未知の Object Status を拒否することを確認する。
 
@@ -1200,13 +1200,13 @@ async def test_object_status_rejects_an_unknown_value(moq_pair: MoqPair, send: s
     await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
     await wait_until(lambda: bool(published))
 
-    with pytest.raises(MoqtError, match="unknown object status"):
+    with pytest.raises(MOQTError, match="unknown object status"):
         await _send_object(published[0], send, b"", 0x99)
 
 
 @pytest.mark.parametrize("oversized", [False, True], ids=["fits", "oversized"])
 async def test_datagram_size_is_reported_before_sending(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
     caplog: pytest.LogCaptureFixture,
     *,
     oversized: bool,
@@ -1261,7 +1261,7 @@ async def test_server_keeps_serving_after_a_client_closes(
     assert second.established
 
 
-async def test_fetch_receives_objects(moq_pair: MoqPair) -> None:
+async def test_fetch_receives_objects(moq_pair: MOQTPair) -> None:
     """
     FETCH で要求した過去のオブジェクトが fetch stream で届くことを確認する。
 
@@ -1303,7 +1303,7 @@ async def test_fetch_receives_objects(moq_pair: MoqPair) -> None:
     ]
 
 
-async def test_fetch_responds_in_a_descending_group_order(moq_pair: MoqPair) -> None:
+async def test_fetch_responds_in_a_descending_group_order(moq_pair: MOQTPair) -> None:
     """
     GROUP_ORDER が Descending の FETCH で Group が降順に届くことを確認する。
 
@@ -1334,13 +1334,13 @@ async def test_fetch_responds_in_a_descending_group_order(moq_pair: MoqPair) -> 
     assert [item.payload for item in received] == [b"group-8", b"group-7"]
 
     # 要求と逆向きの Group は差分で表現できない
-    with pytest.raises(MoqtError, match="descending group order"):
+    with pytest.raises(MOQTError, match="descending group order"):
         await responses[0].send_object(9, 0, b"ascending")
 
     await responses[0].close()
 
 
-async def test_fetch_response_reports_end_of_range(moq_pair: MoqPair) -> None:
+async def test_fetch_response_reports_end_of_range(moq_pair: MOQTPair) -> None:
     """
     FETCH 応答の End of Range 3 種が peer の `Fetch.ranges()` で観測されることを確認する。
 
@@ -1376,7 +1376,7 @@ async def test_fetch_response_reports_end_of_range(moq_pair: MoqPair) -> None:
 
 
 async def test_fetch_response_carries_properties_and_datagram_origin(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
 ) -> None:
     """
     properties 付きの fetch オブジェクトと datagram 起源のオブジェクトを送れることを確認する。
@@ -1414,7 +1414,7 @@ async def test_fetch_response_carries_properties_and_datagram_origin(
     assert [item.publisher_priority for item in received] == [128, 200]
 
     # moqt-rs の FetchStreamDecoder は受信した fetch オブジェクトの Properties を
-    # 公開しないため、現状では `MoqtObject.properties` には載らない。Properties 自体は
+    # 公開しないため、現状では `MOQTObject.properties` には載らない。Properties 自体は
     # peer のデコーダが読み取り、宣言長の不一致や Malformed Track を検出する
     assert received[0].properties is None
 
@@ -1454,7 +1454,7 @@ def test_legacy_moq_package_is_not_installed() -> None:
 
 
 async def test_reset_subgroup_allows_a_new_subgroup_on_the_same_track(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
 ) -> None:
     """
     subgroup を reset した後も同じ Track で配信を続けられることを確認する。
@@ -1486,7 +1486,7 @@ async def test_reset_subgroup_allows_a_new_subgroup_on_the_same_track(
     assert [item.payload for item in received if item.group_id == 2] == [b"kept"]
 
 
-async def test_reset_subgroup_at_keeps_the_connection_usable(moq_pair: MoqPair) -> None:
+async def test_reset_subgroup_at_keeps_the_connection_usable(moq_pair: MOQTPair) -> None:
     """
     RESET_STREAM_AT で subgroup を reset してもセッションが壊れないことを確認する。
 
@@ -1516,7 +1516,7 @@ async def test_reset_subgroup_at_keeps_the_connection_usable(moq_pair: MoqPair) 
     assert [item.payload for item in received if item.group_id == 2] == [b"kept"]
 
 
-async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MoqPair) -> None:
+async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> None:
     """
     FILL_PARAMETERS 付きの購読で fill fetch stream が開かれることを確認する。
 
@@ -1553,7 +1553,7 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MoqPair) -> No
     assert opened[0][1] >= 0
 
 
-async def test_publish_state_notify_is_delivered_to_the_subscriber(moq_pair: MoqPair) -> None:
+async def test_publish_state_notify_is_delivered_to_the_subscriber(moq_pair: MOQTPair) -> None:
     """
     PUBLISH_STATE_NOTIFY が購読側のコールバックへ届くことを確認する。
 
@@ -1619,14 +1619,14 @@ async def test_track_status_is_not_answered_by_an_endpoint(
     client = await moq_client_factory(control_message_timeout=1.0)
     await asyncio.wait_for(established.wait(), timeout=OBJECT_TIMEOUT)
 
-    with pytest.raises(MoqtError, match="session closed: code="):
+    with pytest.raises(MOQTError, match="session closed: code="):
         await client.track_status(NAMESPACE, TRACK_NAME)
 
     # 受理しなかった publisher 側もセッションを終了する
     await wait_until(lambda: sessions[0].runtime.closed)
 
 
-async def test_client_goaway_is_notified_to_the_server(moq_pair: MoqPair) -> None:
+async def test_client_goaway_is_notified_to_the_server(moq_pair: MOQTPair) -> None:
     """
     client の GOAWAY が server へ届くことを確認する。
 
@@ -1650,7 +1650,7 @@ async def test_client_goaway_is_notified_to_the_server(moq_pair: MoqPair) -> Non
     assert received[0][1].timeout == 0
 
 
-async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: MoqPair) -> None:
+async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: MOQTPair) -> None:
     """
     同じ Location の重複 Object の Priority が食い違うと購読が取り消されることを確認する。
 
@@ -1684,7 +1684,7 @@ async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: Moq
     assert moq_pair.client.established is True
 
 
-async def test_subscribe_ok_metadata_is_exposed(moq_pair: MoqPair) -> None:
+async def test_subscribe_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
     """
     SUBSCRIBE_OK が運んだパラメータと Track Properties を購読から参照できることを確認する。
 
@@ -1722,7 +1722,7 @@ async def test_subscribe_ok_metadata_is_exposed(moq_pair: MoqPair) -> None:
     assert subscription.track_properties == track_properties
 
 
-async def test_request_ok_metadata_is_exposed(moq_pair: MoqPair) -> None:
+async def test_request_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
     """
     REQUEST_OK が運んだパラメータを配信から参照できることを確認する。
 
@@ -1754,7 +1754,7 @@ async def test_request_ok_metadata_is_exposed(moq_pair: MoqPair) -> None:
     assert publication.track_properties == {}
 
 
-async def test_terminated_subscription_is_removed_from_the_session(moq_pair: MoqPair) -> None:
+async def test_terminated_subscription_is_removed_from_the_session(moq_pair: MOQTPair) -> None:
     """
     終了した購読が状態機械から回収されることを確認する。
 
@@ -1786,7 +1786,7 @@ async def test_terminated_subscription_is_removed_from_the_session(moq_pair: Moq
 
 
 async def test_cancelled_fetch_is_removed_from_the_session(
-    moq_pair: MoqPair,
+    moq_pair: MOQTPair,
     moq_client_factory: ClientFactory,
 ) -> None:
     """
@@ -1820,7 +1820,7 @@ async def test_cancelled_fetch_is_removed_from_the_session(
     assert moq_pair.client.established is True
 
 
-async def test_subgroup_id_mode_first_object_id_is_delivered(moq_pair: MoqPair) -> None:
+async def test_subgroup_id_mode_first_object_id_is_delivered(moq_pair: MOQTPair) -> None:
     """
     Subgroup ID を最初の Object ID として決めるモードで配送できることを確認する。
 
@@ -1861,12 +1861,12 @@ async def test_subgroup_id_mode_first_object_id_is_delivered(moq_pair: MoqPair) 
     assert [item.subgroup_id for item in received] == [5, 5]
 
 
-async def test_subgroup_id_mode_cannot_change_within_a_group(moq_pair: MoqPair) -> None:
+async def test_subgroup_id_mode_cannot_change_within_a_group(moq_pair: MOQTPair) -> None:
     """
     同じ Group の途中で Subgroup ID のモードを変えられないことを確認する。
 
     SUBGROUP_ID_MODE はヘッダで固定されるため、同じ subgroup の途中で違うモードを
-    指定すると送信側が `MoqtError` で拒否する
+    指定すると送信側が `MOQTError` で拒否する
     (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
@@ -1887,7 +1887,7 @@ async def test_subgroup_id_mode_cannot_change_within_a_group(moq_pair: MoqPair) 
     )
 
     # 同じ Group でモードを変える送信は拒否される
-    with pytest.raises(MoqtError, match="cannot change its subgroup id mode"):
+    with pytest.raises(MOQTError, match="cannot change its subgroup id mode"):
         await published[0].send_object(1, 6, b"second", subgroup_id=3)
 
     # 最初のオブジェクトは届いており、セッションは壊れていない
@@ -1897,7 +1897,7 @@ async def test_subgroup_id_mode_cannot_change_within_a_group(moq_pair: MoqPair) 
     assert moq_pair.client.established is True
 
 
-async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MoqPair) -> None:
+async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MOQTPair) -> None:
     """
     送信側が Subgroup ID のモードと値の組み合わせを検証することを確認する。
 
@@ -1921,7 +1921,7 @@ async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MoqP
     assert received[0].subgroup_id == 0
 
     # モードと値が食い違う送信は拒否される
-    with pytest.raises(MoqtError, match="subgroup id must be omitted"):
+    with pytest.raises(MOQTError, match="subgroup id must be omitted"):
         await published[0].send_object(
             2,
             0,
@@ -1929,7 +1929,7 @@ async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MoqP
             subgroup_id=3,
             subgroup_id_mode=SUBGROUP_ID_MODE_ZERO,
         )
-    with pytest.raises(MoqtError, match="unknown subgroup id mode"):
+    with pytest.raises(MOQTError, match="unknown subgroup id mode"):
         await published[0].send_object(2, 0, b"invalid", subgroup_id_mode="reserved")
 
     # 明示モードではヘッダの値がそのまま受信側へ届く
