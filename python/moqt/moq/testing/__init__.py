@@ -16,9 +16,13 @@
 提供する fixture:
 
 - ``moq_certificates``: localhost 用の自己署名証明書 ``(certfile, keyfile)``
+- ``moq_transport``: client と server が使う接続方式 (既定は WT-H3)
 - ``moq_server``: localhost で待ち受ける起動済みの ``Server``
 - ``moq_client_factory``: ``moq_server`` へ接続済みの ``Client`` を作る factory
 - ``moq_pair``: 接続済みの client / server と、確立した ``ServerSession``
+
+``moq_transport`` を上書きすると接続方式を変えられる。``Transport.Quic`` は
+``Server`` が未対応である。
 
 証明書生成だけを単体で使いたい場合は :func:`generate_certificates` を、
 述語の待ち合わせだけを単体で使いたい場合は :func:`wait_until` を使う。
@@ -47,6 +51,7 @@ from moqt.moq.testing.server import (
     ServerSession,
     SubscriptionRequest,
 )
+from moqt.moq.transport import Transport
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -197,15 +202,34 @@ def moq_certificates(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, str
     return generate_certificates(tmp_path_factory.mktemp("moq-certificates"))
 
 
+@pytest.fixture(scope="session")
+def moq_transport() -> Transport:
+    """client と server が使う接続方式を返す。
+
+    テストプロジェクト側でこの fixture を上書きすると、suite 全体を別の
+    接続方式で実行できる。
+    """
+    return Transport.WebTransportOverHTTP3
+
+
 @pytest_asyncio.fixture
-async def moq_server(moq_certificates: tuple[str, str]) -> AsyncIterator[Server]:
+async def moq_server(
+    moq_certificates: tuple[str, str],
+    moq_transport: Transport,
+) -> AsyncIterator[Server]:
     """localhost の空きポートで待ち受ける `Server` を起動する。
 
     peer からの SUBSCRIBE / FETCH を扱うには、この fixture を受け取ったテストが
     `on_subscribe` / `on_fetch` を登録してから client を接続する。
     """
     certfile, keyfile = moq_certificates
-    server = Server(host="127.0.0.1", port=0, certfile=certfile, keyfile=keyfile)
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=moq_transport,
+    )
     await server.start()
     run_task = asyncio.create_task(server.run())
     try:
@@ -218,7 +242,10 @@ async def moq_server(moq_certificates: tuple[str, str]) -> AsyncIterator[Server]
 
 
 @pytest_asyncio.fixture
-async def moq_client_factory(moq_server: Server) -> AsyncIterator[ClientFactory]:
+async def moq_client_factory(
+    moq_server: Server,
+    moq_transport: Transport,
+) -> AsyncIterator[ClientFactory]:
     """`moq_server` へ接続済みの `Client` を作る factory を返す。
 
     factory が作った client は fixture の終了時にすべて閉じる。
@@ -236,6 +263,7 @@ async def moq_client_factory(moq_server: Server) -> AsyncIterator[ClientFactory]
         target = url or f"moqt://127.0.0.1:{moq_server.actual_port}/webtransport"
         client = Client(
             url=target,
+            transport=moq_transport,
             verify_peer=verify_peer,
             control_message_timeout=control_message_timeout,
             data_stream_timeout=data_stream_timeout,
@@ -287,5 +315,6 @@ __all__ = [
     "moq_client_factory",
     "moq_pair",
     "moq_server",
+    "moq_transport",
     "wait_until",
 ]

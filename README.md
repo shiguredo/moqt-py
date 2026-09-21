@@ -168,6 +168,8 @@ pytest の rootdir に置いた `conftest.py` で宣言すると、client と se
 pytest_plugins = ["moqt.moq.testing"]
 ```
 
+接続方式は `moq_transport` fixture で選べます (既定は WebTransport over HTTP/3)。上書きすると suite 全体を別の接続方式で実行できます。
+
 ```python
 from moqt.moq import Publication
 from moqt.moq.testing import MOQTPair, SubscriptionRequest, collect_objects, wait_until
