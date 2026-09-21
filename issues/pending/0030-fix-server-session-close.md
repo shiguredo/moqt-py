@@ -1,4 +1,4 @@
-# Server が MoQT セッション終了時に WebTransport session を閉じられない
+# Server が MOQT セッション終了時に WebTransport session を閉じられない
 
 - Created: 2026-09-16
 - Completed:
@@ -7,7 +7,7 @@
 
 ## 目的
 
-MoQT セッションが終了したことを peer が検知できるようにする。
+MOQT セッションが終了したことを peer が検知できるようにする。
 
 状態機械がプロトコル違反でセッションを閉じても、WebTransport session が開いたままだと
 peer は失敗に気づけない。相手側は期限まで待ち続けることになる。
@@ -28,12 +28,12 @@ webtransport-py の `h3.Server` には WebTransport session を閉じる API が
 ## 設計方針
 
 webtransport-py にサーバー側のセッション終了 API が追加されたら、`Server` の close 経路を
-それに繋ぎ、MoQT の終了コードと理由を渡す。クライアント側も同じくコードと理由を渡せる
+それに繋ぎ、MOQT の終了コードと理由を渡す。クライアント側も同じくコードと理由を渡せる
 API が用意されたら合わせる。
 
 ## 完了条件
 
-- MoQT セッションが終了したとき、peer が WebTransport session の終了として検知できること
+- MOQT セッションが終了したとき、peer が WebTransport session の終了として検知できること
 - 終了コードと理由が peer へ伝わること
 
 ## pending にする理由

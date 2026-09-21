@@ -296,7 +296,7 @@ def prop_setup_establishes_for_arbitrary_stream_fragmentation(
     client_setup = client.start()
     server_setup = server.start()
 
-    # WebTransport の受信 fragment 境界は MoQT メッセージ境界と一致しない。
+    # WebTransport の受信 fragment 境界は MOQT メッセージ境界と一致しない。
     for chunk in _split(client_setup, client_sizes):
         server.receive_control(chunk)
     for chunk in _split(server_setup, server_sizes):

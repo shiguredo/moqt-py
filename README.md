@@ -17,14 +17,14 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## moqt-py について
 
-moqt-py は Media over QUIC Transport (MoQT) を扱う Python ライブラリです。中継 (relay) は含みません。API は 2 層に分かれています。
+moqt-py は Media over QUIC Transport (MOQT) を扱う Python ライブラリです。中継 (relay) は含みません。API は 2 層に分かれています。
 
-- `moqt.moq`: WebTransport 上で MoQT セッションを扱う高レベル API (client / server)
-- `moqt.moqt` / `moqt.loc` / `moqt.msf`: MoQT の codec と sans I/O セッション状態機械、LOC と MSF の codec を直接扱う低レベル API
+- `moqt.moq`: WebTransport 上で MOQT セッションを扱う高レベル API (client / server)
+- `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT の codec と sans I/O セッション状態機械、LOC と MSF の codec を直接扱う低レベル API
 
 実装には次のライブラリを利用しています。
 
-- MoQT の codec とセッション状態機械、LOC と MSF の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
+- MOQT の codec とセッション状態機械、LOC と MSF の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
 - WebTransport over HTTP/3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
 
 ## 対応仕様
@@ -58,9 +58,9 @@ uv add moqt-py
 
 ## 使い方 (高レベル API)
 
-`moqt.moq` が提供する高レベル API です。WebTransport の接続と MoQT セッションをまとめて扱います。
+`moqt.moq` が提供する高レベル API です。WebTransport の接続と MOQT セッションをまとめて扱います。
 
-- `moqt.moq.Client` で MoQT セッションを張り、`moqt.moq.Server` で受けます
+- `moqt.moq.Client` で MOQT セッションを張り、`moqt.moq.Server` で受けます
 - `moqt.moq.testing` で他プロジェクトのテストから client と server の組を用意できます
 - 低レベル API は [moqt.moqt](#moqtmoqt) / [moqt.loc](#moqtloc) / [moqt.msf](#moqtmsf) を参照してください
 
@@ -201,7 +201,7 @@ uv add "moqt-py[testing]"
 
 ### moqt.moqt
 
-MoQT の codec と sans I/O セッション状態機械です。ストリームの実体には触れず、呼び出し側がバイト列をやり取りします。
+MOQT の codec と sans I/O セッション状態機械です。ストリームの実体には触れず、呼び出し側がバイト列をやり取りします。
 
 ```python
 from moqt.moqt import Session, decode_message

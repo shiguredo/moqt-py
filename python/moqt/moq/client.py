@@ -1,4 +1,4 @@
-"""WebTransport over HTTP/3 を利用する MoQT client。"""
+"""WebTransport over HTTP/3 を利用する MOQT client。"""
 
 import asyncio
 import contextlib
@@ -53,7 +53,7 @@ class PeerGoaway:
 
 @dataclass(slots=True)
 class MoqtObject:
-    """受信した MoQT オブジェクト。"""
+    """受信した MOQT オブジェクト。"""
 
     stream_id: int | None
     """受信したデータストリームの ID。
@@ -264,7 +264,7 @@ class TrackStatus:
 
 
 class Client:
-    """WebTransport 接続上で MoQT を扱う client。"""
+    """WebTransport 接続上で MOQT を扱う client。"""
 
     def __init__(
         self,
@@ -336,7 +336,7 @@ class Client:
 
     @property
     def established(self) -> bool:
-        """MoQT SETUP 交換が完了しているかを返す。"""
+        """MOQT SETUP 交換が完了しているかを返す。"""
         runtime = self._runtime
         return runtime is not None and runtime.established
 
@@ -483,7 +483,7 @@ class Client:
         self._goaway_callback = callback
 
     async def connect(self, timeout: float = 10.0) -> None:
-        """WebTransport へ接続し、MoQT SETUP 交換の完了を待つ。"""
+        """WebTransport へ接続し、MOQT SETUP 交換の完了を待つ。"""
         if self._run_task is not None:
             raise RuntimeError("client has already been started")
 
@@ -509,7 +509,7 @@ class Client:
             await asyncio.wait_for(self._established_event.wait(), timeout=timeout)
         except TimeoutError:
             await self.close()
-            raise TimeoutError(f"MoQT SETUP did not complete within {timeout} seconds") from None
+            raise TimeoutError(f"MOQT SETUP did not complete within {timeout} seconds") from None
 
         if self._connect_error is not None:
             error = self._connect_error
@@ -517,7 +517,7 @@ class Client:
             raise error
 
     async def close(self) -> None:
-        """MoQT client と WebTransport 接続を閉じる。"""
+        """MOQT client と WebTransport 接続を閉じる。"""
         if self._tick_task is not None:
             self._tick_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -806,7 +806,7 @@ class Client:
         pending = self._pending_objects.setdefault(track_alias, [])
         if len(pending) >= MAX_PENDING_OBJECTS_PER_ALIAS:
             logger.warning(
-                "MoQT dropped an object for track alias %d: "
+                "MOQT dropped an object for track alias %d: "
                 "no subscription is registered and %d objects are already buffered",
                 track_alias,
                 MAX_PENDING_OBJECTS_PER_ALIAS,
@@ -909,7 +909,7 @@ class Client:
 
         セッション自体は壊れていないため、接続は閉じない。
         """
-        logger.warning("MoQT callback failed: %s", error)
+        logger.warning("MOQT callback failed: %s", error)
 
     async def _tick_loop(self) -> None:
         """セッションのタイムアウト判定を定期的に実行する。"""
@@ -955,7 +955,7 @@ class Client:
         if not self.established:
             self._fail_connect(
                 ConnectionError(
-                    f"WebTransport session {session_id} closed before MoQT SETUP completed"
+                    f"WebTransport session {session_id} closed before MOQT SETUP completed"
                 )
             )
 

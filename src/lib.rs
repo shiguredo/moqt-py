@@ -7,7 +7,7 @@
 //! # 役割分担
 //!
 //! - Python 側: WebTransport のストリーム操作、イベントループ、公開 API の組み立て
-//! - Rust 側: MoQT / LOC / MSF の codec と、MoQT のプロトコル状態機械
+//! - Rust 側: MOQT / LOC / MSF の codec と、MOQT のプロトコル状態機械
 //!
 //! I/O は Python の webtransport-py が担当する。Rust 側は自側が送るべきバイト列を
 //! イベントとして返し、ストリームの実体には触れない。
@@ -82,7 +82,7 @@ mod _native {
         SUBGROUP_ID_MODE_EXPLICIT, SUBGROUP_ID_MODE_FIRST_OBJECT_ID, SUBGROUP_ID_MODE_ZERO,
     };
 
-    // MoQT のプロトコル層 (moqt.moqt)
+    // MOQT のプロトコル層 (moqt.moqt)
     #[pymodule_export]
     use crate::codec::{
         Message, classify_data_stream_type, decode_message, decode_parameter, decode_varint,

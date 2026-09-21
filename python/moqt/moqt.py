@@ -1,4 +1,4 @@
-"""MoQT (Media over QUIC Transport) のプロトコル層。
+"""MOQT (Media over QUIC Transport) のプロトコル層。
 
 draft-ietf-moq-transport-21 の codec と sans I/O セッション状態機械を公開する。
 この層はストリームの実体に触れない。呼び出し側が peer のストリーム種別を判定して
@@ -15,7 +15,7 @@ WebTransport を介した client / server は `moqt.moq` が提供する。
 `LocationFilter` は `LOCATION_FILTER` の型付き表現であり、辞書の値としてそのまま
 渡せる。
 
-MoQT は draft 由来であり、将来の改訂で変更される可能性がある。
+MOQT は draft 由来であり、将来の改訂で変更される可能性がある。
 """
 
 from collections.abc import Callable

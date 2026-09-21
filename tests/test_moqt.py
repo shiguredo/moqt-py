@@ -269,7 +269,7 @@ def test_receive_control_waits_for_the_complete_setup_message() -> None:
     """
     peer 制御ストリームの断片が揃うまで SETUP を処理しないことを確認する。
 
-    WebTransport の受信 fragment 境界は MoQT メッセージ境界と一致しないため、
+    WebTransport の受信 fragment 境界は MOQT メッセージ境界と一致しないため、
     途中まで受信した制御メッセージは保持して続きの到着を待つ。
     """
     client = Session.client("moqt-py-test-client")

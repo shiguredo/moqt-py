@@ -1625,7 +1625,7 @@ class RemoveTrack:
 @final
 class Session:
     """
-    1 本の MoQT Transport Session に対応する sans I/O セッション状態機械。
+    1 本の MOQT Transport Session に対応する sans I/O セッション状態機械。
     
     ストリームの実体には触れない。呼び出し側が peer のストリーム種別を判定して
     `receive_*` を呼び、戻り値のイベントに従ってバイト列を送る。
@@ -1634,7 +1634,7 @@ class Session:
     @staticmethod
     def client(implementation: str = "moqt-py", setup_options: dict |None = None) -> Session:
         """
-        client role の MoQT Session を作成する。
+        client role の MOQT Session を作成する。
         
         `setup_options` は Setup Option Type をキーにした辞書である。偶数型は `int`、
         奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
@@ -1827,7 +1827,7 @@ class Session:
         """
         自側が開始した request stream を登録する。
         
-        MoQT の応答メッセージはワイヤに Request ID を含まないため、Python 側が
+        MOQT の応答メッセージはワイヤに Request ID を含まないため、Python 側が
         `send_request` イベントでストリームを開いた直後にこの対応を登録する。
         """
     def report_mid_object_fin(self, /, stream_id: int) -> list[Event]:
@@ -1978,7 +1978,7 @@ class Session:
     @staticmethod
     def server(implementation: str = "moqt-py", setup_options: dict |None = None) -> Session:
         """
-        server role の MoQT Session を作成する。
+        server role の MOQT Session を作成する。
         
         引数の意味は `client` と同じである。
         """

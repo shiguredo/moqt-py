@@ -23,7 +23,7 @@ moqt-rs は TRACK_STATUS を endpoint が受信する request として受理せ
 なる。
 
 - 要求側には応答が返らず、制御メッセージの期限で失敗する
-- 要求を受け取った側の MoQT セッションはプロトコル違反で閉じる
+- 要求を受け取った側の MOQT セッションはプロトコル違反で閉じる
 
 `tests/test_e2e.py` の `test_track_status_is_not_answered_by_an_endpoint` がこの挙動を
 記録している。

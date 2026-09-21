@@ -64,7 +64,7 @@ class ClientFactory(Protocol):
 
         Args:
             verify_peer: サーバー証明書を検証するか。
-            timeout: 接続と MoQT SETUP の待ち合わせ秒数。
+            timeout: 接続と MOQT SETUP の待ち合わせ秒数。
             url: 接続先。省略した場合は `moq_server` の待ち受け先を使う。
             control_message_timeout: 制御メッセージの応答待ちの期限 (秒)。
             data_stream_timeout: データストリームの停止を検出する期限 (秒)。
@@ -83,7 +83,7 @@ class MoqPair:
     """client を受け入れている server。"""
 
     session: ServerSession
-    """server 側で確立した MoQT session。"""
+    """server 側で確立した MOQT session。"""
 
 
 def generate_certificates(
@@ -246,7 +246,7 @@ async def moq_pair(
     moq_server: Server,
     moq_client_factory: ClientFactory,
 ) -> AsyncIterator[MoqPair]:
-    """WebTransport で接続し、MoQT SETUP まで終えた client / server の組を返す。"""
+    """WebTransport で接続し、MOQT SETUP まで終えた client / server の組を返す。"""
     established: list[ServerSession] = []
     established_event = asyncio.Event()
 

@@ -1,4 +1,4 @@
-"""WebTransport over HTTP/3 を利用する MoQT server。"""
+"""WebTransport over HTTP/3 を利用する MOQT server。"""
 
 import asyncio
 import contextlib
@@ -33,7 +33,7 @@ ConnectionContext = tuple[tuple[str, int], int]
 
 @dataclass(frozen=True, slots=True)
 class ServerSession:
-    """確立した MoQT server session。"""
+    """確立した MOQT server session。"""
 
     session_id: int
     """WebTransport session の ID。"""
@@ -387,7 +387,7 @@ class PublisherRequest:
 
 @dataclass(slots=True)
 class _Connection:
-    """1 本の WebTransport session に対応する MoQT の内部状態。"""
+    """1 本の WebTransport session に対応する MOQT の内部状態。"""
 
     runtime: Runtime
     address: tuple[str, int]
@@ -395,7 +395,7 @@ class _Connection:
 
 
 class Server:
-    """WebTransport 接続上で MoQT を扱う server。"""
+    """WebTransport 接続上で MOQT を扱う server。"""
 
     def __init__(
         self,
@@ -463,7 +463,7 @@ class Server:
         self,
         callback: Callable[[ServerSession], Awaitable[None]],
     ) -> None:
-        """MoQT SETUP 完了時に呼び出す非同期 callback を設定する。"""
+        """MOQT SETUP 完了時に呼び出す非同期 callback を設定する。"""
         self._on_session_established = callback
 
     def on_subscribe(
@@ -751,7 +751,7 @@ class Server:
         await self._on_subscribe(request)
 
     async def _on_session_ready(self, session_id: int, address: tuple[str, int]) -> None:
-        """WebTransport session ごとに server role の MoQT Session を開始する。"""
+        """WebTransport session ごとに server role の MOQT Session を開始する。"""
         key = (address, session_id)
         if key in self._connections:
             raise RuntimeError(f"duplicate WebTransport session: {session_id} from {address}")
@@ -772,7 +772,7 @@ class Server:
         await runtime.start()
 
     async def _on_session_closed(self, session_id: int, address: tuple[str, int]) -> None:
-        """閉じた WebTransport session の MoQT 状態を破棄する。"""
+        """閉じた WebTransport session の MOQT 状態を破棄する。"""
         self._connections.pop((address, session_id), None)
 
     async def _on_stream_data(
@@ -795,7 +795,7 @@ class Server:
             await connection.runtime.receive_stream(stream_id, data)
         except Exception as error:
             logger.warning(
-                "MoQT stream from %s was rejected: session=%s stream=%s error=%s",
+                "MOQT stream from %s was rejected: session=%s stream=%s error=%s",
                 address,
                 session_id,
                 stream_id,
@@ -809,7 +809,7 @@ class Server:
         error_code: int | None,
         address: tuple[str, int],
     ) -> None:
-        """ストリームの終端を MoQT 状態機械へ通知する。"""
+        """ストリームの終端を MOQT 状態機械へ通知する。"""
         connection = self._connections.get((address, session_id))
         if connection is not None:
             await connection.runtime.receive_stream_closed(stream_id, error_code)
@@ -820,7 +820,7 @@ class Server:
         data: bytes,
         address: tuple[str, int],
     ) -> None:
-        """受信したデータグラムを MoQT 状態機械へ渡す。"""
+        """受信したデータグラムを MOQT 状態機械へ渡す。"""
         connection = self._connections.get((address, session_id))
         if connection is not None:
             await connection.runtime.receive_datagram(data)

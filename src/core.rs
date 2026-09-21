@@ -1,6 +1,6 @@
-//! WebTransport の I/O と MoQT の状態機械を接続する facade。
+//! WebTransport の I/O と MOQT の状態機械を接続する facade。
 //!
-//! I/O は Python の webtransport-py が担当し、このモジュールは MoQT の Sans I/O
+//! I/O は Python の webtransport-py が担当し、このモジュールは MOQT の Sans I/O
 //! セッション状態機械を Python から駆動する facade を公開する。
 //!
 //! # 役割分担
@@ -1485,7 +1485,7 @@ impl CoreEvent {
 
 /// request stream をどちら側が開始したか。
 ///
-/// MoQT の応答メッセージはワイヤに Request ID を含まないため、ストリームと
+/// MOQT の応答メッセージはワイヤに Request ID を含まないため、ストリームと
 /// Request ID の対応は I/O 層が保持する
 /// (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR) の Request ID 省略)。
 #[derive(Debug)]
@@ -1548,7 +1548,7 @@ struct DataHeaderInfo {
     subgroup_id: Option<u64>,
 }
 
-/// 1 本の MoQT Transport Session に対応する sans I/O セッション状態機械。
+/// 1 本の MOQT Transport Session に対応する sans I/O セッション状態機械。
 ///
 /// ストリームの実体には触れない。呼び出し側が peer のストリーム種別を判定して
 /// `receive_*` を呼び、戻り値のイベントに従ってバイト列を送る。
@@ -1589,7 +1589,7 @@ pub(crate) struct CoreSession {
     last_error: Option<String>,
     /// stream type を状態機械へ通知済みのデータストリームと、その種別。
     ///
-    /// MoQT の単方向ストリームは先頭に stream type を持つ
+    /// MOQT の単方向ストリームは先頭に stream type を持つ
     /// (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams))。
     /// 種別はデコーダの作成にも使うため保持する。
     data_stream_types: HashMap<u64, DataStreamType>,
@@ -2375,7 +2375,7 @@ fn request_stream_end(
 
 #[pymethods]
 impl CoreSession {
-    /// client role の MoQT Session を作成する。
+    /// client role の MOQT Session を作成する。
     ///
     /// `setup_options` は Setup Option Type をキーにした辞書である。偶数型は `int`、
     /// 奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
@@ -2387,7 +2387,7 @@ impl CoreSession {
         Self::new(true, implementation, setup_options)
     }
 
-    /// server role の MoQT Session を作成する。
+    /// server role の MOQT Session を作成する。
     ///
     /// 引数の意味は `client` と同じである。
     #[staticmethod]
@@ -2489,7 +2489,7 @@ impl CoreSession {
 
     /// 自側が開始した request stream を登録する。
     ///
-    /// MoQT の応答メッセージはワイヤに Request ID を含まないため、Python 側が
+    /// MOQT の応答メッセージはワイヤに Request ID を含まないため、Python 側が
     /// `send_request` イベントでストリームを開いた直後にこの対応を登録する。
     fn register_local_request_stream(&mut self, stream_id: u64, request_id: u64) {
         self.request_streams

@@ -17,7 +17,7 @@ e2e テストの間欠失敗をなくす。
 `tests/test_e2e.py` の `test_objects_in_a_second_group_are_delivered` が、受信した
 オブジェクトの並びを `[(1, 0), (1, 1), (2, 0)]` と完全一致で検証している。
 
-Group 1 と Group 2 は別の subgroup ストリームである。MoQT の subgroup はそれぞれ独立した
+Group 1 と Group 2 は別の subgroup ストリームである。MOQT の subgroup はそれぞれ独立した
 単方向ストリームで運ばれるため、ストリーム間の到着順は保証されない。同じストリーム内の
 Object の順序だけが保証される。
 

@@ -8,7 +8,7 @@
 
 ## 目的
 
-MoQT の FETCH を使い、過去のオブジェクトを取得できるようにする。
+MOQT の FETCH を使い、過去のオブジェクトを取得できるようにする。
 
 クライアント役の機能として FETCH の送信と fetch stream の受信は実装済みだが、
 FETCH_OK を受け取った後にセッションが閉じてしまい、実際にはオブジェクトを
@@ -17,7 +17,7 @@ FETCH_OK を受け取った後にセッションが閉じてしまい、実際�
 ## 現状
 
 `moq.Client.fetch()` から FETCH を送信し、サーバが FETCH_OK と fetch stream で
-オブジェクトを返すと、クライアントの MoQT セッションが `code=0 reason=internal error`
+オブジェクトを返すと、クライアントの MOQT セッションが `code=0 reason=internal error`
 で閉じる。`tests/test_e2e.py` の `test_fetch_receives_objects` がこの状態を再現する
 （現在は `xfail` で無効化している）。
 

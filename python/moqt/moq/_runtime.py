@@ -1,4 +1,4 @@
-"""MoQT セッションと WebTransport ストリームを接続する内部ランタイム。
+"""MOQT セッションと WebTransport ストリームを接続する内部ランタイム。
 
 このモジュールは公開 API ではない。`moqt.moq.client` と `moqt.moq.server` が
 共通で使うストリーム振り分けとイベント処理をまとめる。
@@ -6,7 +6,7 @@
 役割分担は次のとおりである。
 
 - `webtransport.h3` がストリームとデータグラムの I/O を担当する
-- `moqt._native` が MoQT のプロトコル状態機械とメッセージのデコードを担当する
+- `moqt._native` が MOQT のプロトコル状態機械とメッセージのデコードを担当する
 - このランタイムが両者を接続し、ストリーム ID と Request ID の対応を保持する
 
 応答メッセージはワイヤに Request ID を含まないため、ストリームと Request ID の
@@ -198,7 +198,7 @@ _STREAM_DATA = "data"
 
 
 class MoqtError(Exception):
-    """MoQT のプロトコルエラー。"""
+    """MOQT のプロトコルエラー。"""
 
 
 class SessionClosedError(MoqtError):
@@ -354,7 +354,7 @@ class _PendingRequest:
 
 
 class Runtime:
-    """1 本の WebTransport session 上で MoQT セッションを駆動する。"""
+    """1 本の WebTransport session 上で MOQT セッションを駆動する。"""
 
     def __init__(
         self,
@@ -595,14 +595,14 @@ class Runtime:
         """制御ストリームを開いて SETUP を送信する。"""
         stream_id = await self._ops.open_uni_stream()
         if stream_id < 0:
-            raise ConnectionError("failed to open the local MoQT control stream")
+            raise ConnectionError("failed to open the local MOQT control stream")
         self._local_control_stream_id = stream_id
         self._local_streams.add(stream_id)
         self._streams[stream_id] = StreamInfo(kind=_STREAM_CONTROL)
         await self._ops.send_stream_data(stream_id, self._core.start(), False)
 
     async def close(self, code: int = 0, reason: str = "") -> None:
-        """MoQT セッションを閉じる。"""
+        """MOQT セッションを閉じる。"""
         if self._closed:
             return
         self._closed = True
@@ -673,7 +673,7 @@ class Runtime:
                     self._core.receive_data_stream_closed(stream_id, reset, error_code)
                 )
         except Exception as error:
-            logger.debug("MoQT stream close was rejected: stream=%s error=%s", stream_id, error)
+            logger.debug("MOQT stream close was rejected: stream=%s error=%s", stream_id, error)
             await self._finish_session(0, str(error))
 
     async def retry_pending_data_streams(self) -> None:
@@ -705,7 +705,7 @@ class Runtime:
         """
         if len(self._pending_datagrams) >= MAX_PENDING_DATAGRAMS:
             logger.warning(
-                "MoQT dropped a datagram: %d datagrams are already held "
+                "MOQT dropped a datagram: %d datagrams are already held "
                 "and no subscription matches their track alias",
                 MAX_PENDING_DATAGRAMS,
             )
@@ -728,7 +728,7 @@ class Runtime:
             if any(event.kind == "unknown_track_alias" for event in events):
                 if attempts + 1 >= MAX_DATAGRAM_RETRY_ATTEMPTS:
                     logger.warning(
-                        "MoQT dropped a datagram after %d retries: "
+                        "MOQT dropped a datagram after %d retries: "
                         "no subscription matches its track alias",
                         attempts + 1,
                     )
@@ -1330,7 +1330,7 @@ class Runtime:
             # 検知できない (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
             # 原因が分からないまま受信待ちで止まらないよう、送信前に警告する
             logger.warning(
-                "MoQT datagram size %d exceeds the portable limit %d; "
+                "MOQT datagram size %d exceeds the portable limit %d; "
                 "it may be dropped by the path without notification. "
                 "Use a subgroup stream for larger objects.",
                 len(datagram),
@@ -1350,7 +1350,7 @@ class Runtime:
     def _classify_stream(self, stream_id: int, data: bytes) -> StreamInfo | None:
         """未登録ストリームの種別を判定する。
 
-        MoQT の双方向ストリームは request stream、単方向ストリームは制御ストリーム
+        MOQT の双方向ストリームは request stream、単方向ストリームは制御ストリーム
         または data stream である。QUIC のストリーム ID は下位 2 ビットで向きを
         表すため (RFC 9000 §2.1)、データ本体を読む前に判定できる。
         """
@@ -1521,7 +1521,7 @@ class Runtime:
                     # webtransport-py の reset_stream は reliable size を運べないため、
                     # 状態機械の判断を記録だけして通常の reset を送る
                     logger.info(
-                        "MoQT resetting stream %d with reliable size %d; "
+                        "MOQT resetting stream %d with reliable size %d; "
                         "the transport does not carry the reliable size",
                         stream_id,
                         event.reliable_size,
@@ -1544,7 +1544,7 @@ class Runtime:
         acceptance = event.acceptance
         if acceptance != "accepted":
             logger.debug(
-                "dropped MoQT object: stream=%s object=%s reason=%s",
+                "dropped MOQT object: stream=%s object=%s reason=%s",
                 event.stream_id,
                 event.object_id,
                 acceptance,
@@ -1592,7 +1592,7 @@ class Runtime:
             self._remember_incoming_request(event)
             await self._notify(self._events.on_request, event)
         else:
-            logger.warning("unhandled MoQT event: %s", kind)
+            logger.warning("unhandled MOQT event: %s", kind)
 
     async def _respond_request_update(self, event: NativeEvent) -> None:
         """受信した REQUEST_UPDATE へ応答する。
@@ -1656,7 +1656,7 @@ class Runtime:
 
     async def _handle_close(self, event: NativeEvent) -> None:
         """セッション終了を処理する。"""
-        logger.debug("MoQT session closed: code=%s reason=%s", event.code, event.reason)
+        logger.debug("MOQT session closed: code=%s reason=%s", event.code, event.reason)
         await self._finish_session(int(event.code or 0), str(event.reason or ""))
 
     async def _finish_session(self, code: int, reason: str) -> None:
@@ -1679,7 +1679,7 @@ class Runtime:
         try:
             await callback(*args)
         except Exception as error:
-            logger.exception("MoQT callback failed")
+            logger.exception("MOQT callback failed")
             if self._on_task_error is not None:
                 await self._on_task_error(error)
 

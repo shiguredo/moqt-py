@@ -132,7 +132,7 @@ def _object_properties(timestamp: int) -> bytes:
 
 async def test_client_and_server_exchange_setup_over_webtransport(moq_pair: MoqPair) -> None:
     """
-    localhost の実 WebTransport 接続上で MoQT SETUP が成立することを確認する。
+    localhost の実 WebTransport 接続上で MOQT SETUP が成立することを確認する。
 
     SETUP 交換の完了、確立した session の識別情報、接続元アドレスを検証する。
     """
@@ -284,7 +284,7 @@ async def test_two_clients_connect_to_one_server(moq_client_factory: ClientFacto
     同じ server へ 2 本の client を接続できることを確認する。
 
     `moq_client_factory` が返す factory を繰り返し呼び、それぞれの接続で
-    MoQT SETUP が成立することを検証する。
+    MOQT SETUP が成立することを検証する。
     """
     first: Client = await moq_client_factory()
     second: Client = await moq_client_factory()
@@ -1225,7 +1225,7 @@ async def test_datagram_size_is_reported_before_sending(
     await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
     await wait_until(lambda: bool(published))
 
-    # MoQT のヘッダもデータグラムに含まれるため、ペイロードは上限と同じか半分にする
+    # MOQT のヘッダもデータグラムに含まれるため、ペイロードは上限と同じか半分にする
     payload_size = moqt.MAX_DATAGRAM_SIZE if oversized else moqt.MAX_DATAGRAM_SIZE // 2
 
     with caplog.at_level(logging.WARNING, logger="moqt.moq._runtime"):
