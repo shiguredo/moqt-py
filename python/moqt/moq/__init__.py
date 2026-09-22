@@ -8,7 +8,7 @@ sans I/O 状態機械を直接扱う必要はない。
 
 - `Client`: 接続を張って MOQT セッションを開始する
 - `Transport`: 接続方式 (QUIC / WebTransport over HTTP/2 / WebTransport over HTTP/3)
-- `Subscription` / `Fetch` / `TrackStatus`: client 側の要求
+- `Subscription` / `Fetch`: client 側の要求
 - `Publication`: 配信中の Track
 - `MOQTObject`: 受信したオブジェクト
 - `PeerGoaway`: peer から受信した GOAWAY
@@ -25,7 +25,6 @@ from moqt.moq.client import (
     MOQTObject,
     PeerGoaway,
     Subscription,
-    TrackStatus,
 )
 from moqt.moq.publisher import Publication
 from moqt.moq.transport import Transport
@@ -47,6 +46,5 @@ __all__ = [
     "PeerGoaway",
     "Publication",
     "Subscription",
-    "TrackStatus",
     "Transport",
 ]

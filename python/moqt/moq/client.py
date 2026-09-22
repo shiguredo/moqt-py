@@ -309,25 +309,16 @@ class Fetch:
         self._ranges.put_nowait(None)
 
 
-@dataclass(slots=True)
-class TrackStatus:
-    """TRACK_STATUS の応答。"""
-
-    request_id: int
-    """TRACK_STATUS の Request ID。"""
-
-    namespace: tuple[bytes, ...]
-    """Track Namespace。"""
-
-    track_name: bytes
-    """Track 名。"""
-
-    parameters: dict[int, object]
-    """応答パラメータ (LARGEST_OBJECT など)。"""
-
-
 class Client:
-    """QUIC / WebTransport 接続上で MOQT を扱う client。"""
+    """QUIC / WebTransport 接続上で MOQT を扱う client。
+
+    client は自側から request を送る側であり、peer から届いた request
+    (SUBSCRIBE / PUBLISH / FETCH / TRACK_STATUS) に応答する機構を持たない。
+    server 役として要求に応答するのは `moqt.moq.testing` の `Server` である。
+
+    TRACK_STATUS を送る API は持たない。`moqt.moqt` の低レベル API が moqt-rs と
+    同じ形で提供する。
+    """
 
     def __init__(
         self,
@@ -520,23 +511,6 @@ class Client:
         値は状態機械のスナップショットであり、参照しても状態は変化しない。
         """
         return self._require_runtime().fetches()
-
-    def track_status_state(self, request_id: int) -> dict[str, object] | None:
-        """指定 Request ID の TRACK_STATUS の状態を返す。
-
-        保持していない Request ID の場合は `None` である。`track_status` は
-        TRACK_STATUS を送る API であるため、状態の照会はこの名前で行う。全件は
-        `track_status_requests()` で取得する。値は状態機械のスナップショットであり、
-        参照しても状態は変化しない。
-        """
-        return self._require_runtime().track_status_state(request_id)
-
-    def track_status_requests(self) -> dict[int, dict[str, object]]:
-        """自側が保持する全 TRACK_STATUS の状態を Request ID をキーにして返す。
-
-        値は状態機械のスナップショットであり、参照しても状態は変化しない。
-        """
-        return self._require_runtime().track_status_requests()
 
     def on_publish_state_notify(
         self,
@@ -764,29 +738,6 @@ class Client:
         """FETCH の Request ID が確定した時点で Fetch を登録する。"""
         if request_id not in self._fetches:
             self._new_fetch(request_id, namespace, track_name)
-
-    async def track_status(
-        self,
-        namespace: Sequence[bytes],
-        track_name: bytes,
-        parameters: dict[int, object] | None = None,
-    ) -> TrackStatus:
-        """Track の状態を問い合わせる (TRACK_STATUS)。
-
-        draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS) は publisher が
-        TRACK_STATUS_OK または REQUEST_ERROR で応答するとする。moqt-py が利用する
-        状態機械は TRACK_STATUS を endpoint が受信する request として受理しないため、
-        moqt-py の server は応答を返さずにセッションを終了する。応答が無いまま
-        待ち続けないよう `control_message_timeout` を設定すること。
-        """
-        runtime = self._require_runtime()
-        request_id, event = await runtime.track_status(namespace, track_name, parameters)
-        return TrackStatus(
-            request_id=request_id,
-            namespace=tuple(namespace),
-            track_name=track_name,
-            parameters=dict(event.parameters or {}),
-        )
 
     async def goaway(self, timeout: int = 0, new_session_uri: bytes = b"") -> None:
         """GOAWAY を送信してセッションの終了を予告する。
@@ -1134,5 +1085,4 @@ __all__ = [
     "MOQTObject",
     "Publication",
     "Subscription",
-    "TrackStatus",
 ]

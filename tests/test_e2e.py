@@ -792,8 +792,6 @@ async def test_session_state_accessors_report_the_live_session(
         assert fetch_entry["my_role"] == "subscriber"
         assert fetch_entry["track_name"] == b"fetched"
         assert client.fetches() == {fetch.request_id: fetch_entry}
-        # TRACK_STATUS は送っていないため空である
-        assert client.track_status_requests() == {}
     finally:
         if client is not None:
             await client.close()
@@ -1591,39 +1589,6 @@ async def test_publish_state_notify_is_delivered_to_the_subscriber(moq_pair: MOQ
     objects = await _take_objects(subscription, 1)
 
     assert objects[0].payload == b"after-notify"
-
-
-async def test_track_status_is_not_answered_by_an_endpoint(
-    moq_server: Server,
-    moq_client_factory: ClientFactory,
-) -> None:
-    """
-    endpoint が TRACK_STATUS に応答しないことを確認する。
-
-    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS) は、publisher が失敗した
-    TRACK_STATUS に REQUEST_ERROR を返すとする。moqt-py が利用する状態機械は
-    TRACK_STATUS を endpoint が受信する request として受理しないため、応答は返らず、
-    要求を受け取った側のセッションはプロトコル違反で終了する。要求側には応答が
-    届かないため、制御メッセージの期限で失敗を検出する
-    (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
-    """
-    sessions: list[ServerSession] = []
-    established = asyncio.Event()
-
-    async def on_session_established(session: ServerSession) -> None:
-        sessions.append(session)
-        established.set()
-
-    moq_server.on_session_established(on_session_established)
-    # 応答が返らないまま待ち続けないよう、制御メッセージの期限を設定する
-    client = await moq_client_factory(control_message_timeout=1.0)
-    await asyncio.wait_for(established.wait(), timeout=OBJECT_TIMEOUT)
-
-    with pytest.raises(MOQTError, match="session closed: code="):
-        await client.track_status(NAMESPACE, TRACK_NAME)
-
-    # 受理しなかった publisher 側もセッションを終了する
-    await wait_until(lambda: sessions[0].runtime.closed)
 
 
 async def test_client_goaway_is_notified_to_the_server(moq_pair: MOQTPair) -> None:

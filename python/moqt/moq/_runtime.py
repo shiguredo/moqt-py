@@ -820,19 +820,6 @@ class Runtime:
             on_request_id=on_request_id,
         )
 
-    async def track_status(
-        self,
-        namespace: Sequence[bytes],
-        track_name: bytes,
-        parameters: dict[int, object] | None = None,
-    ) -> tuple[int, NativeEvent]:
-        """TRACK_STATUS を送信し、応答を待つ。"""
-        return await self._start_request(
-            lambda request_id: self._core.send_track_status(
-                list(namespace), track_name, dict(parameters or {})
-            )
-        )
-
     async def send_request_update(
         self,
         request_id: int,
