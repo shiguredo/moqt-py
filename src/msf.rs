@@ -1728,10 +1728,13 @@ pub(crate) fn parse_msf_fragment(py: Python<'_>, fragment: &str) -> PyResult<Par
 
 /// MSF の Track 識別子 (`namespace--track` 形式) を namespace と Track 名へ分解する
 /// (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+///
+/// 分解できない場合は `ValueError` を送出する。メッセージには moqt-rs の
+/// `NameParseError` の `Display` 表現 (失敗した規則の説明) をそのまま使う。
 #[pyfunction]
 pub(crate) fn parse_name(py: Python<'_>, text: &str) -> PyResult<(Py<PyAny>, Py<PyBytes>)> {
     let (namespace, track_name) = name::parse_name(text)
-        .map_err(|error| PyValueError::new_err(format!("invalid Track name: {error:?}")))?;
+        .map_err(|error| PyValueError::new_err(format!("invalid Track name: {error}")))?;
     let namespace = track_namespace_to_python(py, &namespace)?;
     Ok((namespace.into_any(), PyBytes::new(py, &track_name).unbind()))
 }

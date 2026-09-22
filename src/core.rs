@@ -572,6 +572,9 @@ pub(crate) fn message_kind(message: &ControlMessage) -> &'static str {
         ControlMessage::Fetch(_) => "fetch",
         ControlMessage::FetchOk(_) => "fetch_ok",
         ControlMessage::TrackStatus(_) => "track_status",
+        // 定義済みだが moqt-rs が実装しない制御メッセージ
+        // (relay 専用の namespace 発見・告知機構)
+        ControlMessage::Unsupported { .. } => "unsupported",
     }
 }
 
@@ -585,6 +588,7 @@ pub(crate) fn message_request_id(message: &ControlMessage) -> Option<u64> {
         ControlMessage::Publish(m) => Some(m.request_id),
         ControlMessage::Fetch(m) => Some(m.request_id),
         ControlMessage::TrackStatus(m) => Some(m.request_id),
+        ControlMessage::Unsupported { request_id, .. } => *request_id,
         _ => None,
     }
 }
@@ -810,6 +814,11 @@ fn track_status_to_python(py: Python<'_>, entry: &TrackStatusEntry) -> PyResult<
     };
     dict.set_item("response", response)?;
     dict.set_item("largest_location", largest_location)?;
+    // 自側の送信方向が閉じたか。`false` の間は応答を送れる。
+    // 自側が publisher (responder) のとき、応答を送る前に peer が cancel すると
+    // response を持たないまま終端するため、回収の判断に要る
+    // (draft-ietf-moq-transport-21 §6.4.2.3 (Request Cancellation and Rejection))。
+    dict.set_item("terminated", entry.terminated)?;
     Ok(dict.unbind())
 }
 
@@ -1133,6 +1142,18 @@ pub(crate) fn message_body_to_python(
             )?;
             dict.set_item("track_name", PyBytes::new(py, track_name))?;
             dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
+        }
+        // 定義済みだが moqt-rs が実装しない制御メッセージ。本体は Length の後ろの
+        // 生バイト列のまま公開し、Python 側で内容を解釈できるようにする
+        // (draft-ietf-moq-transport-21 §9 Table 5 / §1.5 (Modularity))。
+        ControlMessage::Unsupported {
+            type_id,
+            request_id,
+            body,
+        } => {
+            dict.set_item("type_id", *type_id)?;
+            dict.set_item("request_id", *request_id)?;
+            dict.set_item("body", PyBytes::new(py, body))?;
         }
     }
     Ok(dict.unbind())

@@ -48,9 +48,13 @@ impl Message {
     ///
     /// `setup` / `goaway` / `request_ok` / `request_error` / `subscribe` /
     /// `subscribe_ok` / `request_update` / `publish` / `publish_done` /
-    /// `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` のいずれかである。
-    /// 列挙は `moqt.moqt` が扱う制御メッセージの全体であり、relay 専用の
-    /// namespace 発見・告知機構は含まない。
+    /// `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` /
+    /// `unsupported` のいずれかである。
+    ///
+    /// `unsupported` は draft の §9 Table 5 に定義済みだが moqt-rs が実装しない
+    /// 制御メッセージ (relay 専用の namespace 発見・告知機構) であり、本体は
+    /// 生バイト列のまま公開する。列挙は `moqt.moqt` が扱う制御メッセージの全体であり、
+    /// relay 専用の namespace 発見・告知機構の API は含まない。
     #[getter]
     fn kind(&self) -> &'static str {
         self.kind
@@ -66,6 +70,10 @@ impl Message {
     ///
     /// 応答メッセージはワイヤに Request ID を含まないため `None` を返す。
     /// (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR))
+    ///
+    /// `unsupported` では Request ID (vi64) で始まる型 (PUBLISH_NAMESPACE /
+    /// SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS) のときだけ `Some` になり、
+    /// 応答専用の型 (NAMESPACE / NAMESPACE_DONE / PUBLISH_SKIPPED) では `None` になる。
     #[getter]
     fn request_id(&self) -> Option<u64> {
         self.request_id

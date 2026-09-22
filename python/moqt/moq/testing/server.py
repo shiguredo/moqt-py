@@ -141,8 +141,8 @@ class ServerSession:
         """指定 Request ID の TRACK_STATUS の状態を返す。
 
         保持していない Request ID の場合は `None` である。全件は
-        `track_status_requests()` で取得する。名前は `Client.track_status_state` と
-        揃えている。値は状態機械のスナップショットであり、参照しても状態は変化しない。
+        `track_status_requests()` で取得する。値は状態機械のスナップショットであり、
+        参照しても状態は変化しない。
         """
         return self.runtime.track_status_state(request_id)
 
@@ -771,8 +771,9 @@ class Server:
             return
         if event.kind != "subscribe":
             # 未対応の request は REQUEST_NOT_SUPPORTED で拒否する。
-            # 状態機械が request として受理するのは SUBSCRIBE / PUBLISH / FETCH だけであり、
-            # それ以外はコールバックへ届かないため、ここで扱うのは SUBSCRIBE のみである
+            # 状態機械が request として受理するのは SUBSCRIBE / PUBLISH / FETCH /
+            # TRACK_STATUS であり、それ以外はコールバックへ届かないため、
+            # ここで扱うのは SUBSCRIBE のみである
             await runtime.send_request_error(
                 event.request_id or 0,
                 moqt.REQUEST_NOT_SUPPORTED,

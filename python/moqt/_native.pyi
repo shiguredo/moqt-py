@@ -1233,9 +1233,13 @@ class Message:
         
         `setup` / `goaway` / `request_ok` / `request_error` / `subscribe` /
         `subscribe_ok` / `request_update` / `publish` / `publish_done` /
-        `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` のいずれかである。
-        列挙は `moqt.moqt` が扱う制御メッセージの全体であり、relay 専用の
-        namespace 発見・告知機構は含まない。
+        `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` /
+        `unsupported` のいずれかである。
+        
+        `unsupported` は draft の §9 Table 5 に定義済みだが moqt-rs が実装しない
+        制御メッセージ (relay 専用の namespace 発見・告知機構) であり、本体は
+        生バイト列のまま公開する。列挙は `moqt.moqt` が扱う制御メッセージの全体であり、
+        relay 専用の namespace 発見・告知機構の API は含まない。
         """
     @property
     def parameters(self, /) -> Any:
@@ -1258,6 +1262,10 @@ class Message:
         
         応答メッセージはワイヤに Request ID を含まないため `None` を返す。
         (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR))
+        
+        `unsupported` では Request ID (vi64) で始まる型 (PUBLISH_NAMESPACE /
+        SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS) のときだけ `Some` になり、
+        応答専用の型 (NAMESPACE / NAMESPACE_DONE / PUBLISH_SKIPPED) では `None` になる。
         """
     @property
     def type_id(self, /) -> int:
@@ -2898,6 +2906,9 @@ def parse_name(text: str) -> tuple[Any, bytes]:
     """
     MSF の Track 識別子 (`namespace--track` 形式) を namespace と Track 名へ分解する
     (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+    
+    分解できない場合は `ValueError` を送出する。メッセージには moqt-rs の
+    `NameParseError` の `Display` 表現 (失敗した規則の説明) をそのまま使う。
     """
 
 def resolve_catalog_variables(document: bytes, fragment: str) -> bytes:

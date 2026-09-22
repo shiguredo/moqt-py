@@ -396,6 +396,13 @@ class Runtime:
         self._pending_requests: dict[int, _PendingRequest] = {}
         # 自側が開始した request の request stream ID (Request ID 索引)
         self._request_streams: dict[int, int] = {}
+        # peer から届いた request の request stream ID (Request ID 索引)
+        #
+        # `_streams` はストリームの終端通知で消えるが、peer の FIN は方向ごとの終端で
+        # あって cancel ではないため、自側はまだ応答を送れる。終端後も送信先を引ける
+        # ように別に保持する (draft-ietf-moq-transport-21 §6.4.2.2
+        # (Graceful Request Stream Closure))。
+        self._incoming_request_streams: dict[int, int] = {}
         # 自側が開始したストリーム ID
         self._local_streams: set[int] = set()
         # stream type を通知済みのデータストリーム
@@ -575,8 +582,12 @@ class Runtime:
         購読が終了しても同じ Request ID への参照が残っている可能性があるため、
         回収は `*_cleanup_ready` が真を返したときだけ行う。
 
-        TRACK_STATUS には `*_cleanup_ready` が無いため、応答の有無だけで判断する
+        TRACK_STATUS には `*_cleanup_ready` が無いため、応答の有無と終端の有無で判断する
         (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+
+        自側が publisher (responder) の TRACK_STATUS は、応答を送る前に peer が cancel
+        すると response を持たないまま終端する。終端した entry は応答を送れないため
+        回収できる (§6.4.2.3 (Request Cancellation and Rejection))。
         """
         for request_id in list(self._core.subscriptions()):
             if self._core.subscription_cleanup_ready(request_id) is True:
@@ -586,7 +597,7 @@ class Runtime:
                 self._core.forget_fetch(request_id)
         for request_id in list(self._core.track_status_requests()):
             entry = self._core.track_status_request(request_id)
-            if entry is not None and entry["response"] != "pending":
+            if entry is not None and (entry["response"] != "pending" or entry["terminated"]):
                 self._core.forget_track_status(request_id)
 
     # ─── 開始と終了 ─────────────────────────────────────────
@@ -1450,12 +1461,21 @@ class Runtime:
         if fin:
             if request_id is not None:
                 self._request_streams.pop(request_id, None)
+                self._incoming_request_streams.pop(request_id, None)
             self._streams.pop(stream_id, None)
 
     def _find_incoming_request_stream(self, request_id: int | None) -> int | None:
-        """peer から届いた request stream を Request ID から引く。"""
+        """peer から届いた request stream を Request ID から引く。
+
+        peer の FIN を受信したあとも自側は応答を送れるため、`_streams` の登録が
+        消えていても `_incoming_request_streams` から引ける (draft-ietf-moq-transport-21
+        §6.4.2.2 (Graceful Request Stream Closure))。
+        """
         if request_id is None:
             return None
+        stream_id = self._incoming_request_streams.get(request_id)
+        if stream_id is not None:
+            return stream_id
         for stream_id, info in self._streams.items():
             if info.kind == _STREAM_REQUEST and info.request_id == request_id:
                 return stream_id
@@ -1465,6 +1485,8 @@ class Runtime:
         """request stream を RESET_STREAM で終了する。"""
         request_id = event.request_id
         stream_id = self._request_streams.pop(request_id, None) if request_id is not None else None
+        if request_id is not None:
+            self._incoming_request_streams.pop(request_id, None)
         if stream_id is None:
             stream_id = self._find_incoming_request_stream(request_id)
         if stream_id is None:
@@ -1485,12 +1507,15 @@ class Runtime:
             await self._ops.stop_sending(stream_id, int(event.code or 0))
 
     async def _finish_request_stream(self, event: NativeEvent) -> None:
-        """requester として開いた request stream の送信方向を FIN で閉じる。
+        """request の送信方向を FIN で閉じる。
 
-        responder が応答とその後のメッセージを送り終えて FIN を送ると、request は
-        完了したとみなされる。requester も送信方向を FIN で閉じることが SHOULD で
-        求められている (draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream
-        Closure))。この節番号・規則は draft 由来であり将来 draft 改定で変わる可能性がある。
+        自側が requester の場合は、responder が応答とその後のメッセージを送り終えて
+        FIN を送ると request は完了したとみなされ、requester も送信方向を FIN で
+        閉じることが SHOULD で求められている。自側が responder の場合は、PUBLISH 起点の
+        subscription で peer の PUBLISH_DONE を受信した時点で自側が送るべきメッセージが
+        無くなるため、送信方向を FIN で閉じる
+        (draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure))。
+        この節番号・規則は draft 由来であり、将来 draft 改定で変わる可能性がある。
 
         既に FIN した request では `_request_streams` からエントリが消えているため、
         何もせずに戻る。アプリが独自に FIN した後に本イベントが届く場合があり、
@@ -1503,6 +1528,10 @@ class Runtime:
         """
         request_id = event.request_id
         stream_id = self._request_streams.pop(request_id, None) if request_id is not None else None
+        if stream_id is None:
+            # peer が開始した request のストリームは `_streams` の登録が終端通知で
+            # 消えていることがあるため、別に保持した対応から引く
+            stream_id = self._incoming_request_streams.pop(request_id, None)
         if stream_id is None:
             return
         self._streams.pop(stream_id, None)
@@ -1563,6 +1592,8 @@ class Runtime:
             await self._reject_request(event)
             await self._notify(self._events.on_request_error, event)
         elif kind == "request_terminated":
+            # 終端した request へ送るメッセージは無くなるため、送信先の対応を捨てる
+            self._forget_incoming_request(event)
             await self._notify(self._events.on_request_terminated, event)
         elif kind == "request_update":
             # peer からの REQUEST_UPDATE には応答が必須である
@@ -1582,6 +1613,12 @@ class Runtime:
             await self._notify(self._events.on_fill_fetch_stream, event.request_id or 0)
         elif kind == "goaway":
             await self._notify(self._events.on_goaway, event)
+        elif kind == "unsupported":
+            # 定義済みだが実装しない request は状態機械が REQUEST_ERROR
+            # (NOT_SUPPORTED) + FIN で拒否する (draft-ietf-moq-transport-21
+            # §1.5 (Modularity))。応答は状態機械が send_on_stream として発行するため、
+            # アプリへは通知せず、送信先のストリームだけ覚える
+            self._remember_incoming_request(event)
         elif kind in {
             "subscribe",
             "publish",
@@ -1626,11 +1663,21 @@ class Runtime:
         stream_id = event.stream_id
         if stream_id is None or event.request_id is None:
             return
+        self._incoming_request_streams[event.request_id] = stream_id
         info = self._streams.get(stream_id)
         if info is None:
             self._streams[stream_id] = StreamInfo(kind=_STREAM_REQUEST, request_id=event.request_id)
             return
         info.request_id = event.request_id
+
+    def _forget_incoming_request(self, event: NativeEvent) -> None:
+        """終端した peer 起点 request の送信先の対応を捨てる。"""
+        request_id = event.request_id
+        if request_id is None:
+            return
+        stream_id = self._incoming_request_streams.pop(request_id, None)
+        if stream_id is not None:
+            self._streams.pop(stream_id, None)
 
     async def _resolve_request(self, event: NativeEvent) -> None:
         """自側が待っている request の応答を解決する。"""

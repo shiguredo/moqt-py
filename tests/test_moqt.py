@@ -217,23 +217,28 @@ def test_responder_fin_asks_the_requester_to_finish_its_direction() -> None:
     assert [event.kind for event in events] == ["finish_request_stream", "request_terminated"]
 
 
-def test_responder_fin_does_not_ask_the_responder_to_finish_its_direction() -> None:
+def test_requester_fin_does_not_terminate_the_request_at_the_responder() -> None:
     """
-    responder 側では送信方向を閉じる依頼をイベントにしないことを確認する。
+    requester の FIN だけでは responder 側の request が終端しないことを確認する。
 
-    自側が responder (publisher 役) の場合は購読の終了時に PUBLISH_DONE を送ってから
-    FIN する必要があり、requester の FIN を受けた時点で送信方向を閉じると
-    PUBLISH_DONE を送れなくなる
-    (draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure))。
+    draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure) の FIN は
+    方向ごとの終端であり cancel ではない。自側が responder (publisher 役) の場合は
+    PUBLISH_DONE を送るまで送信方向が開いており、requester の FIN を受けた時点で
+    終端すると必須の応答を送れなくなる。request の終端は、peer の FIN の受信と
+    自側が最終メッセージとともに送る FIN の両方が揃った時点で確定する。
     """
     client, server = _setup()
     stream_id = 4
-    _subscribe_round_trip(client, server, stream_id)
+    request_id = _subscribe_round_trip(client, server, stream_id)
 
-    # requester (client) の終端を FIN として通知する
-    events = server.receive_request_stream_closed(stream_id, False, None)
+    # requester (client) の終端を FIN として通知しても、responder は終端しない
+    assert server.receive_request_stream_closed(stream_id, False, None) == []
 
-    assert [event.kind for event in events] == ["request_terminated"]
+    # PUBLISH_DONE を FIN とともに送った時点で request が終端する
+    events = server.send_publish_done(request_id, moqt.PUBLISH_DONE_TRACK_ENDED, 0, "done")
+
+    assert [event.kind for event in events] == ["send_on_stream", "request_terminated"]
+    assert events[0].fin is True
 
 
 # ─── SETUP と制御ストリーム ─────────────────────────────────
@@ -586,6 +591,45 @@ def test_message_equality_is_based_on_the_wire_bytes() -> None:
     assert "kind=setup" in repr(first)
 
 
+def test_decode_message_reports_a_defined_but_unimplemented_message() -> None:
+    """
+    定義済みだが実装しない制御メッセージを `unsupported` としてデコードすることを確認する。
+
+    draft-ietf-moq-transport-21 §9 Table 5 は PUBLISH_NAMESPACE (0x06) を request として
+    定義する。relay 専用の namespace 発見・告知機構は moqt-rs が実装しないため、
+    本体は型 ID と生バイト列のまま公開される。先頭の Request ID (vi64) だけは解釈される。
+    """
+    # Type (vi64) 0x06 + Length (u16 big-endian) 1 + Message Body (Request ID 0)
+    data = b"\x06\x00\x01\x00"
+
+    message, consumed = decode_message(data)
+
+    assert message.kind == "unsupported"
+    assert message.type_id == 0x06
+    assert message.request_id == 0
+    assert message.body == {"type_id": 0x06, "request_id": 0, "body": b"\x00"}
+    assert message.raw == data
+    assert consumed == len(data)
+
+
+def test_decode_message_reports_a_response_only_message_without_a_request_id() -> None:
+    """
+    Request ID を持たない定義済みメッセージを `request_id=None` としてデコードすることを確認する。
+
+    draft-ietf-moq-transport-21 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
+    Request ID で始まらない。
+    """
+    # Type (vi64) 0x08 + Length (u16 big-endian) 1 + Message Body (Track Namespace Suffix)
+    data = b"\x08\x00\x01\x00"
+
+    message, _ = decode_message(data)
+
+    assert message.kind == "unsupported"
+    assert message.type_id == 0x08
+    assert message.request_id is None
+    assert message.body == {"type_id": 0x08, "request_id": None, "body": b"\x00"}
+
+
 # ─── ストリーム種別の判定 ───────────────────────────────────
 
 
@@ -655,26 +699,328 @@ def test_is_padding_datagram(data: bytes, expected: bool) -> None:
 # ─── request の往復 ─────────────────────────────────────────
 
 
-def test_track_status() -> None:
-    """TRACK_STATUS の送信を確認する。
+def test_track_status_round_trip() -> None:
+    """TRACK_STATUS に publisher が TRACK_STATUS_OK で応答することを確認する。
 
-    TRACK_STATUS は relay が返す応答であり、endpoint は受信しない
-    (moqt-rs の `recv_request` が `subscribe` / `publish` / `fetch` だけを扱う)。
+    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "The receiver of a TRACK_STATUS
+    message treats it identically as if it had received a SUBSCRIBE message, except it
+    does not create downstream subscription state or send any Objects. If successful, the
+    publisher responds with a TRACK_STATUS_OK with the same parameters and Track Properties
+    it would have set in a SUBSCRIBE_OK." 応答のあと bidi stream は FIN で閉じる。
     """
-    client, _server = _setup()
-    events = client.send_track_status([b"ns"], b"t", {})
-    assert [event.kind for event in events] == ["send_request"]
-    assert client.next_local_request_id() >= 0
-
-
-def test_peer_request_rejects_track_status() -> None:
-    """peer から届いた TRACK_STATUS を endpoint が拒否することを確認する。"""
     client, server = _setup()
     events = client.send_track_status([b"ns"], b"t", {})
     request_id = _request_id(events[0])
     client.register_local_request_stream(4, request_id)
-    with pytest.raises(RuntimeError, match="unsupported request message"):
-        server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    # publisher 側は TRACK_STATUS を request として受理する
+    received = server.receive_request_stream(4, _message_data(events[0]), "peer")
+    assert [event.kind for event in received] == ["track_status"]
+    body = received[0].message
+    assert body is not None
+    assert body["track_namespace"] == [b"ns"]
+    assert body["track_name"] == b"t"
+
+    # TRACK_STATUS_OK は Track Properties を運び、送信後に FIN で閉じる
+    ok = server.send_request_ok(request_id, {}, {moqt.PROP_DEFAULT_PUBLISHER_PRIORITY: 128})
+    assert [event.kind for event in ok] == ["send_on_stream"]
+    assert ok[0].fin is True
+
+    # requester 側は応答を request_ok として観測し、Track Properties も受け取る
+    response = client.receive_request_stream(4, _message_data(ok[0]), "local")
+    assert [event.kind for event in response] == ["request_ok"]
+    assert response[0].track_properties == {moqt.PROP_DEFAULT_PUBLISHER_PRIORITY: 128}
+    assert client.track_status_request(request_id) == {
+        "request_id": request_id,
+        "namespace": [b"ns"],
+        "track_name": b"t",
+        "response": "ok",
+        "largest_location": None,
+        "terminated": False,
+    }
+
+
+def test_track_status_ok_is_empty_when_include_properties_is_zero() -> None:
+    """`INCLUDE_PROPERTIES=0` の TRACK_STATUS_OK が Track Properties を空にすることを確認する。
+
+    draft-ietf-moq-transport-21 §9.20.22 (INCLUDE_PROPERTIES Parameter): "If
+    INCLUDE_PROPERTIES is 0, the Track Properties are still present in the message, but
+    they SHOULD be empty." 空化は受信した要求の値で判断するため、応答側が渡した
+    Track Properties はそのままでは送られない。
+    """
+    client, server = _setup()
+    events = client.send_track_status([b"ns"], b"t", {moqt.PARAM_INCLUDE_PROPERTIES: b"\x00"})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    ok = server.send_request_ok(request_id, {}, {moqt.PROP_DEFAULT_PUBLISHER_PRIORITY: 128})
+
+    assert ok[0].message is not None
+    assert ok[0].message["track_properties"] == {}
+    response = client.receive_request_stream(4, _message_data(ok[0]), "local")
+    assert response[0].track_properties == {}
+
+
+def test_track_status_entry_is_terminated_when_the_requester_cancels() -> None:
+    """応答前に requester が cancel した TRACK_STATUS を回収できることを確認する。
+
+    draft-ietf-moq-transport-21 §6.4.2.3 (Request Cancellation and Rejection): 自側が
+    publisher (responder) の TRACK_STATUS は、応答を送る前に stream が終端すると応答を
+    送れなくなる。状態機械は entry を終端済みとして記録するため、アプリは回収できる。
+    回収しないと GOAWAY の drain が完了しない。
+    """
+    client, server = _setup()
+    events = client.send_track_status([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    before = server.track_status_request(request_id)
+    assert before is not None
+    assert before["response"] == "pending"
+    assert before["terminated"] is False
+
+    # requester が RESET_STREAM で cancel する
+    server.receive_request_stream_closed(4, True, moqt.STREAM_CANCELLED)
+
+    entry = server.track_status_request(request_id)
+    assert entry is not None
+    # 応答は送っていないが、終端したため応答は送れない
+    assert entry["response"] == "pending"
+    assert entry["terminated"] is True
+    assert server.goaway_drain_ready() is False
+
+    # 終端した entry を回収すると GOAWAY の drain を妨げなくなる
+    assert server.forget_track_status(request_id) is True
+    assert server.track_status_request(request_id) is None
+    assert server.goaway_drain_ready() is True
+
+
+def test_track_status_request_does_not_create_subscription_state() -> None:
+    """TRACK_STATUS が購読状態も Track Alias も作らないことを確認する。
+
+    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "Track Alias is not used."
+    状態機械が TRACK_STATUS を購読として扱うと、購読の状態照会に現れてしまう。
+    """
+    client, server = _setup()
+    events = client.send_track_status([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    assert server.subscription(request_id) is None
+    assert server.track_status_request(request_id) is not None
+
+
+def test_defined_but_unimplemented_request_is_rejected_with_not_supported() -> None:
+    """
+    定義済みだが実装しない request を NOT_SUPPORTED で拒否することを確認する。
+
+    draft-ietf-moq-transport-21 §1.5 (Modularity): "Limited endpoints SHOULD respond to
+    any unsupported messages with the appropriate NOT_SUPPORTED error code, rather than
+    ignoring them." §9 Table 5 の PUBLISH_NAMESPACE (0x06) は relay 専用の namespace
+    発見・告知機構であり、moqt-rs は実装しない。受信したセッションは閉じない。
+    """
+    _client, server = _setup()
+    # Type (vi64) 0x06 + Length (u16 big-endian) 1 + Message Body (Request ID 0)
+    data = b"\x06\x00\x01\x00"
+
+    events = server.receive_request_stream(4, data, "peer")
+
+    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    assert events[0].message == {"type_id": 0x06, "request_id": 0, "body": b"\x00"}
+    rejection = events[1].message
+    assert rejection is not None
+    # REQUEST_ERROR は request の拒否であり、送信後に FIN で stream を閉じる
+    assert rejection["error_code"] == moqt.REQUEST_NOT_SUPPORTED
+    assert events[1].fin is True
+    response, _ = decode_message(_message_data(events[1]))
+    assert response.kind == "request_error"
+    assert response.body["error_code"] == moqt.REQUEST_NOT_SUPPORTED
+    # セッションは閉じない
+    assert server.established is True
+
+
+def test_defined_but_unimplemented_response_message_closes_the_session() -> None:
+    """
+    応答専用の定義済みメッセージを request として受信するとセッションを閉じることを確認する。
+
+    draft-ietf-moq-transport-21 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
+    対応する request を持たない。request stream の先頭に届くのはプロトコル違反である。
+    """
+    _client, server = _setup()
+    # Type (vi64) 0x08 + Length (u16 big-endian) 1 + Message Body
+    data = b"\x08\x00\x01\x00"
+
+    with pytest.raises(RuntimeError, match="response-only control message"):
+        server.receive_request_stream(4, data, "peer")
+
+    # 終端通知の処理でセッションの終了が観測できる
+    events = server.receive_request_stream_closed(4, False, None)
+    assert [(event.kind, event.code) for event in events] == [
+        ("close", moqt.SESSION_PROTOCOL_VIOLATION)
+    ]
+    assert server.established is False
+
+
+def test_request_error_redirect_round_trips() -> None:
+    """
+    REQUEST_ERROR の Redirect が encode / decode を往復することを確認する。
+
+    draft-ietf-moq-transport-21 §9.4.1 (Redirect Structure): Redirect は接続先 URI と
+    Redirect target (Track Namespace + Track Name) を運ぶ。
+    """
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    rejected = server.send_request_error(
+        request_id,
+        moqt.REQUEST_REDIRECT,
+        0,
+        "moved",
+        (b"moqt://example.com:4433/live", [b"ns"], b"t"),
+    )
+
+    assert [event.kind for event in rejected] == ["send_on_stream"]
+    response, _ = decode_message(_message_data(rejected[0]))
+    assert response.kind == "request_error"
+    assert response.body["error_code"] == moqt.REQUEST_REDIRECT
+    assert response.body["redirect"] == {
+        "connect_uri": b"moqt://example.com:4433/live",
+        "track_namespace": [b"ns"],
+        "track_name": b"t",
+    }
+
+
+def test_request_error_redirect_rejects_an_over_long_full_track_name() -> None:
+    """
+    Redirect target が Full Track Name の上限を超える REQUEST_ERROR を拒否することを確認する。
+
+    draft-ietf-moq-transport-21 §8.7 (Track Namespace Structure): Full Track Name
+    (Track Namespace + Track Name) は 4096 バイトまでである。Redirect target は
+    Full Track Name そのものなので、超える値は encode で拒否される。
+    """
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    # Track Namespace は [b"ns"] (2 バイト) なので、Track 名は 4094 バイトまで入る
+    limit = 4096 - len(b"ns")
+    accepted = server.send_request_error(
+        request_id,
+        moqt.REQUEST_REDIRECT,
+        0,
+        "moved",
+        (b"moqt://example.com", [b"ns"], b"a" * limit),
+    )
+    assert [event.kind for event in accepted] == ["send_on_stream"]
+
+    # 上限を 1 バイト超えると encode が拒否する
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    with pytest.raises(RuntimeError, match="full track name exceeds 4096 bytes"):
+        server.send_request_error(
+            request_id,
+            moqt.REQUEST_REDIRECT,
+            0,
+            "moved",
+            (b"moqt://example.com", [b"ns"], b"a" * (limit + 1)),
+        )
+
+
+def test_subscribe_accepts_the_rendezvous_timeout_parameter() -> None:
+    """
+    SUBSCRIBE が RENDEZVOUS_TIMEOUT を定義済みパラメータとして受理することを確認する。
+
+    draft-ietf-moq-transport-21 §9.20 (Control Message Parameters) は未知名の
+    パラメータを PROTOCOL_VIOLATION とする。RENDEZVOUS_TIMEOUT (0x04) は §16.7 の
+    Table 13 に定義済みであるため、relay 専用の機構であっても受信は拒否しない。
+    値は varint であり、アプリは `decode_parameter` で解釈できる。
+    """
+    client, server = _setup()
+    events = client.send_subscribe(
+        [b"ns"], b"t", {moqt.PARAM_RENDEZVOUS_TIMEOUT: encode_varint(3000)}
+    )
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+
+    received = server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    assert [event.kind for event in received] == ["subscribe"]
+    body = received[0].message
+    assert body is not None
+    assert body["parameters"] == {moqt.PARAM_RENDEZVOUS_TIMEOUT: encode_varint(3000)}
+    assert moqt.decode_parameter(moqt.PARAM_RENDEZVOUS_TIMEOUT, encode_varint(3000)) == 3000
+
+
+def test_unknown_mandatory_track_property_cancels_the_subscription() -> None:
+    """未知の必須トラックプロパティを含む SUBSCRIBE_OK が購読の cancel になることを確認する。
+
+    draft-ietf-moq-transport-21 §3.6 (Mandatory Track Properties): 未知の必須トラック
+    プロパティを含む応答を受けた購読は cancel する。cancel は §6.4.2.3 (Request
+    Cancellation and Rejection) のストリーム終端を含むため、受信方向を STOP_SENDING、
+    送信方向を RESET_STREAM で打ち切る。セッションは閉じない。
+    """
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    # 0x4000-0x7FFF の未知の型は必須トラックプロパティである
+    ok = server.send_subscribe_ok(
+        request_id, 1, {}, {moqt.MANDATORY_TRACK_PROPERTY_MIN + 1: b"\x01"}
+    )
+    cancel = client.receive_request_stream(4, _message_data(ok[0]), "local")
+
+    assert [(event.kind, event.code) for event in cancel] == [
+        ("stop_sending_request_stream", moqt.STREAM_CANCELLED),
+        ("reset_request_stream", moqt.STREAM_CANCELLED),
+        ("request_terminated", None),
+    ]
+    assert client.established is True
+    subscription = client.subscription(request_id)
+    assert subscription is not None
+    assert subscription["state"] == "terminated"
+
+
+def test_publish_done_finishes_the_publish_originated_request() -> None:
+    """PUBLISH 起点の subscription で PUBLISH_DONE を受けた側が FIN を送ることを確認する。
+
+    draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure): responder が
+    応答とその後のメッセージを送り終えて FIN を送ると request は完了する。PUBLISH 起点の
+    subscription では PUBLISH を受けた側が subscriber responder であり、PUBLISH_DONE の
+    受信で送るべきメッセージが無くなるため、自側の送信方向を閉じる。
+    """
+    client, server = _setup()
+    events = client.send_publish([b"ns"], b"t", 1, {}, {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+    ok = server.send_request_ok(request_id, {}, {})
+    client.receive_request_stream(4, _message_data(ok[0]), "local")
+
+    # publisher (client) が PUBLISH_DONE を FIN とともに送る
+    done = client.send_publish_done_for_subscription(
+        request_id, moqt.PUBLISH_DONE_TRACK_ENDED, "ended"
+    )
+    assert [event.kind for event in done] == ["send_on_stream"]
+    assert done[0].fin is True
+
+    # subscriber (server) は PUBLISH_DONE を観測し、送信方向を閉じるイベントを受け取る
+    received = server.receive_request_stream(4, _message_data(done[0]), "peer")
+
+    assert [event.kind for event in received] == ["finish_request_stream", "publish_done"]
 
 
 def test_request_update_uses_a_separate_request_id() -> None:
@@ -716,6 +1062,42 @@ def test_object_properties_round_trip() -> None:
     assert decoded.prior_group_id_gap == 2
     assert decoded.prior_object_id_gap == 7
     assert decoded.to_dict()[0x0D] == b"\x01\x02\x03"
+
+
+def test_object_properties_accepts_a_grease_type_in_the_mandatory_range() -> None:
+    """Object Properties が必須トラックプロパティの範囲に入る GREASE 値を受理することを確認する。
+
+    draft-ietf-moq-transport-21 §16.8 (Properties) Table 14 は GREASE の Property Type
+    (`0x7f * N + 0x9D`) を Scope Any として予約している。N = 128 の 0x401D から
+    N = 256 の 0x7F9D までは §3.6 (Mandatory Track Properties) の 0x4000-0x7FFF に入るが、
+    GREASE 値は登録された必須トラックプロパティではないため、未知の Property として
+    保持する (§13 (Grease) / §8.4 (Track and Object Properties))。
+    """
+    grease_type = 0x401D
+    # GREASE 値は奇数型なので長さ付きバイト列で運ぶ
+    entry = encode_varint(grease_type) + encode_varint(1) + b"\x01"
+    encoded = encode_varint(len(entry)) + entry
+
+    properties, consumed = ObjectProperties.decode(encoded)
+
+    assert consumed == len(encoded)
+    assert len(properties) == 1
+    assert properties.items() == [(grease_type, b"\x01")]
+    assert moqt.is_grease(grease_type) is True
+
+
+def test_object_properties_rejects_a_mandatory_type_in_the_object_scope() -> None:
+    """必須トラックプロパティの型を Object Properties で受信すると拒否することを確認する。
+
+    draft-ietf-moq-transport-21 §3.6 (Mandatory Track Properties): 0x4000-0x7FFF の
+    Mandatory Track Property は Track スコープだけに現れる。GREASE 値ではない
+    0x4000 は Object Properties として受け取れない。
+    """
+    entry = encode_varint(0x4000) + encode_varint(1)
+    encoded = encode_varint(len(entry)) + entry
+
+    with pytest.raises(ValueError, match="mandatory property in object scope"):
+        ObjectProperties.decode(encoded)
 
 
 def test_object_properties_rejects_a_truncated_block() -> None:
@@ -917,6 +1299,37 @@ def test_goaway() -> None:
     events = server.send_goaway(b"", 5000)
     kinds = [event.kind for event in client.receive_control(_event_data(events[0]))]
     assert "goaway" in kinds
+
+
+def test_goaway_rejects_new_subscriptions_but_accepts_publish() -> None:
+    """GOAWAY の送信後に publisher が拒否する request の範囲を確認する。
+
+    draft-ietf-moq-transport-21 §9.2 (GOAWAY): "a publisher MAY reject new requests after
+    sending a GOAWAY" の主語は publisher が応答する request 種別 (SUBSCRIBE / FETCH /
+    TRACK_STATUS) である。自側が subscriber として受ける PUBLISH は拒否しない。
+    """
+    client, server = _setup()
+    server.send_goaway(b"", 5000)
+
+    # 自側が publisher として応答する SUBSCRIBE は REQUEST_ERROR (GOING_AWAY) + FIN で拒否する
+    subscribe = client.send_subscribe([b"ns"], b"t", {})
+    subscribe_request_id = _request_id(subscribe[0])
+    client.register_local_request_stream(4, subscribe_request_id)
+    events = server.receive_request_stream(4, _message_data(subscribe[0]), "peer")
+
+    assert [event.kind for event in events] == ["subscribe", "send_on_stream"]
+    rejection = events[1].message
+    assert rejection is not None
+    assert rejection["error_code"] == moqt.REQUEST_GOING_AWAY
+    assert events[1].fin is True
+
+    # 自側が subscriber として受ける PUBLISH は受理する
+    publish = client.send_publish([b"ns"], b"t", 1, {}, {})
+    publish_request_id = _request_id(publish[0])
+    client.register_local_request_stream(8, publish_request_id)
+    accepted = server.receive_request_stream(8, _message_data(publish[0]), "peer")
+
+    assert [event.kind for event in accepted] == ["publish"]
 
 
 def test_padding() -> None:
@@ -2051,7 +2464,7 @@ def test_received_fetch_stream_waits_for_the_fetch_header() -> None:
 def test_track_status_state_accessors_report_the_response() -> None:
     """TRACK_STATUS の状態を Request ID から照会できることを確認する。
 
-    TRACK_STATUS は relay が応答する request であり、moqt-rs は送信側だけを扱う
+    TRACK_STATUS は publisher が応答する request である
     (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。応答が届かないまま
     request stream が終端すると、状態機械は応答をエラーとして記録する。
     """
@@ -2083,39 +2496,24 @@ def test_track_status_state_accessors_report_the_response() -> None:
 def test_track_status_state_accessor_reports_an_ok_response() -> None:
     """TRACK_STATUS の応答が届いた場合に ok と LARGEST_OBJECT が読めることを確認する。
 
-    状態機械は TRACK_STATUS の受信側を扱わないため、relay が返す REQUEST_OK を
-    このテストでは再現できない。そこで購読の REQUEST_UPDATE_OK として同じ codec に
-    REQUEST_OK を生成させ、TRACK_STATUS を登録した request stream へ流し込む。
-    REQUEST_OK は wire 上に Request ID を持たず、受信側はストリームに紐付けた
-    Request ID で応答先を決めるため、同じバイト列が TRACK_STATUS の応答として解釈される
-    (draft-ietf-moq-transport-21 §9.3 (REQUEST_OK))。
+    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "If successful, the publisher
+    responds with a TRACK_STATUS_OK with the same parameters and Track Properties it would
+    have set in a SUBSCRIBE_OK." TRACK_STATUS_OK が運べるパラメータは LARGEST_OBJECT だけ
+    である (§9.20.1 (Parameter Scope))。
     """
     client, server = _setup()
     status_events = client.send_track_status([b"ns"], b"t", {})
     status_request_id = _request_id(status_events[0])
     client.register_local_request_stream(4, status_request_id)
+    server.receive_request_stream(4, _message_data(status_events[0]), "peer")
 
-    # 別の request stream で購読を確立し、REQUEST_UPDATE を送る
-    subscribe_events = client.send_subscribe([b"ns"], b"t", {})
-    subscription_request_id = _request_id(subscribe_events[0])
-    client.register_local_request_stream(8, subscription_request_id)
-    server.receive_request_stream(8, _message_data(subscribe_events[0]), "peer")
-    accepted = server.send_subscribe_ok(subscription_request_id, 1, {}, {})
-    client.receive_request_stream(8, _message_data(accepted[0]), "local")
-    update_events = client.send_request_update(
-        subscription_request_id, {moqt.PARAM_SUBSCRIBER_PRIORITY: 100}
-    )
-    server.receive_request_stream(8, _message_data(update_events[0]), "peer")
-
-    # REQUEST_UPDATE_OK は LARGEST_OBJECT を運べる
+    # TRACK_STATUS_OK は LARGEST_OBJECT を運べる
     # (draft-ietf-moq-transport-21 §9.20.18 (LARGEST OBJECT Parameter))
     ok = server.send_request_ok(
-        subscription_request_id,
+        status_request_id,
         {moqt.PARAM_LARGEST_OBJECT: (3, 4)},
         {},
     )
-
-    # 同じ REQUEST_OK を TRACK_STATUS の応答として流し込む
     client.receive_request_stream(4, _message_data(ok[0]), "local")
 
     entry = client.track_status_request(status_request_id)
@@ -2354,7 +2752,6 @@ def test_session_defaults_are_exported() -> None:
     """
     assert moqt.DEFAULT_PUBLISHER_GROUP_ORDER_ASCENDING == 0x1
     assert moqt.MAX_NEW_SESSION_URI_LENGTH == 8192
-    assert moqt.MAX_OUT_OF_ORDER_REQUEST_IDS == 1024
     assert moqt.DEFAULT_PEER_ALIAS_RETENTION_MS > 0
     assert moqt.PUBLISH_DONE_STREAM_COUNT_UNKNOWN == 0xFFFF_FFFF_FFFF_FFFF
 

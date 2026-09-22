@@ -1058,6 +1058,10 @@ def test_serialize_name_escapes_a_dot() -> None:
 
 
 def test_parse_name_rejects_a_triple_hyphen() -> None:
-    """境界が 2 連続でない入力を拒否することを確認する。"""
-    with pytest.raises(ValueError, match="invalid Track name"):
+    """境界が 2 連続でない入力を拒否することを確認する。
+
+    エラーメッセージには失敗した規則の説明を載せる
+    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+    """
+    with pytest.raises(ValueError, match="invalid Track name: too many separators"):
         msf.parse_name("room---video")
