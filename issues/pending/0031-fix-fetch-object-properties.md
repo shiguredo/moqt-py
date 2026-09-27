@@ -40,3 +40,17 @@ moqt-py の FETCH 受信経路でそれをイベントへ載せ、`MoqtObject.pr
 
 moqt-rs の `DecodedFetchObject` が Properties を保持しておらず、moqt-py だけでは
 実装できない。moqt-rs 側の API 追加待ちである。
+
+## reopened にする理由
+
+moqt-rs の `DecodedFetchObject` に `properties_bytes: Option<Vec<u8>>` が追加され、
+`DecodedSubgroupObject::properties_bytes` と同じ表現
+(`Properties Length` の varint + Properties データ) で Properties を保持するように
+なった。pending の理由だった「moqt-rs 側の API 追加待ち」が解消したため reopened に
+する。
+
+moqt-py 側は `src/core.rs` の FETCH 経路が `DecodedFetchEntry::Object` を
+`CoreEvent` へ変換するときに `properties` を設定していないため、`python/moqt/moq/client.py`
+の `_on_object` が `event.properties` を `MOQTObject` へ渡しても常に `None` になる。
+subgroup 経路は `DecodedSubgroupObject::properties_bytes` を `properties` に載せており、
+FETCH 経路だけが非対称である。
