@@ -1,7 +1,7 @@
 # moqt-rs の C4M (CAT) を moqt.c4m として公開する
 
 - Created: 2026-09-27
-- Completed:
+- Completed: 2026-09-27
 - Branch: feature/add-c4m-support
 - Polished:
 
@@ -57,3 +57,39 @@ moqt-rs の c4m が公開するもの (moqt-rs の `src/c4m.rs` と `src/c4m/`):
 - `python/moqt/_native.pyi` がビルドから再生成した内容と一致すること
 
 ## 解決方法
+
+`Cargo.toml` で `shiguredo_moqt` の `aws-lc-rs` feature を有効にし、`Cargo.lock` を
+develop の `4795110b` へ更新した。起票時点の最新は `0dc8214` だったが、その後
+issue ファイルだけを変更するコミットが積まれていたため最新へ揃えた。既存テストの
+失敗と、`_native.pyi` の既存クラスの差分は無い。
+
+`src/c4m.rs` と `src/c4m/` 配下に PyO3 のラッパを追加し、`moqt._native` へ公開した。
+`python/moqt/c4m.py` が公開 API を組み立て、`python/moqt/__init__.py` から参照できる。
+
+### 公開 API
+
+- クレーム: `MoqtAction` / `Match` / `NamespaceMatch` / `MoqtScope` / `MoqtClaim` /
+  `CatDpop`
+- CBOR: `CborValue` と `encode_cbor` / `decode_cbor` / `decode_cbor_partial`
+- COSE: `CoseHeader` / `CoseMessage` / `CoseEncodingOptions`
+- 鍵と暗号: `CoseKey` / `EcCurve` / `OkpCurve` と `sign` / `verify` / `digest`
+- CAT: `CatToken` / `CatClaims` / `Confirmation` / `CatTokenBuilder` /
+  `VerifyOptions` / `ClaimValidationOptions`
+- JWK / JWT / DPoP: `Jwk` / `JwsHeader` / `JwsCompact` / `DpopProof` /
+  `DpopProofBuilder` / `AuthorizationContext` / `DpopVerification` /
+  `DpopReplayCache`
+
+暗号は aws-lc-rs 固定とし、moqt-rs の `CoseCrypto` trait に相当する抽象は公開して
+いない。整数の識別子を持つ enum は Python 側の `enum.IntEnum`、文字列の enum は
+`enum.StrEnum` で公開する。Track Namespace は `tuple[bytes, ...]`、Track Name は
+`bytes` で扱い、デコードと検証の失敗は `ValueError` にした。
+
+### テスト
+
+`tests/test_c4m.py` で付録 A のテストベクタ (CBOR エンコード / トークン構造 /
+DPoP バインディング / 認可 / 検証) と、発行・検証・CBOR / COSE / JWK / JWT / DPoP の
+エラー経路を固定した。`tests/prop_c4m.py` で CBOR / `moqt-scope` / `moqt` クレーム /
+CAT トークンのラウンドトリップを PBT で検証する。
+
+`uv run pytest` は 511 件すべて通り、`cargo fmt` / `cargo clippy` / `ruff` / `ty` /
+`prek run --all-files --stage pre-push` も通ることを確認した。
