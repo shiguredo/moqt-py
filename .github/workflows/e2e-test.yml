@@ -1,0 +1,37 @@
+# GitHub Actions による実サーバーへの接続テスト
+#
+# - repository secrets の TEST_MOQT_URI を環境変数として渡し、tests/test_connect.py
+#   を実行する。secret が未設定の場合は環境変数が空になり、テスト側が skip するため
+#   ジョブは成功する
+# - runner: ubuntu-slim は Rust が入っておらず、moqt-py は PyO3 拡張のビルドに cargo を
+#   要するため使わない。aws-lc-sys のビルドに cmake も要る
+# - Rust ツールチェーン: rust-toolchain.toml が channel と components を宣言している
+#   ため、rustup がツールチェーンごと自動で導入する。CI 側で `rustup component add` を
+#   実行する必要はない
+
+name: e2e-test
+
+on:
+  push:
+    branches:
+      - develop
+      - "feature/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connect:
+    runs-on: ubuntu-26.04
+    # 依存の同期 (PyO3 拡張のビルド) と実サーバーへの接続を見込んで余裕を持たせる
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # pytest を uv 経由で実行するため uv を先に用意する
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - name: TEST_MOQT_URI が指すサーバーへの接続テストを実行する
+        env:
+          TEST_MOQT_URI: ${{ secrets.TEST_MOQT_URI }}
+        run: uv run pytest tests/test_connect.py

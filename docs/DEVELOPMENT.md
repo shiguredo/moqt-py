@@ -21,3 +21,11 @@ moqt-rs は公開リポジトリの `develop` ブランチを追従します。�
 ```bash
 cargo update -p shiguredo_moqt
 ```
+
+## 実サーバーへの接続テスト
+
+`tests/test_connect.py` は環境変数 `TEST_MOQT_URI` が指す MOQT サーバーへ接続するテストです。未設定の場合は skip します。GitHub Actions の `e2e-test` ワークフローでは repository secrets の `TEST_MOQT_URI` を環境変数として渡します。
+
+```bash
+TEST_MOQT_URI=moqt://<host>/ uv run pytest tests/test_connect.py
+```
