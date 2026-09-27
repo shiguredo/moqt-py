@@ -1515,7 +1515,7 @@ class Runtime:
         """
         request_id = event.request_id
         stream_id = self._request_streams.pop(request_id, None) if request_id is not None else None
-        if stream_id is None:
+        if stream_id is None and request_id is not None:
             # peer が開始した request のストリームは `_streams` の登録が終端通知で
             # 消えていることがあるため、別に保持した対応から引く
             stream_id = self._incoming_request_streams.pop(request_id, None)

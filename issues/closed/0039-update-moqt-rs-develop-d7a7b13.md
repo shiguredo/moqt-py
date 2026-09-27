@@ -31,8 +31,20 @@ WebTransport over H3 のエラー処理、URL の authority 解釈である。mo
 
 ## 解決方法
 
-`Cargo.lock` の `shiguredo_moqt` を `28977d6` から `d7a7b13` へ更新した。
+`Cargo.lock` の `shiguredo_moqt` を `28977d6` から `d7a7b13` へ更新した。公開 API の
+差分はなく、`uv run pytest` は 416 件すべて通った。`python/moqt/_native.pyi` の再生成
+結果にも差分がないことを確認した。
 
-公開 API の差分はなく、`uv run pytest` は 416 件すべて通った。`cargo fmt` /
-`cargo clippy` / `ruff` / `ty` と `python/moqt/_native.pyi` の再生成結果も差分がない
-ことを確認した。
+`uv run ty check` が次の 2 件を検出したため、あわせて修正した。どちらも moqt-rs の
+追従とは独立の型の絞り込み漏れである。
+
+- `python/moqt/moq/_runtime.py` の `_finish_request_stream` が
+  `request_id` (`int | None`) を `dict.pop` のキーに渡していたため、`None` でないことを
+  条件に加えた
+- `tests/test_e2e.py` の
+  `test_fetch_response_carries_properties_and_datagram_origin` が
+  `MOQTObject.properties` (`bytes | None`) をそのまま `ObjectProperties.decode` へ
+  渡していたため、`None` でないことを明示してから渡すようにした
+
+`cargo fmt` / `cargo clippy` / `ruff` / `ty` と `prek run --all-files` が通ることを
+確認した。
