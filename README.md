@@ -17,15 +17,17 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## moqt-py について
 
-moqt-py は Media over QUIC Transport (MOQT) のクライアントライブラリです。本体は MOQT / LOC / MSF の codec と sans I/O セッション状態機械です。
+moqt-py は Media over QUIC Transport (MOQT) のクライアントライブラリです。本体は MOQT / LOC / MSF / C4M の codec と sans I/O セッション状態機械です。
 
 - `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT / LOC / MSF の codec と sans I/O セッション状態機械
+- `moqt.c4m`: C4M (CAT) の認可トークンと DPoP proof の codec
 - `moqt.moq`: QUIC、WebTransport over HTTP/2 (WT-H2)、WebTransport over HTTP/3 (WT-H3) で接続する MOQT クライアント
 - `moqt.moq.testing`: server と pytest fixture
 
 実装には次のライブラリを利用しています。
 
-- MOQT の codec とセッション状態機械、LOC と MSF の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
+- MOQT の codec とセッション状態機械、LOC / MSF / C4M の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
+- C4M の署名と検証に [aws-lc-rs](https://github.com/aws/aws-lc-rs) を利用しています
 - QUIC / WT-H2 / WT-H3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
 
 ## 対応仕様
@@ -33,6 +35,9 @@ moqt-py は Media over QUIC Transport (MOQT) のクライアントライブラ�
 - Media over QUIC Transport: [draft-ietf-moq-transport-21](https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-21)
 - Low Overhead Media Container: [draft-ietf-moq-loc-04](https://datatracker.ietf.org/doc/html/draft-ietf-moq-loc-04)
 - MOQT Streaming Format: [draft-ietf-moq-msf-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-01)
+- Authorization scheme for MOQT using Common Access Tokens: [draft-ietf-moq-c4m-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-c4m-01)
+- CBOR / COSE / CWT: [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) / [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052) / [RFC 8392](https://www.rfc-editor.org/rfc/rfc8392)
+- Application-Agnostic Demonstrating Proof-of-Possession: [draft-nandakumar-moq-generic-dpop-proof-00](https://datatracker.ietf.org/doc/draft-nandakumar-moq-generic-dpop-proof/)
 
 いずれも draft 由来であり、将来の改訂で変更される可能性があります。対応仕様は moqt-rs に追従します。
 
@@ -297,6 +302,39 @@ timeline = msf.MediaTimeline()
 timeline.add(1000, 1, 2, 0)
 print(msf.MediaTimeline.decode(timeline.encode(gzip=True)).entries)
 ```
+
+### moqt.c4m
+
+C4M (Common Access Token for MoQ) のトークンと DPoP proof の codec です。署名と検証には aws-lc-rs を使います。Track Namespace は `tuple[bytes, ...]`、Track Name は `bytes` で扱います。
+
+```python
+from moqt import c4m
+
+# `example.com` の `video-` prefix を PUBLISH できるスコープを組み立てる
+scope = c4m.MoqtScope([c4m.MoqtAction.PUBLISH])
+scope.namespace_match(c4m.NamespaceMatch.match(c4m.Match.exact(b"example.com")))
+scope.track = c4m.Match.prefix(b"video-")
+claim = c4m.MoqtClaim()
+claim.scope(scope)
+
+# CAT トークンを compact 形式で発行する
+builder = c4m.CatTokenBuilder()
+builder.issuer("https://auth.example.com")
+builder.audience("https://relay.example.com")
+builder.expiration(1_700_086_400.0)
+builder.moqt(claim)
+key = c4m.CoseKey.symmetric(bytes(range(32)))
+token_text = builder.build_compact(key)
+
+# 検証と認可
+token = c4m.CatToken.decode(token_text)
+token.verify(key)
+token.claims.validate(c4m.ClaimValidationOptions(reference_time_seconds=1_700_000_000.0))
+assert token.claims.authorize(c4m.MoqtAction.PUBLISH, (b"example.com",), b"video-hd")
+print(token.format, token.claims.issuer)
+```
+
+CBOR / COSE / JWK / JWS compact の低レベル API も公開しています。付録 A のテストベクタは `tests/test_c4m.py` で固定しています。
 
 ## ライセンス
 
