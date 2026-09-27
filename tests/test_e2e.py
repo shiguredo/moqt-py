@@ -1411,10 +1411,13 @@ async def test_fetch_response_carries_properties_and_datagram_origin(
     assert [item.subgroup_id for item in received] == [0, 0]
     assert [item.publisher_priority for item in received] == [128, 200]
 
-    # moqt-rs の FetchStreamDecoder は受信した fetch オブジェクトの Properties を
-    # 公開しないため、現状では `MOQTObject.properties` には載らない。Properties 自体は
-    # peer のデコーダが読み取り、宣言長の不一致や Malformed Track を検出する
-    assert received[0].properties is None
+    # 送信側が指定した Properties は受信側の `MOQTObject.properties` から参照できる。
+    # 表現は subgroup 経路と同じ `Properties Length (varint) | Properties データ` である
+    # (draft-ietf-moq-transport-21 §11.4.1.1 (Flags))
+    assert received[0].properties == properties.encode()
+    assert moqt.ObjectProperties.decode(received[0].properties)[0].prior_group_id_gap == 2
+    # Properties を指定せずに送ったオブジェクトは `None` になる
+    assert received[1].properties is None
 
 
 def test_low_level_names_are_exported_from_the_package_root() -> None:

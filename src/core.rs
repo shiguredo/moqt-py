@@ -2040,6 +2040,11 @@ impl CoreSession {
                                 // Object Status は FETCH で運ばれるオブジェクトには無い
                                 // (draft-ietf-moq-transport-21 §11.1.2 (Object Status))
                                 status: None,
+                                // Properties は Flags の bit 0x20 が立つときだけ載る。
+                                // subgroup 経路と同じく
+                                // `Properties Length (varint) | Properties データ` の形で渡す
+                                // (draft-ietf-moq-transport-21 §11.4.1.1 (Flags))
+                                properties: object.properties_bytes.clone(),
                                 // FETCH のオブジェクトは Subgroup ID と Publisher Priority を
                                 // エントリ自身が運ぶ
                                 publisher_priority: Some(object.publisher_priority),
