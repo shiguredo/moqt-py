@@ -1,7 +1,7 @@
 # 実サーバーへの最低限の接続テストを追加する
 
 - Created: 2026-09-27
-- Completed:
+- Completed: 2026-09-27
 - Branch: feature/add-connect-test
 - Polished:
 
@@ -41,3 +41,24 @@ moqt-py の client が実サーバーへ接続できることを確認できる�
 - `prek run --all-files` が通ること
 
 ## 解決方法
+
+`tests/test_connect.py` に `TEST_MOQT_URI` が指す実サーバーへ接続するテストを追加
+した。接続方式は `Client` の既定 (WebTransport over HTTP/3) であり、`Client.connect`
+が成功して SETUP の交換が完了することだけを確認してから閉じる。`TEST_MOQT_URI` が
+未設定の場合は `pytest.mark.skipif` で skip する。
+
+`.github/workflows/e2e-test.yml` を追加し、repository secrets の `TEST_MOQT_URI` を
+環境変数として渡して `tests/test_connect.py` を実行する。secret が未設定の場合は
+環境変数が空になり、テストが skip するためジョブは成功する。runner は PyO3 拡張と
+aws-lc-sys のビルドに cargo と C コンパイラと cmake が必要なため `ubuntu-26.04` を
+使う。
+
+`docs/DEVELOPMENT.md` に、環境変数を設定して接続テストを実行する手順を追記した。
+
+### 確認
+
+- `uv run pytest` は 511 件通過し、`TEST_MOQT_URI` 未設定の接続テストは skip する
+- 接続先に到達できない値を `TEST_MOQT_URI` に設定した場合、接続テストは接続の
+  失敗として失敗する
+- 開発環境からは接続先を名前解決できないため、実サーバーへの到達確認は CI で行う
+- `prek run --all-files` が通る
