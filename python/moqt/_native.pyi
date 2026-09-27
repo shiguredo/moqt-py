@@ -81,6 +81,115 @@ class AuthInfo:
         """
 
 @final
+class AuthorizationContext:
+    """
+    DPoP proof の Authorization Context (draft-nandakumar-moq-generic-dpop-proof-00
+    §4.2 / §5.1)。
+    
+    `tns` / `tn` は draft-ietf-moq-transport-21 §8.8 の正規シリアライズを使う。
+    `raw` にしか無い拡張フィールド (`parameters` など) は発行時に出力されない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, context_type: str |None = None, action: str |None = None, track_namespace: str |None = None, track_name: str |None = None, resource: str |None = None, raw: str |None = None) -> AuthorizationContext:
+        """
+        Authorization Context を組み立てる。
+        
+        省略したフィールドは空文字列 (`track_name` / `resource` は `None`) になる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def action(self, /) -> str:
+        """
+        `action`。
+        """
+    @action.setter
+    def action(self, /, value: str) -> None:
+        """
+        `action` を設定する。
+        """
+    @property
+    def context_type(self, /) -> str:
+        """
+        `type`。
+        """
+    @context_type.setter
+    def context_type(self, /, value: str) -> None:
+        """
+        `type` を設定する。
+        """
+    @staticmethod
+    def decode(text: str) -> AuthorizationContext:
+        """
+        Authorization Context の JSON をデコードする。
+        
+        メンバー名が重複している場合は `ValueError` になる。
+        """
+    @property
+    def raw(self, /) -> str:
+        """
+        actx の生 JSON。
+        """
+    @raw.setter
+    def raw(self, /, value: str) -> None:
+        """
+        actx の生 JSON を設定する。
+        """
+    @property
+    def resource(self, /) -> str |None:
+        """
+        `resource`。
+        """
+    @resource.setter
+    def resource(self, /, value: str |None) -> None:
+        """
+        `resource` を設定する。
+        """
+    @property
+    def track_name(self, /) -> str |None:
+        """
+        `tn` (track name のシリアライズ文字列)。
+        """
+    @track_name.setter
+    def track_name(self, /, value: str |None) -> None:
+        """
+        `tn` を設定する。
+        """
+    @property
+    def track_namespace(self, /) -> str:
+        """
+        `tns` (namespace のシリアライズ文字列)。
+        """
+    @track_namespace.setter
+    def track_namespace(self, /, value: str) -> None:
+        """
+        `tns` を設定する。
+        """
+    def verify_action(self, /, action: int) -> None:
+        """
+        `action` がアクションと一致するかどうかを検証する (C4M Table 2)。
+        """
+    def verify_context_type(self, /, expected: str) -> None:
+        """
+        `type` が期待どおりかどうかを検証する。
+        """
+    def verify_resource_consistency(self, /) -> None:
+        """
+        `resource` が指定されている場合に `tns` / `tn` と整合するかどうかを検証する。
+        
+        `resource` は `moqt://<relay-endpoint>?tns=<namespace>&tn=<track>` の形式
+        (draft-ietf-moq-c4m-01 §3.1.3) を前提とし、クエリパラメータを文字列として
+        比較する。パーセントエンコーディングは解釈しない。
+        """
+    def verify_target(self, /, namespace: Sequence[Sequence[int]], track_name: bytes) -> None:
+        """
+        `tns` / `tn` が対象の Full Track Name と一致するかどうかを検証する。
+        
+        `tn` が proof に無い場合は `ValueError` になる (draft-ietf-moq-c4m-01 §3.1.2 は
+        `tn` を必須としている)。
+        """
+
+@final
 class Buffers:
     """
     MSF のターゲットバッファ (draft-ietf-moq-msf-01 §5.2.9 (Buffers))。
@@ -125,6 +234,487 @@ class Buffers:
     def target(self, /, value: int |None) -> None:
         """
         目標バッファ (ms)。
+        """
+
+@final
+class CatClaims:
+    """
+    CAT のクレームセット (CWT のクレーム + CAT / C4M のクレーム)。
+    
+    型付きで解釈しないクレームは `raw` にそのまま保持する。CAT 固有のクレーム
+    (`catu` / `catnip` など) はクレームキーの定数だけを公開し、値の意味論は評価しない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /) -> CatClaims:
+        """
+        空のクレームセットを組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def audience(self, /) -> list[str]:
+        """
+        `aud`。単一のテキストと配列の両方を受ける。
+        """
+    @audience.setter
+    def audience(self, /, value: Sequence[str]) -> None:
+        """
+        `aud` を設定する。
+        """
+    def authorize(self, /, action: int, namespace: Sequence[Sequence[int]], track_name: bytes) -> bool:
+        """
+        `moqt` クレームによりアクションが認可されるかどうかを返す。
+        
+        `moqt` クレームが無い場合は常に `False` を返す (§2 の「明示的に許可された
+        アクション以外はブロックする」)。評価するのは `moqt` クレームだけで、`catu`
+        などの CAT 固有クレームは評価しない。
+        """
+    @property
+    def catdpop(self, /) -> CatDpop |None:
+        """
+        `catdpop` (draft-ietf-moq-c4m-01 §3.1.1)。
+        """
+    @catdpop.setter
+    def catdpop(self, /, value: CatDpop |None) -> None:
+        """
+        `catdpop` を設定する。
+        """
+    @property
+    def confirmation(self, /) -> Confirmation |None:
+        """
+        `cnf`。
+        """
+    @confirmation.setter
+    def confirmation(self, /, value: Confirmation |None) -> None:
+        """
+        `cnf` を設定する。
+        """
+    @property
+    def cwt_id(self, /) -> bytes |None:
+        """
+        `cti`。バイト文字列とテキスト文字列の両方を受ける。
+        """
+    @cwt_id.setter
+    def cwt_id(self, /, value: Sequence[int] |None) -> None:
+        """
+        `cti` を設定する。
+        """
+    @staticmethod
+    def decode(value: CborValue) -> CatClaims:
+        """
+        クレームセットの CBOR のデータ項目をデコードする。
+        
+        非有限値 (NaN / 無限大) の数値クレームはこの時点で `ValueError` になる。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        クレームセットを CBOR のデータ項目へエンコードする。
+        
+        型付きフィールドを持つ claim key を `raw` に置いた場合と、非有限値の数値
+        クレームは `ValueError` になる。
+        """
+    @property
+    def expiration(self, /) -> float |None:
+        """
+        `exp` (UNIX 秒)。
+        """
+    @expiration.setter
+    def expiration(self, /, value: float |None) -> None:
+        """
+        `exp` (UNIX 秒) を設定する。
+        """
+    def get(self, /, key: int) -> CborValue |None:
+        """
+        整数キーのクレームを取り出す。
+        
+        型付きフィールドとして解釈しなかったクレーム、および未知のクレームが対象で
+        ある。`catv` / `catu` / `cath` などの値の意味論は評価しない。
+        """
+    @property
+    def issued_at(self, /) -> float |None:
+        """
+        `iat` (UNIX 秒)。
+        """
+    @issued_at.setter
+    def issued_at(self, /, value: float |None) -> None:
+        """
+        `iat` (UNIX 秒) を設定する。
+        """
+    @property
+    def issuer(self, /) -> str |None:
+        """
+        `iss`。
+        """
+    @issuer.setter
+    def issuer(self, /, value: str |None) -> None:
+        """
+        `iss` を設定する。
+        """
+    @property
+    def moqt(self, /) -> MoqtClaim |None:
+        """
+        `moqt` クレーム (draft-ietf-moq-c4m-01 §2.1)。
+        """
+    @moqt.setter
+    def moqt(self, /, value: MoqtClaim |None) -> None:
+        """
+        `moqt` クレームを設定する。
+        """
+    @property
+    def moqt_reval(self, /) -> float |None:
+        """
+        `moqt-reval` (再検証間隔、秒) (draft-ietf-moq-c4m-01 §2.2)。
+        
+        このライブラリは Sans-I/O のため再検証を実行しない。拒否の判断は利用側が
+        行う。
+        """
+    @moqt_reval.setter
+    def moqt_reval(self, /, value: float |None) -> None:
+        """
+        `moqt-reval` (再検証間隔、秒) を設定する。
+        """
+    @property
+    def not_before(self, /) -> float |None:
+        """
+        `nbf` (UNIX 秒)。
+        """
+    @not_before.setter
+    def not_before(self, /, value: float |None) -> None:
+        """
+        `nbf` (UNIX 秒) を設定する。
+        """
+    @property
+    def raw(self, /) -> list[tuple[CborValue, CborValue]]:
+        """
+        型付きで解釈しなかったクレーム。
+        """
+    @raw.setter
+    def raw(self, /, value: Sequence[tuple[CborValue, CborValue]]) -> None:
+        """
+        型付きで解釈しなかったクレームを設定する。
+        """
+    @property
+    def subject(self, /) -> str |None:
+        """
+        `sub`。
+        """
+    @subject.setter
+    def subject(self, /, value: str |None) -> None:
+        """
+        `sub` を設定する。
+        """
+    def validate(self, /, options: ClaimValidationOptions) -> None:
+        """
+        時刻と期待値に対するクレームの検証を行う。
+        
+        `exp` / `nbf` / `iss` / `aud` を検証する。署名の検証は [`CatToken::verify`] が
+        行う。
+        """
+
+@final
+class CatDpop:
+    """
+    `catdpop` クレーム (CTA-5007-B / draft-ietf-moq-c4m-01 §3.1.1)。
+    
+    DPoP proof の処理設定を持つ。label 0 が受理ウィンドウ (秒)、label 1 が jti による
+    リプレイ保護を行うかどうかを表す。解釈しなかった設定は `raw` に保持する。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, window_seconds: float, honor_jti: bool) -> CatDpop:
+        """
+        ウィンドウと jti の扱いを指定して組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @staticmethod
+    def decode(value: CborValue) -> CatDpop:
+        """
+        `catdpop` の CBOR のデータ項目をデコードする。
+        
+        ウィンドウは整数と浮動小数点の両方、jti の扱いは真偽値と整数 (0 / 1) の両方を
+        受ける。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        `catdpop` を CBOR のデータ項目へエンコードする。
+        
+        label 1 はドラフトの例に合わせて整数 (1 / 0) で書く。ウィンドウが有限でない
+        場合は `ValueError` になる。
+        """
+    @property
+    def honor_jti(self, /) -> bool |None:
+        """
+        jti によるリプレイ保護を行うかどうか。
+        """
+    @honor_jti.setter
+    def honor_jti(self, /, value: bool |None) -> None:
+        """
+        jti によるリプレイ保護を行うかどうかを設定する。
+        """
+    def honors_jti(self, /) -> bool:
+        """
+        jti によるリプレイ保護を行うかどうかを返す。
+        
+        未指定の場合は `False` を返す。
+        """
+    @property
+    def raw(self, /) -> list[tuple[int, CborValue]]:
+        """
+        解釈しなかった設定。
+        """
+    @raw.setter
+    def raw(self, /, raw: Sequence[tuple[int, CborValue]]) -> None:
+        """
+        解釈しなかった設定を置き換える。
+        """
+    @property
+    def window_seconds(self, /) -> float |None:
+        """
+        DPoP proof を受理する時間ウィンドウ (秒)。
+        """
+    @window_seconds.setter
+    def window_seconds(self, /, value: float |None) -> None:
+        """
+        DPoP proof を受理する時間ウィンドウ (秒) を設定する。
+        """
+    def window_seconds_or(self, /, default: float) -> float:
+        """
+        ウィンドウを返す (未指定の場合は `default` を返す)。
+        """
+
+@final
+class CatToken:
+    """
+    CAT のトークン。
+    
+    生トークン (bearer クレデンシャル) と署名は `repr` では長さだけを表示する。
+    デコードしたトークンは不変であり、書き換えはできない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def claims(self, /) -> CatClaims:
+        """
+        クレーム。
+        """
+    @staticmethod
+    def decode(data: Any) -> CatToken:
+        """
+        トークンをデコードする。
+        
+        `.` で区切られた 3 分割の compact 形式、COSE 形式の CBOR、COSE 形式を
+        base64url または標準 Base64 で包んだテキストの順に判別する。`data` には
+        `bytes` と `str` のどちらも渡せる。
+        """
+    @staticmethod
+    def decode_compact(text: str) -> CatToken:
+        """
+        compact 形式 (`base64url(protected).base64url(claims).base64url(signature)`)
+        をデコードする。
+        """
+    @staticmethod
+    def decode_cose(data: bytes) -> CatToken:
+        """
+        COSE 形式 (CBOR) をデコードする。
+        """
+    @staticmethod
+    def decode_moqt_auth_token(token_type: int, value: Any) -> CatToken:
+        """
+        MOQT の Auth Token Type と Token Value からデコードする
+        (draft-ietf-moq-c4m-01 §7.1)。
+        
+        Token Type が `MOQT_AUTH_TOKEN_TYPE_CAT` (0x01) 以外の場合は `ValueError` に
+        なる。`value` には `bytes` と `str` のどちらも渡せる。
+        """
+    @property
+    def format(self, /) -> str:
+        """
+        直列化の形式を表す文字列。
+        
+        `compact` / `cose_sign1` / `cose_mac0` のいずれかである。
+        """
+    @property
+    def header(self, /) -> CoseHeader:
+        """
+        protected / unprotected を統合したヘッダ。
+        """
+    @property
+    def payload(self, /) -> bytes:
+        """
+        クレームセットの CBOR バイト列。
+        """
+    @property
+    def protected_header(self, /) -> bytes:
+        """
+        protected ヘッダの CBOR バイト列。
+        """
+    @property
+    def raw_token(self, /) -> bytes:
+        """
+        `decode` に渡された生バイト。
+        
+        compact 形式では ASCII のトークン文字列、COSE 形式では CBOR のバイト列、
+        base64url で包んだ入力を渡した場合はそのテキストである。DPoP の `ath` は
+        このバイト列をハッシュする。
+        """
+    @property
+    def signature(self, /) -> bytes:
+        """
+        署名または MAC。
+        """
+    @property
+    def signing_input(self, /) -> bytes:
+        """
+        署名対象のバイト列。
+        """
+    @property
+    def unprotected_header(self, /) -> list[tuple[CborValue, CborValue]]:
+        """
+        COSE 形式の場合の unprotected ヘッダ。
+        """
+    def verify(self, /, key: CoseKey) -> None:
+        """
+        トークンの署名 / MAC を検証する。
+        
+        トークンの `alg` と鍵の種別が一致しない場合、および署名が一致しない場合は
+        `ValueError` になる。
+        """
+    def verify_with(self, /, key: CoseKey, options: VerifyOptions |None = None) -> None:
+        """
+        期待するアルゴリズムと `typ` を指定してトークンの署名 / MAC を検証する。
+        """
+
+@final
+class CatTokenBuilder:
+    """
+    CAT のトークンを作るビルダー。
+    
+    発行 (署名) には秘密鍵が必要である。署名アルゴリズムは鍵の種別から自動選択し、
+    `algorithm` で明示もできる。
+    """
+    def __eq__(self, other: object, /) -> bool: ...
+    def __new__(cls, /) -> CatTokenBuilder:
+        """
+        空のビルダーを組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def algorithm(self, /) -> int |None:
+        """
+        署名アルゴリズムの識別子。
+        """
+    @algorithm.setter
+    def algorithm(self, /, value: int |None) -> None:
+        """
+        署名アルゴリズムを設定する。
+        """
+    def audience(self, /, audience: str) -> None:
+        """
+        `aud` を追加する。
+        """
+    def build_compact(self, /, key: CoseKey) -> str:
+        """
+        compact 形式 (draft-ietf-moq-c4m-01 付録 A) のトークンを発行する。
+        
+        HMAC-SHA256 のアルゴリズム識別子は RFC 9053 の HMAC 256/256 (5) を使う。
+        ドラフト付録 A のベクタは -4 を使うが、IANA の COSE Algorithms レジストリでは
+        -4 は A192KW であり発行には使わない。
+        """
+    def build_cose(self, /, key: CoseKey) -> bytes:
+        """
+        COSE 形式 (CWT + COSE_Sign1 / COSE_Mac0) のトークンを発行する。
+        
+        CWT タグ (61) と COSE タグ (17 / 18) を付与する。
+        """
+    def build_cose_with(self, /, key: CoseKey, options: CoseEncodingOptions |None = None) -> bytes:
+        """
+        タグの付与を指定して COSE 形式のトークンを発行する。
+        """
+    def c4m_draft_jwk_thumbprint(self, /, thumbprint: Sequence[int]) -> None:
+        """
+        `cnf` の `jkt` を draft-ietf-moq-c4m-01 のベクタが使う key 3 で設定する。
+        """
+    def catdpop(self, /, window_seconds: float, honor_jti: bool) -> None:
+        """
+        `catdpop` を設定する。
+        """
+    def claim(self, /, key: int, value: CborValue) -> None:
+        """
+        任意のクレームを追加する。
+        
+        型付きフィールドを持つ claim key (`iss` / `moqt` / `catdpop` など) には専用の
+        設定メソッドを使うこと。型付きキーをここへ渡した場合は、encode 時に
+        `ValueError` になる。
+        """
+    @property
+    def claims(self, /) -> CatClaims:
+        """
+        発行するクレームセット。
+        
+        ゲッターは複製を返すため、返した値を変更してもビルダーには反映されない。
+        変更を反映する場合はセッターに渡すこと。
+        """
+    @claims.setter
+    def claims(self, /, value: CatClaims) -> None:
+        """
+        発行するクレームセットを置き換える。
+        """
+    def cwt_id(self, /, cwt_id: Sequence[int]) -> None:
+        """
+        `cti` をバイト文字列として設定する。
+        """
+    def expiration(self, /, expiration: float) -> None:
+        """
+        `exp` (UNIX 秒) を設定する。
+        """
+    def issued_at(self, /, issued_at: float) -> None:
+        """
+        `iat` (UNIX 秒) を設定する。
+        """
+    def issuer(self, /, issuer: str) -> None:
+        """
+        `iss` を設定する。
+        """
+    def jwk_thumbprint(self, /, thumbprint: Sequence[int]) -> None:
+        """
+        `cnf` の `jkt` を IANA 登録の confirmation key 323 で設定する。
+        """
+    @property
+    def key_id(self, /) -> Any |None:
+        """
+        `kid` を返す。
+        """
+    @key_id.setter
+    def key_id(self, /, value: Any |None) -> None:
+        """
+        `kid` を設定する。
+        """
+    def moqt(self, /, moqt: MoqtClaim) -> None:
+        """
+        `moqt` クレームを設定する。
+        """
+    def moqt_reval(self, /, seconds: float) -> None:
+        """
+        `moqt-reval` (再検証間隔、秒) を設定する。
+        """
+    def not_before(self, /, not_before: float) -> None:
+        """
+        `nbf` (UNIX 秒) を設定する。
+        """
+    def subject(self, /, subject: str) -> None:
+        """
+        `sub` を設定する。
+        """
+    @property
+    def typ(self, /) -> str |None:
+        """
+        `typ` を返す。
+        """
+    @typ.setter
+    def typ(self, /, value: str |None) -> None:
+        """
+        `typ` を設定する。
         """
 
 @final
@@ -245,6 +835,203 @@ class Catalog:
     def version(self, /) -> str:
         """
         MSF バージョン (draft-ietf-moq-msf-01 §5.1.1)。
+        """
+
+@final
+class CborValue:
+    """
+    CBOR のデータ項目 (RFC 8949 §3)。
+    
+    variant は `kind` で区別する。`kind` は `unsigned` / `negative` / `byte_string` /
+    `text_string` / `array` / `map` / `tag` / `bool` / `null` / `undefined` / `float` /
+    `simple` のいずれかである。
+    
+    デコードで得た値も、静的メソッドで組み立てた値も同じクラスで表す。値は不変であり、
+    組み立てた後の書き換えはできない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @staticmethod
+    def array(values: Sequence[CborValue]) -> CborValue:
+        """
+        配列 (major type 4) を組み立てる。
+        """
+    def as_array(self, /) -> list[CborValue] |None:
+        """
+        配列として取り出す。
+        """
+    def as_bool(self, /) -> bool |None:
+        """
+        真偽値として取り出す。
+        """
+    def as_bytes(self, /) -> bytes |None:
+        """
+        バイト文字列として取り出す。
+        """
+    def as_int(self, /) -> int |None:
+        """
+        `int` の範囲に収まる整数として取り出す。
+        """
+    def as_map(self, /) -> list[tuple[CborValue, CborValue]] |None:
+        """
+        マップとして取り出す。
+        
+        デコードでは入力の順序、encode 後の wire では決定論的な順序になる。
+        """
+    def as_number(self, /) -> float |None:
+        """
+        整数または浮動小数点数の数値として取り出す。
+        
+        負の整数は 1 回だけ丸めて `float` へ変換する (2 段階の丸めで 2^53 を超える値が
+        ずれないようにするため)。
+        """
+    def as_simple(self, /) -> int |None:
+        """
+        単純値として取り出す。
+        """
+    def as_tag(self, /) -> tuple[int, CborValue] |None:
+        """
+        タグ付きデータ項目の `(タグ, 値)` として取り出す。
+        """
+    def as_text(self, /) -> str |None:
+        """
+        テキスト文字列として取り出す。
+        """
+    def as_unsigned(self, /) -> int |None:
+        """
+        符号なし整数として取り出す。
+        """
+    @staticmethod
+    def boolean(value: bool) -> CborValue:
+        """
+        真偽値 (major type 7 の 20 / 21) を組み立てる。
+        """
+    @staticmethod
+    def byte_string(value: bytes) -> CborValue:
+        """
+        バイト文字列 (major type 2) を組み立てる。
+        """
+    @staticmethod
+    def float_value(value: float) -> CborValue:
+        """
+        浮動小数点数 (major type 7 の 25 / 26 / 27) を組み立てる。
+        """
+    @staticmethod
+    def integer(value: int) -> CborValue:
+        """
+        `int` を整数のデータ項目 (major type 0 / 1) として組み立てる。
+        
+        負の値は major type 1 になる。
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        variant を表す文字列。
+        """
+    @staticmethod
+    def map(entries: Sequence[tuple[CborValue, CborValue]]) -> CborValue:
+        """
+        マップ (major type 5) を組み立てる。
+        """
+    def map_get(self, /, key: CborValue) -> CborValue |None:
+        """
+        マップからキーに対応する値を取り出す。
+        
+        マップ以外では常に `None` を返す。
+        """
+    @staticmethod
+    def negative(value: int) -> CborValue:
+        """
+        負の整数 (major type 1) を組み立てる。
+        
+        引数はエンコードされた大きさであり、表す値は `-1 - value` である
+        (RFC 8949 §3.1)。通常は [`CborValue::integer`] を使う。
+        """
+    @staticmethod
+    def null() -> CborValue:
+        """
+        null (major type 7 の 22) を組み立てる。
+        """
+    @staticmethod
+    def simple(value: int) -> CborValue:
+        """
+        上記以外の単純値 (major type 7 の 0 〜 19 と 32 〜 255) を組み立てる。
+        """
+    @staticmethod
+    def tag(tag: int, value: CborValue) -> CborValue:
+        """
+        タグ付きデータ項目 (major type 6) を組み立てる。
+        """
+    @staticmethod
+    def text_string(value: str) -> CborValue:
+        """
+        テキスト文字列 (major type 3) を組み立てる。
+        """
+    @staticmethod
+    def undefined() -> CborValue:
+        """
+        undefined (major type 7 の 23) を組み立てる。
+        """
+    @staticmethod
+    def unsigned(value: int) -> CborValue:
+        """
+        符号なし整数 (major type 0) を組み立てる。
+        """
+
+@final
+class ClaimValidationOptions:
+    """
+    クレームの検証オプション。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, reference_time_seconds: float = 0.0, clock_tolerance_seconds: float = 0.0, expected_issuers: Sequence[str] |None = None, expected_audiences: Sequence[str] |None = None) -> ClaimValidationOptions:
+        """
+        検証オプションを組み立てる。
+        
+        現在時刻と許容ずれの既定値は 0、期待する `iss` / `aud` の既定値は空である。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def clock_tolerance_seconds(self, /) -> float:
+        """
+        `exp` / `nbf` に許容するずれ (秒)。
+        """
+    @clock_tolerance_seconds.setter
+    def clock_tolerance_seconds(self, /, value: float) -> None:
+        """
+        `exp` / `nbf` に許容するずれ (秒)。
+        """
+    @property
+    def expected_audiences(self, /) -> list[str]:
+        """
+        期待する `aud` の一覧。空の場合は検証しない。
+        """
+    @expected_audiences.setter
+    def expected_audiences(self, /, value: Sequence[str]) -> None:
+        """
+        期待する `aud` の一覧。空の場合は検証しない。
+        """
+    @property
+    def expected_issuers(self, /) -> list[str]:
+        """
+        期待する `iss` の一覧。空の場合は検証しない。
+        """
+    @expected_issuers.setter
+    def expected_issuers(self, /, value: Sequence[str]) -> None:
+        """
+        期待する `iss` の一覧。空の場合は検証しない。
+        """
+    @property
+    def reference_time_seconds(self, /) -> float:
+        """
+        検証に使う現在時刻 (UNIX 秒)。
+        """
+    @reference_time_seconds.setter
+    def reference_time_seconds(self, /, value: float) -> None:
+        """
+        検証に使う現在時刻 (UNIX 秒)。
         """
 
 @final
@@ -693,6 +1480,394 @@ class CloneTrack:
         """
 
 @final
+class Confirmation:
+    """
+    `cnf` (confirmation) クレーム (RFC 8747 / CTA-5007-B)。
+    
+    IANA 登録の `jkt` (confirmation key 323) と、draft-ietf-moq-c4m-01 のベクタが
+    使う `jkt` (confirmation key 3) を分けて保持する。検証は 323 を優先する。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /) -> Confirmation:
+        """
+        空の confirmation を組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def c4m_draft_jwk_thumbprint(self, /) -> bytes |None:
+        """
+        draft-ietf-moq-c4m-01 のベクタが使う `jkt` (confirmation key 3) の値。
+        """
+    @c4m_draft_jwk_thumbprint.setter
+    def c4m_draft_jwk_thumbprint(self, /, value: Sequence[int] |None) -> None:
+        """
+        draft のベクタが使う `jkt` (confirmation key 3) の値を設定する。
+        """
+    @staticmethod
+    def decode(value: CborValue) -> Confirmation:
+        """
+        `cnf` の CBOR のデータ項目をデコードする。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        `cnf` を CBOR のデータ項目へエンコードする。
+        """
+    def jkt(self, /) -> bytes |None:
+        """
+        JWK サムプリントを返す。
+        
+        IANA 登録の 323 を優先し、無ければドラフトのベクタが使う 3 を返す。
+        """
+    @property
+    def jwk_thumbprint(self, /) -> bytes |None:
+        """
+        IANA 登録の `jkt` (confirmation key 323) の値。
+        """
+    @jwk_thumbprint.setter
+    def jwk_thumbprint(self, /, value: Sequence[int] |None) -> None:
+        """
+        IANA 登録の `jkt` (confirmation key 323) の値を設定する。
+        """
+    @property
+    def raw(self, /) -> list[tuple[CborValue, CborValue]]:
+        """
+        解釈しなかった confirmation の値。
+        """
+    @raw.setter
+    def raw(self, /, value: Sequence[tuple[CborValue, CborValue]]) -> None:
+        """
+        解釈しなかった confirmation の値を設定する。
+        """
+
+@final
+class CoseEncodingOptions:
+    """
+    COSE メッセージのエンコードオプション。
+    
+    既定では CWT タグ (61) と COSE タグ (17 / 18) の両方を付与する。付与は
+    「メッセージがデコード時に持っていたタグ」との OR で決まる。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, cose_tag: bool = True, cwt_tag: bool = True) -> CoseEncodingOptions:
+        """
+        CWT タグと COSE タグの付与を指定して組み立てる。
+        
+        既定はどちらも `True` である。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def cose_tag(self, /) -> bool:
+        """
+        COSE タグ (17 / 18) を付与する。
+        """
+    @cose_tag.setter
+    def cose_tag(self, /, value: bool) -> None:
+        """
+        COSE タグ (17 / 18) を付与する。
+        """
+    @property
+    def cwt_tag(self, /) -> bool:
+        """
+        CWT タグ (61) を付与する。
+        """
+    @cwt_tag.setter
+    def cwt_tag(self, /, value: bool) -> None:
+        """
+        CWT タグ (61) を付与する。
+        """
+
+@final
+class CoseHeader:
+    """
+    COSE の protected / unprotected ヘッダ。
+    
+    解釈しないパラメータは `raw` に保持し、再エンコード時に決定論的な順序で復元する。
+    `crit` のラベルは protected ヘッダに実在し、理解できる必要がある
+    (RFC 9052 §3.1)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /) -> CoseHeader:
+        """
+        空のヘッダを組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def algorithm(self, /) -> int |None:
+        """
+        アルゴリズム (`alg`)。
+        
+        ヘッダに書かれた識別子を解釈した結果であり、生の識別子は
+        `algorithm_identifier` で参照できる。
+        """
+    @algorithm.setter
+    def algorithm(self, /, value: int |None) -> None:
+        """
+        アルゴリズム (`alg`) を設定する。
+        """
+    @property
+    def algorithm_identifier(self, /) -> int |None:
+        """
+        ヘッダに書かれていたアルゴリズムの生の識別子。
+        """
+    @algorithm_identifier.setter
+    def algorithm_identifier(self, /, value: int |None) -> None:
+        """
+        ヘッダに書かれていたアルゴリズムの生の識別子を設定する。
+        """
+    @property
+    def content_type(self, /) -> CborValue |None:
+        """
+        ペイロードのコンテンツタイプ (`content type`、ラベル 3)。
+        """
+    @content_type.setter
+    def content_type(self, /, value: CborValue |None) -> None:
+        """
+        ペイロードのコンテンツタイプ (`content type`) を設定する。
+        """
+    @property
+    def critical(self, /) -> list[CborValue]:
+        """
+        必ず理解しなければならないヘッダパラメータ (`crit`)。
+        """
+    @critical.setter
+    def critical(self, /, value: Sequence[CborValue]) -> None:
+        """
+        必ず理解しなければならないヘッダパラメータ (`crit`) を設定する。
+        """
+    @staticmethod
+    def decode_protected(value: CborValue) -> CoseHeader:
+        """
+        protected ヘッダの CBOR のデータ項目をデコードする。
+        """
+    @staticmethod
+    def decode_unprotected(value: CborValue) -> CoseHeader:
+        """
+        unprotected ヘッダの CBOR のデータ項目をデコードする。
+        
+        RFC 9052 §3.1 は `crit` を、RFC 9596 §2 は `typ` を unprotected ヘッダに
+        置くことを禁止するため、どちらも `ValueError` になる。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        ヘッダを CBOR のマップへエンコードする。
+        """
+    @property
+    def key_id(self, /) -> Any |None:
+        """
+        鍵識別子 (`kid`)。
+        
+        RFC 9052 §3.1 はバイト文字列とするが、CAT の実装にはテキスト文字列を使う
+        ものもあるため、どちらの表記もそのまま保持する。
+        """
+    @key_id.setter
+    def key_id(self, /, value: Any |None) -> None:
+        """
+        鍵識別子 (`kid`) を設定する。
+        """
+    @property
+    def raw(self, /) -> list[tuple[CborValue, CborValue]]:
+        """
+        解釈しなかったヘッダパラメータ。
+        """
+    @raw.setter
+    def raw(self, /, value: Sequence[tuple[CborValue, CborValue]]) -> None:
+        """
+        解釈しなかったヘッダパラメータを設定する。
+        """
+    @property
+    def typ(self, /) -> CborValue |None:
+        """
+        完全な COSE オブジェクトのコンテンツタイプ (`typ`、ラベル 16)。
+        """
+    @typ.setter
+    def typ(self, /, value: CborValue |None) -> None:
+        """
+        完全な COSE オブジェクトのコンテンツタイプ (`typ`) を設定する。
+        """
+
+@final
+class CoseKey:
+    """
+    COSE Key (RFC 9052 §7) と JWK (RFC 7517) を共通に扱う鍵表現。
+    
+    `kind` は `symmetric` / `ec2` / `okp` のいずれかである。秘密鍵は署名にだけ使い、
+    検証では公開鍵の部分だけを参照する。`repr` は秘密鍵の値を伏せ、長さだけを表示する。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def curve(self, /) -> int |None:
+        """
+        EC2 鍵の曲線の識別子。
+        """
+    @staticmethod
+    def ec2(curve: int, x: bytes, y: bytes) -> CoseKey:
+        """
+        公開鍵だけの EC2 鍵 (`kty` = EC2) を組み立てる。
+        
+        `curve` は COSE の `crv` の識別子 (P-256 = 1 / P-384 = 2 / P-521 = 3) である。
+        `x` / `y` はビッグエンディアンの固定長の座標である。
+        """
+    @staticmethod
+    def ec2_with_private_key(curve: int, x: bytes, y: bytes, private_key: bytes) -> CoseKey:
+        """
+        秘密鍵付きの EC2 鍵を組み立てる。
+        
+        `private_key` はビッグエンディアンの固定長のスカラーである。
+        """
+    @staticmethod
+    def ed25519(public_key: bytes) -> CoseKey:
+        """
+        公開鍵だけの Ed25519 鍵 (`kty` = OKP) を組み立てる。
+        """
+    @staticmethod
+    def ed25519_with_private_key(public_key: bytes, private_key: bytes) -> CoseKey:
+        """
+        秘密鍵付きの Ed25519 鍵を組み立てる。
+        
+        `private_key` は Ed25519 の種 (32 バイト) である。
+        """
+    @property
+    def key(self, /) -> bytes |None:
+        """
+        対称鍵のバイト列。
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        鍵の種別を表す文字列。
+        """
+    @property
+    def private_key(self, /) -> bytes |None:
+        """
+        秘密鍵 (EC2 のスカラー / Ed25519 の種)。
+        """
+    @property
+    def public_key(self, /) -> bytes |None:
+        """
+        OKP 鍵の公開鍵。
+        """
+    @staticmethod
+    def symmetric(key: bytes) -> CoseKey:
+        """
+        対称鍵 (`kty` = Symmetric) を組み立てる。
+        """
+    @property
+    def x(self, /) -> bytes |None:
+        """
+        EC2 鍵の x 座標 (ビッグエンディアンの固定長)。
+        """
+    @property
+    def y(self, /) -> bytes |None:
+        """
+        EC2 鍵の y 座標 (ビッグエンディアンの固定長)。
+        """
+
+@final
+class CoseMessage:
+    """
+    COSE のメッセージ (COSE_Sign1 / COSE_Mac0)。
+    
+    `kind` は `sign1` / `mac0` のいずれかである。MAC では `signature` が MAC (tag) を
+    表す。CWT タグ (61) は COSE のタグ付きオブジェクトにだけ前置できる
+    (RFC 8392 §6)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def cose_tagged(self, /) -> bool:
+        """
+        COSE タグ (17 / 18) が付いていたかどうか。
+        """
+    @property
+    def cwt_tagged(self, /) -> bool:
+        """
+        CWT タグ (61) が付いていたかどうか。
+        """
+    @staticmethod
+    def decode(data: bytes) -> CoseMessage:
+        """
+        CBOR のバイト列からデコードする。
+        
+        CWT タグ (61) と COSE タグ (17 / 18) を許容する。タグが無い場合は protected
+        ヘッダのアルゴリズム種別から COSE_Sign1 / COSE_Mac0 を判別する。
+        """
+    @staticmethod
+    def decode_value(value: CborValue) -> CoseMessage:
+        """
+        CBOR のデータ項目からデコードする。
+        """
+    def encode(self, /, options: CoseEncodingOptions |None = None) -> bytes:
+        """
+        COSE メッセージをエンコードする。
+        
+        タグの付与はデコード時に持っていたタグと `options` の OR で決まる。CWT タグを
+        付ける場合は COSE タグも必要になる (RFC 8392 §6)。
+        """
+    def header(self, /) -> CoseHeader:
+        """
+        protected / unprotected を統合したヘッダを返す。
+        
+        `alg` は protected ヘッダに必須であり、同じラベルが両方のバケットにある場合は
+        `ValueError` になる。
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        メッセージの種別を表す文字列。
+        
+        `sign1` / `mac0` のいずれかである。
+        """
+    @staticmethod
+    def mac0(protected: bytes |None = None, unprotected: Sequence[tuple[CborValue, CborValue]] |None = None, payload: bytes |None = None, tag: bytes |None = None, cose_tagged: bool = False, cwt_tagged: bool = False) -> CoseMessage:
+        """
+        COSE_Mac0 を組み立てる。
+        
+        MAC は `tag` で受ける。`payload` を省略すると detached payload を表す。
+        """
+    @property
+    def payload(self, /) -> bytes |None:
+        """
+        ペイロード。`None` は detached payload を表す。
+        """
+    @property
+    def protected(self, /) -> bytes:
+        """
+        protected ヘッダの CBOR バイト列 (bstr の中身)。
+        """
+    @staticmethod
+    def sign1(protected: bytes |None = None, unprotected: Sequence[tuple[CborValue, CborValue]] |None = None, payload: bytes |None = None, signature: bytes |None = None, cose_tagged: bool = False, cwt_tagged: bool = False) -> CoseMessage:
+        """
+        COSE_Sign1 を組み立てる。
+        
+        `payload` を省略すると detached payload を表す。`cose_tagged` / `cwt_tagged` は
+        デコード時に持っていたタグを再現するために使う。
+        """
+    @property
+    def signature(self, /) -> bytes:
+        """
+        署名または MAC。
+        """
+    def signing_input(self, /) -> bytes:
+        """
+        署名 / MAC の対象バイト列を組み立てる。
+        
+        COSE_Sign1 は `Sig_structure`、COSE_Mac0 は `MAC_structure` を返す
+        (RFC 9052 §4.4 / §6.3)。external_aad は空のバイト文字列である。detached
+        payload は扱わないため、その場合は `ValueError` になる。
+        """
+    @property
+    def unprotected(self, /) -> list[tuple[CborValue, CborValue]]:
+        """
+        unprotected ヘッダのマップ。
+        """
+
+@final
 class DeltaUpdate:
     """
     MSF の delta 更新。
@@ -763,6 +1938,331 @@ class DeltaUpdate:
         """
         トラックを削除する操作 ("remove") を操作列の末尾へ追加する
         (draft-ietf-moq-msf-01 §5.1.6 (Delta update))。
+        """
+
+@final
+class DpopProof:
+    """
+    DPoP proof。
+    
+    `repr` は署名の長さだけを表示する。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def claims(self, /) -> DpopProofClaims:
+        """
+        クレーム。
+        """
+    @staticmethod
+    def decode(input: str) -> DpopProof:
+        """
+        DPoP proof の JWT をデコードする。
+        
+        `typ` が `"dpop-proof+jwt"` でない場合、対称鍵アルゴリズムである場合、`jwk` が
+        無い場合は `ValueError` になる。
+        """
+    @property
+    def header(self, /) -> DpopProofHeader:
+        """
+        ヘッダ。
+        """
+    @property
+    def signature(self, /) -> bytes:
+        """
+        署名。
+        """
+    @property
+    def signing_input(self, /) -> bytes:
+        """
+        署名対象のバイト列。
+        """
+    def verify_access_token_hash(self, /, access_token: str) -> None:
+        """
+        `ath` をアクセストークン (文字列) と照合する。
+        
+        `ath` が proof に無い場合は何も行わない。
+        """
+    def verify_access_token_hash_bytes(self, /, access_token: bytes) -> None:
+        """
+        `ath` をアクセストークン (バイト列) と照合する。
+        """
+    def verify_against_cat_token(self, /, token: CatToken, action: int, namespace: Sequence[Sequence[int]], track_name: bytes, reference_time_seconds: float, default_window_seconds: float, replay_cache: DpopReplayCache |None = None) -> None:
+        """
+        CAT トークンと同時に送られた DPoP proof を一通り検証する。
+        
+        TOKEN の生バイトを `ath` のアクセストークンとして扱う。署名、`ath`、JWK
+        サムプリントのバインディング、Authorization Context、`catdpop` のウィンドウに
+        よる鮮度、jti によるリプレイ保護の順に検証する。
+        
+        `catdpop` が jti の処理を要求している場合は `replay_cache` が必須である。
+        """
+    def verify_against_token(self, /, request: DpopVerification, replay_cache: DpopReplayCache |None = None) -> None:
+        """
+        CAT トークンに束縛された DPoP proof を一通り検証する。
+        
+        [`DpopProof::verify_against_cat_token`] と異なり、アクセストークンの表現を
+        呼び出し側が指定する。`DpopVerification` の `access_token` を渡すと `ath` の
+        検証が必須になる (draft-nandakumar-moq-generic-dpop-proof-00 §4.3.2)。
+        """
+    def verify_authorization_context(self, /, action: int, namespace: Sequence[Sequence[int]], track_name: bytes) -> None:
+        """
+        Authorization Context (actx) を検証する。
+        
+        `type` が "moqt"、`action` が一致し、`tns` / `tn` が対象と一致し、`resource`
+        が与えられている場合は `tns` / `tn` と整合することを確認する。
+        """
+    def verify_freshness(self, /, reference_time_seconds: float, window_seconds: float) -> None:
+        """
+        `iat` が現在時刻からウィンドウ内にあるかどうかを検証する。
+        
+        未来方向のずれも同じウィンドウで制限する。
+        """
+    def verify_key_binding(self, /, confirmation: Confirmation) -> None:
+        """
+        proof の JWK がトークンの `cnf` の JWK サムプリントと一致するか検証する。
+        
+        `cnf` の confirmation key 323 (IANA 登録の `jkt`) を優先し、323 が無い場合だけ
+        3 (ドラフトのベクタが使う値) と比較する。
+        """
+    def verify_signature(self, /) -> None:
+        """
+        proof の署名を埋め込みの JWK で検証する。
+        """
+
+@final
+class DpopProofBuilder:
+    """
+    DPoP proof を発行するビルダー。
+    
+    署名鍵と埋め込む JWK が同じ公開鍵を表していることを確認してから署名する。
+    `iat` が有限でない場合は `ValueError` になる。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, jti: str, issued_at: float, authorization_context: AuthorizationContext) -> DpopProofBuilder:
+        """
+        必須の値を指定して組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def access_token_hash(self, /) -> str |None:
+        """
+        `ath` (任意)。
+        """
+    @access_token_hash.setter
+    def access_token_hash(self, /, value: str |None) -> None:
+        """
+        `ath` を設定する。
+        """
+    @property
+    def authorization_context(self, /) -> AuthorizationContext:
+        """
+        `actx`。
+        """
+    @authorization_context.setter
+    def authorization_context(self, /, value: AuthorizationContext) -> None:
+        """
+        `actx` を設定する。
+        """
+    def build(self, /, key: CoseKey, jwk: Jwk) -> str:
+        """
+        proof の JWT を発行する。
+        
+        `jwk` は埋め込む公開鍵で、`key` と同じ公開鍵でなければならない。署名は非対称
+        アルゴリズムだけで行う。
+        """
+    @property
+    def issued_at(self, /) -> float:
+        """
+        `iat` (UNIX 秒)。
+        """
+    @issued_at.setter
+    def issued_at(self, /, value: float) -> None:
+        """
+        `iat` (UNIX 秒) を設定する。
+        """
+    @property
+    def jti(self, /) -> str:
+        """
+        `jti`。
+        """
+    @jti.setter
+    def jti(self, /, value: str) -> None:
+        """
+        `jti` を設定する。
+        """
+    @property
+    def key_id(self, /) -> str |None:
+        """
+        `kid` (任意)。
+        """
+    @key_id.setter
+    def key_id(self, /, value: str |None) -> None:
+        """
+        `kid` を設定する。
+        """
+    @property
+    def nonce(self, /) -> str |None:
+        """
+        `nonce` (任意)。
+        """
+    @nonce.setter
+    def nonce(self, /, value: str |None) -> None:
+        """
+        `nonce` を設定する。
+        """
+
+@final
+class DpopProofClaims:
+    """
+    DPoP proof の JWT ペイロード (draft-nandakumar-moq-generic-dpop-proof-00 §4.3.2)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def access_token_hash(self, /) -> str |None:
+        """
+        `ath`。アクセストークンを伴う場合の base64url(SHA-256(token))。
+        """
+    @property
+    def authorization_context(self, /) -> AuthorizationContext:
+        """
+        `actx`。
+        """
+    @staticmethod
+    def decode(text: str) -> DpopProofClaims:
+        """
+        ペイロードの JSON をデコードする。
+        
+        クレーム名が重複している場合は `ValueError` になる。
+        """
+    @property
+    def issued_at(self, /) -> float:
+        """
+        `iat` (UNIX 秒)。
+        """
+    @property
+    def jti(self, /) -> str:
+        """
+        `jti`。proof の一意な識別子。
+        """
+    @property
+    def nonce(self, /) -> str |None:
+        """
+        `nonce`。
+        """
+
+@final
+class DpopProofHeader:
+    """
+    DPoP proof の JWT ヘッダ (draft-nandakumar-moq-generic-dpop-proof-00 §4.3.1)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def algorithm(self, /) -> int:
+        """
+        `alg` の識別子。非対称署名アルゴリズムでなければならない。
+        """
+    @property
+    def jwk(self, /) -> Jwk:
+        """
+        `jwk`。proof の検証に使う公開鍵。
+        """
+    @property
+    def key_id(self, /) -> str |None:
+        """
+        `kid` (任意)。
+        """
+    @property
+    def typ(self, /) -> str:
+        """
+        `typ`。`"dpop-proof+jwt"` でなければならない。
+        """
+
+@final
+class DpopReplayCache:
+    """
+    jti によるリプレイ保護のキャッシュ。
+    
+    アプリケーションが 1 つの主体 (セッションやアクセストークン) ごとに保持する。
+    エントリ数と jti 長の上限は持たないため、アプリケーションが主体ごとのレート制限や
+    jti の長さ制限で肥大化を防ぐこと (RFC 9449 §11.1)。
+    """
+    def __len__(self, /) -> int:
+        """
+        記録数を返す。
+        """
+    def __new__(cls, /) -> DpopReplayCache:
+        """
+        空のキャッシュを組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    def check_and_record(self, /, jti: str, issued_at: float, window_seconds: float, reference_time_seconds: float) -> None:
+        """
+        jti を確認して記録する。
+        
+        ウィンドウ外の古い記録は破棄する。同じ jti がウィンドウ内に存在する場合は
+        `ValueError` になる。
+        """
+    def is_empty(self, /) -> bool:
+        """
+        記録が空かどうかを返す。
+        """
+
+@final
+class DpopVerification:
+    """
+    DPoP proof を CAT トークンに束縛して検証するための入力。
+    
+    [`DpopProof::verify_against_token`] に渡す。アクセストークンを渡すと `ath` の検証が
+    必須になる。
+    """
+    def __new__(cls, /, token_claims: CatClaims, action: int, namespace: Sequence[Sequence[int]], track_name: Sequence[int], reference_time_seconds: float, default_window_seconds: float, access_token: Sequence[int] |None = None) -> DpopVerification:
+        """
+        検証入力を組み立てる。
+        
+        `namespace` は正規の Track Namespace でなければ `ValueError` になる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def access_token(self, /) -> bytes |None:
+        """
+        proof と同時に送られたアクセストークン。
+        """
+    @property
+    def action(self, /) -> int:
+        """
+        要求されたアクションの識別子。
+        """
+    @property
+    def default_window_seconds(self, /) -> float:
+        """
+        既定のウィンドウ (秒)。
+        """
+    @property
+    def namespace(self, /) -> list:
+        """
+        対象の Track Namespace のフィールド列。
+        """
+    @property
+    def reference_time_seconds(self, /) -> float:
+        """
+        検証に使う現在時刻 (UNIX 秒)。
+        """
+    @property
+    def token_claims(self, /) -> CatClaims:
+        """
+        検証対象の CAT のクレーム。
+        """
+    @property
+    def track_name(self, /) -> bytes:
+        """
+        対象の Track Name。
         """
 
 @final
@@ -980,6 +2480,184 @@ class InitData:
         """
 
 @final
+class Jwk:
+    """
+    JWK (RFC 7517 §4)。
+    
+    `kty` は `EC` / `OKP` / `RSA` のいずれかである。`x` / `y` / `n` / `e` は
+    base64url (パディング無し) の文字列として保持し、デコード時に正規化しない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    def canonical_json(self, /) -> str:
+        """
+        RFC 7638 §3.2 の正規化 JSON を返す。
+        
+        必須メンバーを辞書順に並べ、空白を入れない。base64url の値はパディング無しに
+        正規化する。
+        """
+    @property
+    def curve(self, /) -> str |None:
+        """
+        `crv` を返す。`kty` が `RSA` の場合は `None` になる。
+        """
+    @staticmethod
+    def decode(text: str) -> Jwk:
+        """
+        JWK の JSON をデコードする。
+        
+        メンバー名が重複している場合と、秘密鍵のメンバーを含む場合は `ValueError` に
+        なる (RFC 7517 §4 / RFC 9449 §4.3)。
+        """
+    @property
+    def e(self, /) -> str |None:
+        """
+        `e` を返す。`kty` が `RSA` 以外の場合は `None` になる。
+        """
+    @staticmethod
+    def ec(curve: str, x: str, y: str) -> Jwk:
+        """
+        EC 公開鍵 (`kty` = "EC") を組み立てる。
+        
+        `curve` は `P-256` / `P-384` / `P-521`、`x` / `y` は base64url の文字列である。
+        """
+    @property
+    def kty(self, /) -> str:
+        """
+        `kty` を返す。
+        """
+    def matches_public_key(self, /, key: CoseKey) -> bool:
+        """
+        指定した鍵と同じ公開鍵を表すかどうかを返す。
+        
+        DPoP proof を発行するときに、埋め込む JWK と署名鍵の食い違いを検出するために
+        使う。`kty` が `RSA` の場合は `ValueError` になる。
+        """
+    @property
+    def n(self, /) -> str |None:
+        """
+        `n` を返す。`kty` が `RSA` 以外の場合は `None` になる。
+        """
+    @staticmethod
+    def okp(curve: str, x: str) -> Jwk:
+        """
+        OKP 公開鍵 (`kty` = "OKP") を組み立てる。
+        
+        `curve` は `Ed25519`、`x` は base64url の文字列である。
+        """
+    @staticmethod
+    def rsa(n: str, e: str) -> Jwk:
+        """
+        RSA 公開鍵 (`kty` = "RSA") を組み立てる。
+        
+        `n` / `e` は base64url の文字列である。RSA は COSE の鍵表現を持たないため、
+        `to_cose_key` は `ValueError` になる。
+        """
+    def thumbprint_sha256(self, /) -> bytes:
+        """
+        JWK サムプリント (RFC 7638) の SHA-256 を計算する。
+        """
+    def to_cose_key(self, /) -> CoseKey:
+        """
+        公開鍵を [`CoseKey`] へ変換する。
+        
+        `kty` が `RSA` の場合は [`CoseKey`] が表現を持たないため `ValueError` に
+        なる。
+        """
+    @property
+    def x(self, /) -> str |None:
+        """
+        `x` を返す。`kty` が `RSA` の場合は `None` になる。
+        """
+    @property
+    def y(self, /) -> str |None:
+        """
+        `y` を返す。`kty` が `EC` 以外の場合は `None` になる。
+        """
+
+@final
+class JwsCompact:
+    """
+    JWS compact 形式の JWT (RFC 7515 §7.1)。
+    
+    `header.payload.signature` の 3 分割形式を保持する。`signature` は COSE の固定長
+    形式 (ECDSA は `r || s`、Ed25519 は 64 バイト) である。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @staticmethod
+    def decode(input: str) -> JwsCompact:
+        """
+        `header.payload.signature` の 3 分割形式をデコードする。
+        """
+    @property
+    def header(self, /) -> JwsHeader:
+        """
+        ヘッダ。
+        """
+    @property
+    def payload(self, /) -> bytes:
+        """
+        ペイロードの生バイト列。
+        """
+    @property
+    def signature(self, /) -> bytes:
+        """
+        署名。
+        """
+    @property
+    def signing_input(self, /) -> bytes:
+        """
+        署名対象のバイト列 (`base64url(header).base64url(payload)`)。
+        """
+    def verify(self, /, key: CoseKey) -> None:
+        """
+        ヘッダの `alg` と鍵で署名を検証する。
+        """
+
+@final
+class JwsHeader:
+    """
+    JWS compact のヘッダ (RFC 7515 §4)。
+    
+    `alg` は JOSE の名前 (ES256 など) から COSE のアルゴリズムの識別子へ変換して
+    保持する。`crit` を持つ JWS は、この実装が拡張ヘッダを 1 つも解釈しないため
+    拒否する (RFC 7515 §4.1.11)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @property
+    def algorithm(self, /) -> int:
+        """
+        `alg` を COSE のアルゴリズムの識別子として返す。
+        """
+    @staticmethod
+    def decode(text: str) -> JwsHeader:
+        """
+        ヘッダの JSON をデコードする。
+        
+        メンバー名が重複している場合と、`crit` を持つ場合は `ValueError` になる。
+        """
+    @property
+    def jwk(self, /) -> Jwk |None:
+        """
+        `jwk` (DPoP proof が埋め込む公開鍵)。
+        """
+    @property
+    def key_id(self, /) -> str |None:
+        """
+        `kid`。
+        """
+    @property
+    def typ(self, /) -> str |None:
+        """
+        `typ`。
+        """
+
+@final
 class LocProperties:
     """
     LOC プロパティの集合。
@@ -1169,6 +2847,58 @@ class LocationFilterUpdate:
     def kind(self, /) -> str:
         """
         `unchanged` / `removed` / `set` のいずれか。
+        """
+
+@final
+class Match:
+    """
+    `bin-match` (draft-ietf-moq-c4m-01 §2.1)。
+    
+    バイト文字列は完全一致、prefix / suffix は前方 / 後方一致を表す。マッチは
+    バイト単位で行い、正規化はしない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @staticmethod
+    def decode(value: CborValue) -> Match:
+        """
+        `bin-match` の CBOR のデータ項目をデコードする。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        `bin-match` を CBOR のデータ項目へエンコードする。
+        """
+    @staticmethod
+    def exact(value: bytes) -> Match:
+        """
+        完全一致 (`bstr`) を組み立てる。
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        マッチの種別を表す文字列。
+        
+        `exact` / `prefix` / `suffix` のいずれかである。
+        """
+    def matches(self, /, value: bytes) -> bool:
+        """
+        値がマッチするかどうかを返す。
+        """
+    @staticmethod
+    def prefix(value: bytes) -> Match:
+        """
+        前方一致 (`[1, bstr]`) を組み立てる。
+        """
+    @staticmethod
+    def suffix(value: bytes) -> Match:
+        """
+        後方一致 (`[2, bstr]`) を組み立てる。
+        """
+    @property
+    def value(self, /) -> bytes:
+        """
+        マッチのパターンのバイト列。
         """
 
 @final
@@ -1476,6 +3206,172 @@ class MessageParameters:
         """
         TRACK_NAMESPACE_PREFIX (type 0x34) の値を namespace のフィールド列として返す
         (draft-ietf-moq-transport-21 §9.20.21 (TRACK_NAMESPACE_PREFIX Parameter))。
+        """
+
+@final
+class MoqtClaim:
+    """
+    `moqt` クレーム (draft-ietf-moq-c4m-01 §2.1)。
+    
+    アクションスコープの配列を持つ。いずれかのスコープが認可すれば許可となり、評価順は
+    問わない (§2.1.2)。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /) -> MoqtClaim:
+        """
+        空のクレームを組み立てる。
+        
+        スコープを持たない状態の encode は `ValueError` になる。
+        """
+    def __repr__(self, /) -> str: ...
+    def authorize(self, /, action: int, namespace: Sequence[Sequence[int]], track_name: bytes) -> bool:
+        """
+        アクションと Full Track Name が認可されるかどうかを返す。
+        
+        いずれかのスコープが認可すれば `True` を返す。`moqt` クレームを持たない
+        `CatClaims` の認可判定は [`crate::c4m::cat::CatClaims`] を参照。
+        """
+    @staticmethod
+    def decode(value: CborValue) -> MoqtClaim:
+        """
+        `moqt` クレームの CBOR のデータ項目をデコードする。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        `moqt` クレームを CBOR のデータ項目へエンコードする。
+        """
+    def scope(self, /, scope: MoqtScope) -> None:
+        """
+        スコープを追加する。
+        """
+    @property
+    def scopes(self, /) -> list[MoqtScope]:
+        """
+        認可スコープの列。
+        """
+    @scopes.setter
+    def scopes(self, /, scopes: Sequence[MoqtScope]) -> None:
+        """
+        認可スコープの列を置き換える。
+        """
+
+@final
+class MoqtScope:
+    """
+    `moqt-scope` (draft-ietf-moq-c4m-01 §2.1)。
+    
+    アクションの配列と、省略可能な名前空間マッチの配列 / トラック名マッチを持つ。
+    名前空間マッチ無しでトラック名マッチだけを持つスコープは encode できない。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, actions: Sequence[int] |None = None) -> MoqtScope:
+        """
+        スコープを組み立てる。
+        
+        `actions` はアクションの整数値の列である。省略するとアクション無しになり、
+        その状態の encode は `ValueError` になる。
+        """
+    def __repr__(self, /) -> str: ...
+    def action(self, /, action: int) -> None:
+        """
+        アクションを追加する (draft-ietf-moq-c4m-01 §2.1 Table 1)。
+        """
+    @property
+    def actions(self, /) -> list[int]:
+        """
+        認可するアクションの整数値の列。
+        """
+    @actions.setter
+    def actions(self, /, actions: Sequence[int]) -> None:
+        """
+        認可するアクションの整数値の列を置き換える。
+        """
+    def allows(self, /, action: int, namespace: Sequence[Sequence[int]], track_name: bytes) -> bool:
+        """
+        アクションと Full Track Name がこのスコープで認可されるかどうかを返す。
+        
+        `namespace` は Track Namespace のフィールド列、`track_name` は Track Name を
+        表す。未知のアクションの識別子は認可されないものとして `False` を返す。
+        """
+    @staticmethod
+    def decode(value: CborValue) -> MoqtScope:
+        """
+        `moqt-scope` の CBOR のデータ項目をデコードする。
+        """
+    def encode(self, /) -> CborValue:
+        """
+        `moqt-scope` を CBOR のデータ項目へエンコードする。
+        
+        アクションが空の場合、`nil` が末尾以外にある場合、名前空間マッチ無しで
+        トラック名マッチだけを持つ場合は `ValueError` になる。
+        """
+    @property
+    def namespace(self, /) -> list[NamespaceMatch]:
+        """
+        名前空間フィールドのマッチの列。
+        """
+    @namespace.setter
+    def namespace(self, /, namespace: Sequence[NamespaceMatch]) -> None:
+        """
+        名前空間フィールドのマッチの列を置き換える。
+        """
+    def namespace_end(self, /) -> None:
+        """
+        名前空間の末尾を固定する `nil` を追加する。
+        """
+    def namespace_match(self, /, namespace_match: NamespaceMatch) -> None:
+        """
+        名前空間フィールドのマッチを追加する。
+        """
+    @property
+    def track(self, /) -> Match |None:
+        """
+        トラック名のマッチ。
+        
+        `None` の場合はすべてのトラック名にマッチする。設定すると、そのスコープは
+        トラック名のマッチだけを持つ状態になるため、名前空間マッチが無い場合は
+        encode が `ValueError` になる。
+        """
+    @track.setter
+    def track(self, /, matcher: Match |None) -> None:
+        """
+        トラック名のマッチを置き換える。
+        """
+
+@final
+class NamespaceMatch:
+    """
+    `moqt-ns-match` (draft-ietf-moq-c4m-01 §2.1)。
+    
+    名前空間フィールドのマッチ ([`Match`]) と、名前空間の末尾にそれ以上のフィールドが
+    無いことを要求する `nil` のいずれかである。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __repr__(self, /) -> str: ...
+    @staticmethod
+    def end() -> NamespaceMatch:
+        """
+        名前空間の末尾にだけ現れる `nil` を組み立てる。
+        """
+    @property
+    def kind(self, /) -> str:
+        """
+        マッチの種別を表す文字列。
+        
+        `match` / `end` のいずれかである。
+        """
+    @staticmethod
+    def match(value: Match) -> NamespaceMatch:
+        """
+        `bin-match` による名前空間フィールドのマッチを組み立てる。
+        """
+    @property
+    def matcher(self, /) -> Match |None:
+        """
+        `bin-match` によるマッチ。`nil` の場合は `None` になる。
         """
 
 @final
@@ -2796,6 +4692,45 @@ class Uri:
         終了が省略された open range の終了は `None` になる。
         """
 
+@final
+class VerifyOptions:
+    """
+    署名検証のオプション。
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __ne__(self, value: object, /) -> bool: ...
+    def __new__(cls, /, expected_algorithm: int |None = None, expected_type: str |None = None) -> VerifyOptions:
+        """
+        検証オプションを組み立てる。
+        """
+    def __repr__(self, /) -> str: ...
+    @property
+    def expected_algorithm(self, /) -> int |None:
+        """
+        トークンの `alg` に期待するアルゴリズムの識別子。
+        """
+    @expected_algorithm.setter
+    def expected_algorithm(self, /, value: int |None) -> None:
+        """
+        トークンの `alg` に期待するアルゴリズムの識別子。
+        """
+    @property
+    def expected_type(self, /) -> str |None:
+        """
+        トークンの `typ` に期待する値。
+        
+        CAT では `CAT_CONTENT_TYPE` (`"CAT"`) を指定する。未指定の場合は `typ` を
+        検証しない。
+        """
+    @expected_type.setter
+    def expected_type(self, /, value: str |None) -> None:
+        """
+        トークンの `typ` に期待する値。
+        
+        CAT では `CAT_CONTENT_TYPE` (`"CAT"`) を指定する。未指定の場合は `typ` を
+        検証しない。
+        """
+
 def classify_data_stream_type(type_id: int) -> str |None:
     """
     stream type の varint が制御ストリームかデータストリームかを判定する。
@@ -2804,6 +4739,22 @@ def classify_data_stream_type(type_id: int) -> str |None:
     `None` を返す。
     
     (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+    """
+
+def decode_cbor(data: bytes) -> CborValue:
+    """
+    CBOR のデータ項目をデコードする。
+    
+    入力の全バイトをデータ項目として消費する。末尾に余分なバイトがある場合は
+    `ValueError` になる。複数のデータ項目を続けて読む場合は
+    [`decode_cbor_partial`] を使う。
+    """
+
+def decode_cbor_partial(data: bytes) -> tuple[CborValue, int]:
+    """
+    CBOR のデータ項目をデコードし `(値, 消費バイト数)` を返す。
+    
+    ブロックの後ろに続くバイト列は消費しない。
     """
 
 def decode_message(data: bytes) -> tuple[Message, int]:
@@ -2853,6 +4804,30 @@ def decode_varint_prefix(data: bytes) -> tuple[int, int] |None:
     
     バイト列が途中で切れている場合は `None` を返し、続きの到着を待つ。
     非最小エンコーディングも受理する。
+    """
+
+def default_signing_algorithm(key: CoseKey) -> int:
+    """
+    鍵の種別から既定の署名アルゴリズムの識別子を返す。
+    
+    対称鍵は HMAC-SHA256、EC2 は曲線に対応する ES256 / ES384 / ES512、OKP は
+    EdDSA になる。
+    """
+
+def digest(algorithm: str, message: bytes) -> bytes:
+    """
+    メッセージのハッシュを計算する。
+    
+    `algorithm` は `sha256` / `sha384` / `sha512` のいずれかである。JWK サムプリント
+    (RFC 7638) など、署名以外でハッシュが必要な処理に使う。
+    """
+
+def encode_cbor(value: CborValue) -> bytes:
+    """
+    CBOR のデータ項目をエンコードする。
+    
+    RFC 8949 §4.2 の決定論的エンコードに従う。マップのキーはキーのエンコード済み
+    バイト列の昇順に並び、浮動小数点数は値を保つ最短の幅になる。
     """
 
 def encode_varint(value: int) -> bytes:
@@ -2937,6 +4912,25 @@ def serialize_name(namespace: Sequence[Sequence[int]], track_name: bytes) -> str
 def setup_stream_type() -> int:
     """
     制御ストリームの stream type を返す。
+    """
+
+def sign(algorithm: int, key: CoseKey, message: bytes) -> bytes:
+    """
+    メッセージに署名または MAC を付ける。
+    
+    対称鍵の場合は MAC を返す。EC2 / OKP の場合は COSE の固定長形式 (ECDSA は
+    `r || s`) の署名を返す。`algorithm` は COSE のアルゴリズム識別子であり、
+    draft-ietf-moq-c4m-01 付録 A のベクタが HMAC-SHA256 に使う `-4` も受理する。
+    
+    対応するアルゴリズムは HMAC 256/384/512、ES256/384/512、EdDSA (Ed25519) である。
+    """
+
+def verify(algorithm: int, key: CoseKey, message: bytes, signature: bytes) -> None:
+    """
+    署名または MAC を検証する。
+    
+    検証に失敗した場合は `ValueError` になる。埋め込みの JWK を検証する場合は
+    [`crate::c4m::jwk::Jwk::to_cose_key`] で公開鍵へ変換して渡す。
     """
 
 def __getattr__(name: str) -> Incomplete: ...

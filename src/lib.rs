@@ -12,6 +12,7 @@
 //! I/O は Python の webtransport-py が担当する。Rust 側は自側が送るべきバイト列を
 //! イベントとして返し、ストリームの実体には触れない。
 
+mod c4m;
 mod codec;
 mod core;
 mod errors;
@@ -116,6 +117,29 @@ mod _native {
         parse_msf_fragment, parse_name, resolve_catalog_variables, resolve_timeline_template,
         serialize_name,
     };
+
+    // C4M の codec (moqt.c4m)
+    #[pymodule_export]
+    use crate::c4m::cat::{
+        CatClaims, CatToken, CatTokenBuilder, ClaimValidationOptions, Confirmation, VerifyOptions,
+    };
+    #[pymodule_export]
+    use crate::c4m::cbor::{CborValue, decode_cbor, decode_cbor_partial, encode_cbor};
+    #[pymodule_export]
+    use crate::c4m::claims::{CatDpop, Match, MoqtClaim, MoqtScope, NamespaceMatch};
+    #[pymodule_export]
+    use crate::c4m::cose::{CoseEncodingOptions, CoseHeader, CoseMessage};
+    #[pymodule_export]
+    use crate::c4m::crypto::{CoseKey, default_signing_algorithm_id, digest, sign, verify};
+    #[pymodule_export]
+    use crate::c4m::dpop::{
+        AuthorizationContext, DpopProof, DpopProofBuilder, DpopProofClaims, DpopProofHeader,
+        DpopReplayCache, DpopVerification,
+    };
+    #[pymodule_export]
+    use crate::c4m::jwk::Jwk;
+    #[pymodule_export]
+    use crate::c4m::jwt::{JwsCompact, JwsHeader};
 
     /// モジュール定数を登録する。
     #[pymodule_init]
@@ -320,6 +344,9 @@ mod _native {
         crate::msf::register_constants(module)?;
         crate::properties::register_constants(module)?;
         crate::grease::register_constants(module)?;
+
+        // C4M の定数 (moqt.c4m)
+        crate::c4m::register_constants(module)?;
         Ok(())
     }
 }
