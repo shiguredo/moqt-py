@@ -64,6 +64,27 @@ async def _take_objects(subscription: Subscription, count: int) -> list[MOQTObje
     return await collect_objects(subscription.objects(), count, OBJECT_TIMEOUT)
 
 
+async def _take_objects_or_report(
+    subscription: Subscription,
+    count: int,
+    client: Client,
+) -> list[MOQTObject]:
+    """subscription から指定件数のオブジェクトを取り出す。
+
+    取り出せなかった場合は、原因の切り分けに必要な session の状態 (接続が確立して
+    いるか、購読がどの状態か) を添えて失敗させる。接続確立や購読の状態と無関係に
+    オブジェクトだけが届かない事象を切り分けるために使う。
+    """
+    try:
+        return await collect_objects(subscription.objects(), count, OBJECT_TIMEOUT)
+    except TimeoutError as error:
+        raise AssertionError(
+            "object did not arrive: "
+            f"established={client.established} "
+            f"subscription={client.subscription_state(subscription.request_id)!r}"
+        ) from error
+
+
 async def _take_objects_until_end(subscription: Subscription) -> list[MOQTObject]:
     """subscription が終了するまでオブジェクトを取り出す。"""
     return [item async for item in subscription.objects()]
@@ -1150,7 +1171,7 @@ async def test_object_status_is_delivered(
 
     await _send_object(published[0], send, b"", status)
 
-    received = await _take_objects(subscription, 1)
+    received = await _take_objects_or_report(subscription, 1, moq_pair.client)
 
     assert len(received) == 1
     assert received[0].payload == b""
