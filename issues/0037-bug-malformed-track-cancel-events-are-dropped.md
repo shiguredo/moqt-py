@@ -60,3 +60,25 @@ draft-ietf-moq-transport-21 §12.1 (Malformed Tracks) は、購読者が Malform
 I/O 層の扱いの問題である。moqt-rs の `MessageError::MalformedTrack` は「セッションを閉じるか
 購読だけ cancel するか」をアプリが判別するために追加された分類であり、本 issue はその分類を
 moqt-py の公開 API まで届かせる作業にあたる。
+
+## pending にする理由
+
+moqt-rs の datagram 経路が Malformed Track の検出を購読単位の cancel として扱っておらず、
+セッションを `PROTOCOL_VIOLATION` で閉じるため、moqt-py 側だけでは実装できない。
+
+moqt-rs の `0111` は `RecvDataStreamError::MalformedTrack` の追加と
+`Session::recv_subgroup_header` / `Session::recv_subgroup_object` /
+`Session::recv_object_datagram` / `Session::recv_datagram` /
+`Session::recv_data_stream_closed` の戻り値型の変更を設計方針と完了条件に挙げているが、
+実装されたのは `MessageError::MalformedTrack` の分類と `Session::terminate_malformed_track`
+までである。`src/session/data.rs` の `session_error_from_data_message` は
+`MessageError::MalformedTrack` を `SESSION_PROTOCOL_VIOLATION` に写し、
+`Session::recv_object_datagram` の検証経路はその結果で `Session::fail` を呼ぶ。そのため
+datagram の Object Properties が Malformed Track の条件に当たる場合、購読だけが cancel
+されずセッションが閉じる。
+
+moqt-rs が datagram 経路でも `RecvDataStreamError::MalformedTrack` を返すようになったら
+reopened にする。現時点で moqt-py 側から観測できる範囲ではセッションが閉じる経路であるため、
+cancel のイベントが取り残される事象は起きない。`CoreSession.receive_datagram` /
+`receive_data_stream` がエラー時に `drain_events` を呼ばない点は残っており、購読単位の
+cancel を返す経路が入った時点で改めて対応が必要になる。
