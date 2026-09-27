@@ -573,7 +573,7 @@ pub(crate) fn message_kind(message: &ControlMessage) -> &'static str {
         ControlMessage::FetchOk(_) => "fetch_ok",
         ControlMessage::TrackStatus(_) => "track_status",
         // 定義済みだが moqt-rs が実装しない制御メッセージ
-        // (relay 専用の namespace 発見・告知機構)
+        // (relay 専用の namespace 発見・告知機構。draft-ietf-moq-transport-21 §9 Table 5)
         ControlMessage::Unsupported { .. } => "unsupported",
     }
 }
@@ -2008,7 +2008,7 @@ impl CoreSession {
                     };
                     // ペイロードが揃っていない場合は保留して続きの到着を待つ。
                     // payload_length が 0 のオブジェクトはデコーダにペイロードが無い
-                    let payload = match entry {
+                    let payload = match &entry {
                         DecodedFetchEntry::Object(object) if object.payload_length > 0 => {
                             match decoder.try_read_payload() {
                                 Some(payload) => payload,

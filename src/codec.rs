@@ -51,10 +51,12 @@ impl Message {
     /// `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` /
     /// `unsupported` のいずれかである。
     ///
-    /// `unsupported` は draft の §9 Table 5 に定義済みだが moqt-rs が実装しない
-    /// 制御メッセージ (relay 専用の namespace 発見・告知機構) であり、本体は
-    /// 生バイト列のまま公開する。列挙は `moqt.moqt` が扱う制御メッセージの全体であり、
-    /// relay 専用の namespace 発見・告知機構の API は含まない。
+    /// `unsupported` は draft-ietf-moq-transport-21 §9 Table 5 に定義済みだが
+    /// moqt-rs が実装しない制御メッセージ (relay 専用の namespace 発見・告知機構と
+    /// その応答) であり、本体は生バイト列のまま公開する。`body` は `type_id`
+    /// (メッセージ Type) と `request_id` (`None` の場合もある) と `body`
+    /// (Length の後ろの生バイト列) を持つ。列挙は `moqt.moqt` が扱う制御メッセージの
+    /// 全体であり、relay 専用の namespace 発見・告知機構の API は含まない。
     #[getter]
     fn kind(&self) -> &'static str {
         self.kind
