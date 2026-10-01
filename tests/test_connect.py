@@ -12,6 +12,10 @@ from moqt.moq import Client
 # 接続先の MOQT URI。未設定の場合は接続テストを実行しない。
 TEST_MOQT_URI: str | None = os.environ.get("TEST_MOQT_URI")
 
+# 接続先の証明書を検証するか。開発用の relay は自己署名証明書を使うため、ローカルで
+# 実行するときだけ `TEST_MOQT_VERIFY_PEER=0` を設定する。既定は検証する。
+VERIFY_PEER = os.environ.get("TEST_MOQT_VERIFY_PEER", "1") != "0"
+
 # 接続 (SETUP の交換を含む) の待ち合わせの上限秒数。
 CONNECT_TIMEOUT = 8.0
 
@@ -24,11 +28,11 @@ async def test_connect_and_close() -> None:
     から閉じる。
 
     接続方式は `Client` の既定 (WebTransport over HTTP/3) であり、接続先の証明書は
-    検証する。ローカルの server を起動する E2E テストと異なり、実環境の TLS と
-    サーバー実装との相互接続を確認する。
+    検証する (`TEST_MOQT_VERIFY_PEER=0` でだけ検証を切る)。ローカルの server を
+    起動する E2E テストと異なり、実環境の TLS とサーバー実装との相互接続を確認する。
     """
     assert TEST_MOQT_URI is not None
-    client = Client(url=TEST_MOQT_URI)
+    client = Client(url=TEST_MOQT_URI, verify_peer=VERIFY_PEER)
 
     await client.connect(timeout=CONNECT_TIMEOUT)
     try:

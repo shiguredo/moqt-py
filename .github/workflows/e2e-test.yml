@@ -1,8 +1,10 @@
-# GitHub Actions による実サーバーへの接続テスト
+# GitHub Actions による実 relay への E2E テスト
 #
-# - repository secrets の TEST_MOQT_URI を環境変数として渡し、tests/test_connect.py
-#   を実行する。secret が未設定の場合は環境変数が空になり、テスト側が skip するため
-#   ジョブは成功する
+# - repository secrets の TEST_MOQT_URI を環境変数として渡し、tests/test_connect.py と
+#   tests/test_relay.py を実行する。secret が未設定の場合は環境変数が空になり、テスト側が
+#   skip するためジョブは成功する
+# - tests/test_relay.py は relay を挟んだ publisher / subscriber の相互接続を確認する。
+#   映像と音声は実コーデックで符号化しないダミーのペイロードを使う
 # - runner: ubuntu-slim は Rust が入っておらず、moqt-py は PyO3 拡張のビルドに cargo を
 #   要するため使わない。aws-lc-sys のビルドに cmake も要る
 # - Rust ツールチェーン: rust-toolchain.toml が channel と components を宣言している
@@ -25,13 +27,13 @@ permissions:
 jobs:
   connect:
     runs-on: ubuntu-26.04
-    # 依存の同期 (PyO3 拡張のビルド) と実サーバーへの接続を見込んで余裕を持たせる
+    # 依存の同期 (PyO3 拡張のビルド) と実 relay への接続を見込んで余裕を持たせる
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # pytest を uv 経由で実行するため uv を先に用意する
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - name: TEST_MOQT_URI が指すサーバーへの接続テストを実行する
+      - name: TEST_MOQT_URI が指す relay への接続テストと E2E テストを実行する
         env:
           TEST_MOQT_URI: ${{ secrets.TEST_MOQT_URI }}
-        run: uv run pytest tests/test_connect.py
+        run: uv run pytest tests/test_connect.py tests/test_relay.py
