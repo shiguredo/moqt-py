@@ -847,10 +847,16 @@ class Server:
         error_code: int | None,
         address: tuple[str, int],
     ) -> None:
-        """WebTransport over HTTP/3 のストリーム終端を状態機械へ通知する。"""
+        """WebTransport over HTTP/3 のストリームリセットを状態機械へ通知する。
+
+        `error_code` が `None` の場合は「アプリケーションエラーコード無しのリセット」
+        である (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
+        """
         connection = self._connections.get((address, session_id))
         if connection is not None:
-            await connection.runtime.receive_stream_closed(stream_id, error_code)
+            await connection.runtime.receive_stream_closed(
+                stream_id, reset=True, error_code=error_code
+            )
 
     async def _on_h3_datagram(
         self,
@@ -899,10 +905,17 @@ class Server:
     async def _on_h2_stream_reset(
         self, stream_id: int, error_code: int, writer: h2.SessionWriter
     ) -> None:
-        """WebTransport over HTTP/2 のストリーム終端を状態機械へ通知する。"""
+        """WebTransport over HTTP/2 のストリームリセットを状態機械へ通知する。
+
+        over HTTP/2 の WT_RESET_STREAM は MOQT のエラーコードをそのまま運ぶため、
+        常にコードがある (draft-ietf-moq-transport-21 §12.5 (Stream Reset Error
+        Codes))。
+        """
         connection = self._connections.get(writer)
         if connection is not None:
-            await connection.runtime.receive_stream_closed(stream_id, error_code)
+            await connection.runtime.receive_stream_closed(
+                stream_id, reset=True, error_code=error_code
+            )
 
     async def _on_h2_datagram(self, data: bytes, writer: h2.SessionWriter) -> None:
         """WebTransport over HTTP/2 のデータグラムを状態機械へ渡す。"""

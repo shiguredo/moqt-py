@@ -604,6 +604,10 @@ fn request_kind_to_python(kind: RequestKind) -> &'static str {
 }
 
 /// `TerminationReason` を Python 側の辞書へ変換する。
+///
+/// `peer_stream_reset` の `error_code` は `None` になりうる。`None` は peer が
+/// アプリケーションエラーコードを載せなかったことを表す
+/// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
 fn termination_reason_to_python(
     py: Python<'_>,
     reason: &TerminationReason,
@@ -2380,19 +2384,29 @@ impl CoreSession {
 type DecodedObjectInfo = (u64, u64, u64, &'static str);
 
 /// `RequestStreamEnd` を組み立てる。
+///
+/// `reset` は終端が RESET_STREAM か FIN かを表す。`error_code` から推測しないのは、
+/// WebTransport over HTTP/3 が「アプリケーションエラーコード無しのリセット」を
+/// `error_code` 無しで通知するためである
+/// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。この節番号・規則は
+/// draft 由来であり将来 draft 改版で変わる可能性がある。
+///
+/// `reset` が真のときの `error_code` の `None` は「アプリケーションエラーコード無し」
+/// を表す。偽のときは FIN でありコードも reliable size も持てないため、指定すると
+/// `ValueError` になる。
 fn request_stream_end(
     reset: bool,
     error_code: Option<u64>,
     reliable_size: Option<u64>,
 ) -> PyResult<RequestStreamEnd> {
     if !reset {
+        if error_code.is_some() || reliable_size.is_some() {
+            return Err(PyValueError::new_err(
+                "error_code and reliable_size are only valid when reset is true",
+            ));
+        }
         return Ok(RequestStreamEnd::Fin);
     }
-    let Some(error_code) = error_code else {
-        return Err(PyValueError::new_err(
-            "error_code is required when reset is true",
-        ));
-    };
     Ok(RequestStreamEnd::Reset {
         error_code,
         reliable_size,
@@ -2498,7 +2512,10 @@ impl CoreSession {
 
     /// peer 制御ストリームが終端したことを通知する。
     ///
-    /// `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。
+    /// `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+    /// 終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+    /// 「アプリケーションエラーコード無しのリセット」である
+    /// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
     #[pyo3(signature = (reset=false, error_code=None))]
     fn receive_control_stream_closed(
         &mut self,
@@ -2624,6 +2641,11 @@ impl CoreSession {
     }
 
     /// peer の request stream が終端したことを通知する。
+    ///
+    /// `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+    /// 終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+    /// 「アプリケーションエラーコード無しのリセット」である
+    /// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
     #[pyo3(signature = (stream_id, reset=false, error_code=None, reliable_size=None))]
     fn receive_request_stream_closed(
         &mut self,
@@ -2633,6 +2655,9 @@ impl CoreSession {
         error_code: Option<u64>,
         reliable_size: Option<u64>,
     ) -> PyResult<Vec<CoreEvent>> {
+        // 引数の検証は状態を変える前に行う。不正な組み合わせで呼ばれたときに
+        // ストリームの対応だけが消えた状態を残さない
+        let end = request_stream_end(reset, error_code, reliable_size)?;
         self.request_buffers.remove(stream_id);
         // 状態機械は Request ID で request を識別する。ストリーム ID をそのまま渡すと
         // 未知の Request ID として PROTOCOL_VIOLATION になる
@@ -2646,7 +2671,6 @@ impl CoreSession {
             }
         };
 
-        let end = request_stream_end(reset, error_code, reliable_size)?;
         self.session
             .recv_request_stream_closed(request_id, end)
             .map_err(runtime_error)?;
@@ -2686,6 +2710,11 @@ impl CoreSession {
     }
 
     /// peer の data stream が終端したことを通知する。
+    ///
+    /// `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+    /// 終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+    /// 「アプリケーションエラーコード無しのリセット」である
+    /// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
     #[pyo3(signature = (stream_id, reset=false, error_code=None, reliable_size=None))]
     fn receive_data_stream_closed(
         &mut self,
@@ -2695,6 +2724,9 @@ impl CoreSession {
         error_code: Option<u64>,
         reliable_size: Option<u64>,
     ) -> PyResult<Vec<CoreEvent>> {
+        // 引数の検証は状態を変える前に行う。不正な組み合わせで呼ばれたときに
+        // デコーダだけが破棄された状態を残さない
+        let end = request_stream_end(reset, error_code, reliable_size)?;
         // デコーダは終端処理で破棄する。FIN の場合はオブジェクトのシリアライズ途中で
         // 終わっていないかも併せて検査する
         let unfinished = self.take_mid_object_fin(stream_id);
@@ -2710,7 +2742,6 @@ impl CoreSession {
         self.pending_data_streams.remove(&stream_id);
         self.ignored_data_streams.remove(&stream_id);
 
-        let end = request_stream_end(reset, error_code, reliable_size)?;
         self.session
             .recv_data_stream_closed(DataStreamId(stream_id), end)
             .map_err(runtime_error)?;
@@ -3474,6 +3505,11 @@ impl CoreSession {
     }
 
     /// 送信済みのデータストリームを終了する。
+    ///
+    /// `reset` が真の場合は RESET_STREAM、偽の場合は FIN になる。`reset` が真で
+    /// `error_code` が `None` の場合はアプリケーションエラーコード無しのリセットに
+    /// なる。`reset` が偽のときに `error_code` か `reliable_size` を指定すると
+    /// `ValueError` になる。
     #[pyo3(signature = (stream_id, reset=false, error_code=None, reliable_size=None))]
     fn send_data_stream_closed(
         &mut self,

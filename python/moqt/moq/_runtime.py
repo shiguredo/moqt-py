@@ -655,9 +655,18 @@ class Runtime:
     async def receive_stream_closed(
         self,
         stream_id: int,
+        *,
+        reset: bool,
         error_code: int | None = None,
     ) -> None:
-        """WebTransport のストリーム終端を状態機械へ通知する。
+        """ストリームの終端を状態機械へ通知する。
+
+        `reset` は終端が RESET_STREAM か FIN かを表す。`error_code` から推測しないのは、
+        WebTransport over HTTP/3 が WT_APPLICATION_ERROR の範囲外のコードで
+        RESET_STREAM を受信した場合に「アプリケーションエラーコード無しのリセット」
+        (`error_code=None`) として通知するためである
+        (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。QUIC と
+        WebTransport over HTTP/2 のリセットは常にコードを持つ。
 
         トランスポートの終了に伴う終端は、状態機械がプロトコル違反として拒否することが
         ある。例えば制御ストリームは session の生存中に閉じてはならないため
@@ -669,7 +678,6 @@ class Runtime:
         self._data_stream_types.pop(stream_id, None)
         if info is None:
             return
-        reset = error_code is not None
         try:
             if info.kind == _STREAM_CONTROL:
                 await self._apply_events(

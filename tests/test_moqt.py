@@ -194,6 +194,51 @@ def test_request_stream_close_is_ignored_after_the_first_notification() -> None:
     client.receive_request_stream_closed(stream_id, True, 0)
 
 
+def test_peer_reset_without_an_application_error_code_is_not_a_fin() -> None:
+    """
+    アプリケーションエラーコード無しのリセットを FIN と区別することを確認する。
+
+    draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams) は、WT_APPLICATION_ERROR
+    の範囲外のコードで RESET_STREAM を受信した場合に "The WebTransport implementation
+    SHOULD deliver this to the application as a stream reset with no application error
+    code." と定める。この節番号・規則は draft 由来であり将来 draft 改版で変わる可能性がある。
+    moqt-rs はこれを `RequestStreamEnd::Reset` の `error_code` の `None` で表すため、FIN と
+    同じ「コード無し」でも終端の種類が異なる。I/O 層が `reset` を渡さないとリセットが FIN
+    として扱われ、購読は正常終了として終端してしまう。
+    """
+    client, server = _setup()
+    stream_id = 4
+    _subscribe_round_trip(client, server, stream_id)
+
+    # requester (client) がアプリケーションエラーコード無しで cancel する
+    events = server.receive_request_stream_closed(stream_id, True, None)
+
+    terminated = [event for event in events if event.kind == "request_terminated"]
+    assert len(terminated) == 1
+    assert terminated[0].message == {
+        "request_kind": "subscribe",
+        "reason": {"kind": "peer_stream_reset", "error_code": None},
+    }
+
+
+def test_fin_cannot_carry_an_error_code_or_a_reliable_size() -> None:
+    """
+    FIN として通知する終端にエラーコードや reliable size を渡せないことを確認する。
+
+    FIN は正常終了でありコードを持たないため、渡された値を黙って捨てると I/O 層の誤りに
+    気づけない。とくに「アプリケーションエラーコード無しのリセット」は `reset` が真のときの
+    `error_code` の `None` で表すため、`reset` を落としたままコードだけを渡す取り違えを拒否する。
+    """
+    client, _server = _setup()
+
+    with pytest.raises(ValueError, match="only valid when reset is true"):
+        client.receive_control_stream_closed(False, moqt.STREAM_CANCELLED)
+    with pytest.raises(ValueError, match="only valid when reset is true"):
+        client.receive_request_stream_closed(4, False, None, 4)
+    with pytest.raises(ValueError, match="only valid when reset is true"):
+        client.receive_data_stream_closed(2, False, None, 4)
+
+
 def test_responder_fin_asks_the_requester_to_finish_its_direction() -> None:
     """
     responder の FIN を受けた requester に、送信方向を FIN で閉じるよう依頼することを

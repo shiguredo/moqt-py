@@ -3685,7 +3685,10 @@ class Session:
         """
         peer 制御ストリームが終端したことを通知する。
         
-        `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。
+        `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+        終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+        「アプリケーションエラーコード無しのリセット」である
+        (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
     def receive_data_stream(self, /, stream_id: int, data: bytes, stream_type: int |None = None) -> tuple[list[tuple[int, int, int, str]], list[Event]]:
         """
@@ -3702,6 +3705,11 @@ class Session:
     def receive_data_stream_closed(self, /, stream_id: int, reset: bool = False, error_code: int |None = None, reliable_size: int |None = None) -> list[Event]:
         """
         peer の data stream が終端したことを通知する。
+        
+        `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+        終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+        「アプリケーションエラーコード無しのリセット」である
+        (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
     def receive_datagram(self, /, data: bytes) -> list[Event]:
         """
@@ -3724,6 +3732,11 @@ class Session:
     def receive_request_stream_closed(self, /, stream_id: int, reset: bool = False, error_code: int |None = None, reliable_size: int |None = None) -> list[Event]:
         """
         peer の request stream が終端したことを通知する。
+        
+        `reset` が真の場合は RESET_STREAM、偽の場合は FIN として扱う。`error_code` から
+        終端の種類を推測しない。`reset` が真で `error_code` が `None` の場合は
+        「アプリケーションエラーコード無しのリセット」である
+        (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
     def recv_data_stream_stop_sending(self, /, stream_id: int) -> list[Event]:
         """
@@ -3763,6 +3776,11 @@ class Session:
     def send_data_stream_closed(self, /, stream_id: int, reset: bool = False, error_code: int |None = None, reliable_size: int |None = None) -> list[Event]:
         """
         送信済みのデータストリームを終了する。
+        
+        `reset` が真の場合は RESET_STREAM、偽の場合は FIN になる。`reset` が真で
+        `error_code` が `None` の場合はアプリケーションエラーコード無しのリセットに
+        なる。`reset` が偽のときに `error_code` か `reliable_size` を指定すると
+        `ValueError` になる。
         """
     def send_data_stream_stop_sending(self, /, stream_id: int) -> list[Event]:
         """

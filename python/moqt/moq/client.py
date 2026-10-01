@@ -404,7 +404,7 @@ class Client:
             self._transport.on_connection_closed(self._on_connection_closed)
         else:
             self._transport.on_stream_data(self._on_stream_data)
-            self._transport.on_stream_reset(self._on_stream_closed)
+            self._transport.on_stream_reset(self._on_stream_reset)
             self._transport.on_session_closed(self._on_session_closed)
             self._transport.on_session_ready(self._on_session_ready)
         self._transport.on_datagram(self._on_datagram)
@@ -1002,18 +1002,34 @@ class Client:
         """QUIC のストリームデータを受信する。
 
         QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
+        QUIC の FIN はリセットではないため `reset=False` で通知する。
         """
         await self._on_stream_data(stream_id, data)
         if fin:
-            await self._on_stream_closed(stream_id, None)
+            await self._on_stream_closed(stream_id, reset=False)
 
-    async def _on_stream_closed(self, stream_id: int, error_code: int | None) -> None:
+    async def _on_stream_reset(self, stream_id: int, error_code: int | None) -> None:
+        """WebTransport のストリームリセットを状態機械へ通知する。
+
+        `error_code` が `None` の場合は「アプリケーションエラーコード無しのリセット」
+        であり、FIN ではない (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data
+        Streams))。そのため終端の種類はどちらの経路でも `reset` で明示する。
+        """
+        await self._on_stream_closed(stream_id, reset=True, error_code=error_code)
+
+    async def _on_stream_closed(
+        self,
+        stream_id: int,
+        *,
+        reset: bool,
+        error_code: int | None = None,
+    ) -> None:
         """ストリームの終端を状態機械へ通知する。"""
         runtime = self._runtime
         if runtime is None:
             return
         with contextlib.suppress(Exception):
-            await runtime.receive_stream_closed(stream_id, error_code)
+            await runtime.receive_stream_closed(stream_id, reset=reset, error_code=error_code)
 
     async def _on_datagram(self, data: bytes) -> None:
         runtime = self._runtime
