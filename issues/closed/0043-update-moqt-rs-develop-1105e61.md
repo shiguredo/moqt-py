@@ -54,10 +54,9 @@ QUIC 経路と WebTransport over HTTP/2 経路のリセットは常にコード�
 - `reset` が真で `error_code` が `None` の組み合わせを「アプリケーションエラーコード無しの
   リセット」として通し、`reset` が偽で `error_code` か `reliable_size` を渡す組み合わせを
   `ValueError` にする
-- `c4m` と `playout` は moqt-py の公開 API に載せない。`c4m` は認可トークンの発行・検証で
-  ありアプリケーションの責務、`playout` はアプリケーションの音声再生処理であり、
+- `playout` は moqt-py の公開 API に載せない。アプリケーションの音声再生処理であり、
   E2E テスト向けの MOQT client / server ライブラリである moqt-py の責務外である。
-  `name` に追加された関数も moqt-py に利用箇所が無い
+  `c4m` の公開は別の変更が担う。`name` に追加された関数も moqt-py に利用箇所が無い
 - 生成物である `python/moqt/_native.pyi` を再生成する
 - ソースコードの位置は行番号ではなくファイルパスとシンボル名で示す
 
@@ -100,14 +99,14 @@ QUIC 経路と WebTransport over HTTP/2 経路のリセットは常にコード�
 
 ### 公開しない API
 
-`c4m` (認可トークンのコーデック) と `playout` (音声の再生処理) は moqt-py の公開 API に
-載せない。前者は認可トークンを発行・検証するアプリケーションの責務、後者はアプリケーションの
-音声再生処理であり、E2E テスト向けの MOQT client / server ライブラリの責務外である。
-`name` に追加された `serialize_namespace` / `parse_namespace` / `serialize_track_name` /
-`parse_track_name` も moqt-py に利用箇所が無いため公開しない。
+`playout` (音声の再生処理) は moqt-py の公開 API に載せない。アプリケーションの音声再生
+処理であり、E2E テスト向けの MOQT client / server ライブラリの責務外である。`c4m` の公開は
+別の変更が担う。`name` に追加された `serialize_namespace` / `parse_namespace` /
+`serialize_track_name` / `parse_track_name` は moqt-py に利用箇所が無いため公開しない。
 
 ### 確認
 
-`uv run pytest` は 418 件すべて通る (リセットと FIN の区別、FIN へのコード指定の拒否を
-検証する 2 件を追加した)。`cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` と
-`prek run --all-files` (pre-commit / pre-push の両ステージ) も通ることを確認した。
+`uv run pytest` は 513 件すべて通る (実サーバーを要する 1 件は skip。リセットと FIN の区別、
+FIN へのコード指定の拒否を検証する 2 件を追加した)。`cargo fmt` / `cargo clippy` /
+`cargo test` / `ruff` / `ty` と `prek run --all-files` (pre-commit / pre-push の両ステージ) も
+通ることを確認した。
