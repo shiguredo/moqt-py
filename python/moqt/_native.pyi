@@ -3542,7 +3542,7 @@ class Session:
     relay 全体の routing / fan-out / cache / policy は扱わない。
     """
     @staticmethod
-    def client(implementation: str = "moqt-py", setup_options: dict |None = None) -> Session:
+    def client(implementation: str = "moqt-py", setup_options: dict |None = None, transport: str = "wt-h3") -> Session:
         """
         client role の MOQT Session を作成する。
         
@@ -3550,6 +3550,10 @@ class Session:
         奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
         MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
         (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        
+        `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続では AUTHORITY と
+        PATH を SETUP に載せ、WebTransport では載せてはならない
+        (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
         """
     def close(self, /, code: int, reason: str = "internal error") -> list[Event]:
         """
@@ -3904,7 +3908,7 @@ class Session:
         TRACK_STATUS を送信する。
         """
     @staticmethod
-    def server(implementation: str = "moqt-py", setup_options: dict |None = None) -> Session:
+    def server(implementation: str = "moqt-py", setup_options: dict |None = None, transport: str = "wt-h3") -> Session:
         """
         server role の MOQT Session を作成する。
         

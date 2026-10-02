@@ -362,6 +362,60 @@ def test_client_rejects_an_implementation_option_over_the_wire_limit() -> None:
         Session.client("a" * IMPLEMENTATION_WIRE_LIMIT)
 
 
+def test_quic_transport_accepts_authority_and_path_setup_options() -> None:
+    """
+    QUIC 直接接続では AUTHORITY と PATH を SETUP に載せられることを確認する。
+
+    状態機械は接続方式ごとに載せられる Setup Option を検証する。I/O 層が選んだ方式を
+    状態機械へ伝えないと、QUIC の SETUP が WebTransport の規則で拒否される
+    (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    """
+    options = {
+        moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443",
+        moqt.SETUP_OPTION_PATH: b"/live",
+    }
+
+    # 自側の SETUP を組み立てられれば、接続方式が正しく伝わっている
+    assert Session.client("moqt-py", options, "quic").start()
+    # server は AUTHORITY と PATH を送れない (§9.1.1 / §9.1.2) ため、載せずに組み立てる
+    assert Session.server("moqt-py", None, "quic").start()
+
+
+def test_server_cannot_send_authority_or_path() -> None:
+    """
+    server role が AUTHORITY と PATH を送れないことを確認する。
+
+    どちらも Client が自分の接続先を通知するための Setup Option である
+    (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    """
+    with pytest.raises(RuntimeError, match="server MUST NOT send AUTHORITY"):
+        Session.server("moqt-py", {moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443"}, "quic")
+    with pytest.raises(RuntimeError, match="server MUST NOT send PATH"):
+        Session.server("moqt-py", {moqt.SETUP_OPTION_PATH: b"/live"}, "quic")
+
+
+def test_webtransport_transport_rejects_authority_and_path_setup_options() -> None:
+    """
+    WebTransport では AUTHORITY と PATH を SETUP に載せられないことを確認する。
+
+    §9.1.1 と §9.1.2 は、WebTransport でこれらを送ってはならないと定める。
+    """
+    options = {
+        moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443",
+        moqt.SETUP_OPTION_PATH: b"/live",
+    }
+
+    for transport in ("wt-h2", "wt-h3"):
+        with pytest.raises(RuntimeError, match="AUTHORITY MUST NOT be used with WebTransport"):
+            Session.client("moqt-py", options, transport)
+
+
+def test_unknown_transport_is_rejected() -> None:
+    """未知の接続方式を拒否することを確認する。"""
+    with pytest.raises(ValueError, match="transport must be"):
+        Session.client("moqt-py", None, "spdy")
+
+
 def test_setup_options_are_sent_and_observed() -> None:
     """
     SETUP で送った Setup Option が peer から参照できることを確認する。

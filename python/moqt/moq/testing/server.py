@@ -813,6 +813,7 @@ class Server:
             implementation=self._implementation,
             ops=self._transport_ops(address, session_id, writer),
             events=self._runtime_events(context),
+            transport=self.transport,
             control_message_timeout=self._control_message_timeout,
             data_stream_timeout=self._data_stream_timeout,
             setup_options=self._setup_options,

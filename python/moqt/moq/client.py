@@ -560,6 +560,7 @@ class Client:
             implementation=self._implementation,
             ops=self._transport_ops(),
             events=self._runtime_events(),
+            transport=self.transport,
             on_task_error=self._on_task_error,
             control_message_timeout=self._control_message_timeout,
             data_stream_timeout=self._data_stream_timeout,

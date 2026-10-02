@@ -1628,11 +1628,29 @@ pub(crate) struct CoreSession {
     established: bool,
 }
 
+/// Python 側の接続方式を状態機械の transport へ変換する。
+///
+/// `moqt.moq.Transport` の値を受け取る。WebTransport over HTTP/2 と HTTP/3 は、状態機械
+/// から見れば同じ WebTransport である (違いは I/O 層の ALPN とフレーミングだけである)。
+/// 接続方式によって SETUP に載せられる Setup Option が変わるため、状態機械へ正しく
+/// 伝えないと AUTHORITY と PATH が違反として拒否される
+/// (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+fn transport_from_python(transport: &str) -> PyResult<Transport> {
+    match transport {
+        "quic" => Ok(Transport::Quic),
+        "wt-h2" | "wt-h3" => Ok(Transport::WebTransport),
+        other => Err(PyValueError::new_err(format!(
+            "transport must be \"quic\", \"wt-h2\" or \"wt-h3\", got {other:?}"
+        ))),
+    }
+}
+
 impl CoreSession {
     fn new(
         client: bool,
         implementation: &str,
         setup_options: Option<&Bound<'_, PyDict>>,
+        transport: &str,
     ) -> PyResult<Self> {
         if implementation.is_empty() {
             return Err(PyValueError::new_err("implementation must not be empty"));
@@ -1670,10 +1688,11 @@ impl CoreSession {
             }
         }
 
+        let transport = transport_from_python(transport)?;
         let session = if client {
-            Session::new_client(Transport::WebTransport, options)
+            Session::new_client(transport, options)
         } else {
-            Session::new_server(Transport::WebTransport, options)
+            Session::new_server(transport, options)
         }
         .map_err(runtime_error)?;
 
@@ -2421,19 +2440,31 @@ impl CoreSession {
     /// 奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
     /// MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
     /// (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+    ///
+    /// `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続では AUTHORITY と
+    /// PATH を SETUP に載せ、WebTransport では載せてはならない
+    /// (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
     #[staticmethod]
-    #[pyo3(signature = (implementation="moqt-py", setup_options=None))]
-    fn client(implementation: &str, setup_options: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        Self::new(true, implementation, setup_options)
+    #[pyo3(signature = (implementation="moqt-py", setup_options=None, transport="wt-h3"))]
+    fn client(
+        implementation: &str,
+        setup_options: Option<&Bound<'_, PyDict>>,
+        transport: &str,
+    ) -> PyResult<Self> {
+        Self::new(true, implementation, setup_options, transport)
     }
 
     /// server role の MOQT Session を作成する。
     ///
     /// 引数の意味は `client` と同じである。
     #[staticmethod]
-    #[pyo3(signature = (implementation="moqt-py", setup_options=None))]
-    fn server(implementation: &str, setup_options: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        Self::new(false, implementation, setup_options)
+    #[pyo3(signature = (implementation="moqt-py", setup_options=None, transport="wt-h3"))]
+    fn server(
+        implementation: &str,
+        setup_options: Option<&Bound<'_, PyDict>>,
+        transport: &str,
+    ) -> PyResult<Self> {
+        Self::new(false, implementation, setup_options, transport)
     }
 
     /// peer が SETUP で宣言した Setup Option を返す。

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from moqt import loc, moqt, msf
-from moqt.moq import Client, MOQTObject, Publication, Subscription
+from moqt.moq import Client, MOQTObject, Publication, Subscription, Transport
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -298,3 +298,21 @@ async def test_relay_delivers_dummy_audio_as_datagrams() -> None:
 
     assert received.stream_id is None
     assert received.payload in DUMMY_AUDIO_DATAGRAMS
+
+
+@pytest.mark.skipif(not TEST_MOQT_URI, reason="TEST_MOQT_URI が設定されていないため")
+@pytest.mark.timeout(30)
+async def test_relay_accepts_a_native_quic_connection() -> None:
+    """
+    QUIC 直接接続 (native QUIC) で relay へ接続できることを確認する。
+
+    QUIC では AUTHORITY と PATH を SETUP で通知し、ALPN は `moqt-21` を使う
+    (draft-ietf-moq-transport-21 §6.2.2 (Native QUIC))。WebTransport と違い
+    ストリームの多重化に HTTP/3 を挟まないため、経路が別である。
+    """
+    client = Client(url=_require_uri(), transport=Transport.Quic, verify_peer=VERIFY_PEER)
+    await client.connect(timeout=CONNECT_TIMEOUT)
+    try:
+        assert client.established
+    finally:
+        await client.close()

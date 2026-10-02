@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from moqt import _native, moqt
+from moqt.moq.transport import Transport
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -354,7 +355,7 @@ class _PendingRequest:
 
 
 class Runtime:
-    """1 本の WebTransport session 上で MOQT セッションを駆動する。"""
+    """1 本の MOQT transport session 上で MOQT セッションを駆動する。"""
 
     def __init__(
         self,
@@ -363,6 +364,7 @@ class Runtime:
         implementation: str,
         ops: TransportOps,
         events: RuntimeEvents,
+        transport: str = Transport.WebTransportOverHTTP3,
         on_task_error: Callable[[BaseException], Awaitable[None]] | None = None,
         control_message_timeout: float | None = None,
         data_stream_timeout: float | None = None,
@@ -371,11 +373,15 @@ class Runtime:
         # Setup Option は SETUP の交換でだけ使う。MOQT_IMPLEMENTATION は
         # implementation 引数が担うため setup_options には含めない
         # (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        #
+        # `transport` は `moqt.moq.Transport` の値である。状態機械は SETUP に載せられる
+        # Setup Option を接続方式ごとに検証するため、I/O 層が選んだ方式をそのまま渡す
+        # (§9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
         options = dict(setup_options) if setup_options is not None else None
         self._core = (
-            _native.Session.client(implementation, options)
+            _native.Session.client(implementation, options, str(transport))
             if client
-            else _native.Session.server(implementation, options)
+            else _native.Session.server(implementation, options, str(transport))
         )
         # タイムアウトは既定で無効である。設定すると tick が期限を判定し、期限切れの
         # セッションを SESSION_CONTROL_MESSAGE_TIMEOUT / SESSION_DATA_STREAM_TIMEOUT で
