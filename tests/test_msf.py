@@ -1065,3 +1065,54 @@ def test_parse_name_rejects_a_triple_hyphen() -> None:
     """
     with pytest.raises(ValueError, match="invalid Track name: too many separators"):
         msf.parse_name("room---video")
+
+
+def test_namespace_and_track_name_round_trip() -> None:
+    """
+    namespace と Track 名を個別に正規表現へ変換し、元へ戻せることを確認する。
+
+    正規表現は DPoP の Authorization Context の `tns` / `tn` が要求する形である
+    (draft-ietf-moq-transport-21 §8.8 / draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
+    リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは `.` と 16 進 2 桁になる。
+    """
+    assert msf.serialize_namespace([b"room-1", b"a.b"]) == "room.2d1-a.2eb"
+    assert msf.parse_namespace("room.2d1-a.2eb") == [b"room-1", b"a.b"]
+
+    assert msf.serialize_track_name(b"video-hd.1") == "video.2dhd.2e1"
+    assert msf.parse_track_name("video.2dhd.2e1") == b"video-hd.1"
+
+
+def test_serialize_namespace_of_no_fields_is_empty() -> None:
+    """0 フィールドの namespace が空文字列になることを確認する。
+
+    `serialize_name` の `--` と異なり、`tns` は空文字列で 0 フィールドを表す。
+    """
+    assert msf.serialize_namespace([]) == ""
+    assert msf.parse_namespace("") == []
+
+
+def test_parse_namespace_rejects_an_empty_field() -> None:
+    """空のフィールドを持つ namespace を拒否することを確認する。"""
+    with pytest.raises(ValueError, match="invalid namespace: namespace field must not be empty"):
+        msf.parse_namespace("room--1")
+
+
+def test_parse_track_name_rejects_a_literal_hyphen() -> None:
+    """エスケープされていない `-` を Track 名として拒否することを確認する。
+
+    `-` は namespace の区切りであるため、Track 名では `.2d` へエスケープする。生の
+    Track 名を `AuthorizationContext` の `tn` へ渡す取り違えはここで検出できる。
+    """
+    with pytest.raises(ValueError, match="invalid track name: invalid escape sequence"):
+        msf.parse_track_name("video-hd")
+
+
+def test_parse_track_name_rejects_uppercase_hex() -> None:
+    """`.` エスケープの 16 進を大文字で書いた入力を拒否することを確認する。
+
+    §8.8.1 (Parsing Serialized Names) は小文字の 16 進を求める。
+    """
+    with pytest.raises(
+        ValueError, match="invalid track name: hex escape must use lowercase hex digits"
+    ):
+        msf.parse_track_name("video.2D")

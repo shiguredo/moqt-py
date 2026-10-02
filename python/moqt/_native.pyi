@@ -87,6 +87,10 @@ class AuthorizationContext:
     §4.2 / §5.1)。
     
     `tns` / `tn` は draft-ietf-moq-transport-21 §8.8 の正規シリアライズを使う。
+    リテラルでないバイトは `.` と 16 進 2 桁へエスケープされるため、`tns` には
+    `moqt.msf.serialize_namespace`、`tn` には `moqt.msf.serialize_track_name` の結果を
+    渡す。生の名前を渡すと `verify_target` などで一致しない。
+    
     `raw` にしか無い拡張フィールド (`parameters` など) は発行時に出力されない。
     """
     def __eq__(self, value: object, /) -> bool: ...
@@ -4906,6 +4910,25 @@ def parse_name(text: str) -> tuple[Any, bytes]:
     `NameParseError` の `Display` 表現 (失敗した規則の説明) をそのまま使う。
     """
 
+def parse_namespace(text: str) -> list:
+    """
+    namespace の正規表現をタプルへパースする。
+    
+    `serialize_namespace` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+    適用する。空文字列は 0 フィールドの namespace になる。パースできない場合は
+    `ValueError` を送出し、メッセージには moqt-rs の `NameParseError` の `Display` 表現を
+    そのまま使う。
+    """
+
+def parse_track_name(text: str) -> bytes:
+    """
+    Track 名の正規表現をバイト列へパースする。
+    
+    `serialize_track_name` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+    適用する。パースできない場合は `ValueError` を送出し、メッセージには moqt-rs の
+    `NameParseError` の `Display` 表現をそのまま使う。
+    """
+
 def resolve_catalog_variables(document: bytes, fragment: str) -> bytes:
     """
     カタログの変数参照を fragment の値で解決する
@@ -4925,6 +4948,28 @@ def resolve_timeline_template(template: list, n: int) -> tuple[int, int, int, in
 def serialize_name(namespace: Sequence[Sequence[int]], track_name: bytes) -> str:
     """
     namespace と Track 名を MSF の Track 識別子 (`namespace--track` 形式) へ変換する。
+    """
+
+def serialize_namespace(namespace: Sequence[Sequence[int]]) -> str:
+    """
+    namespace を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+    の正規表現へ変換する。
+    
+    各フィールドを `-` で連結し、リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは
+    `.` と 16 進 2 桁へエスケープする。0 フィールドの namespace は空文字列になる。
+    DPoP の Authorization Context の `tns` へそのまま渡せる
+    (draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
+    """
+
+def serialize_track_name(track_name: bytes) -> str:
+    """
+    Track 名を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+    の正規表現へ変換する。
+    
+    単体の Track 名を表す関数であり、Full Track Name の長さ制約 (§8.7) は適用しない。
+    `-` は namespace の区切りと衝突するため `.2d` へエスケープされる。DPoP の
+    Authorization Context の `tn` へそのまま渡せる
+    (draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
     """
 
 def setup_stream_type() -> int:

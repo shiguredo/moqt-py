@@ -30,6 +30,10 @@ use crate::errors::codec_error;
 /// §4.2 / §5.1)。
 ///
 /// `tns` / `tn` は draft-ietf-moq-transport-21 §8.8 の正規シリアライズを使う。
+/// リテラルでないバイトは `.` と 16 進 2 桁へエスケープされるため、`tns` には
+/// `moqt.msf.serialize_namespace`、`tn` には `moqt.msf.serialize_track_name` の結果を
+/// 渡す。生の名前を渡すと `verify_target` などで一致しない。
+///
 /// `raw` にしか無い拡張フィールド (`parameters` など) は発行時に出力されない。
 #[derive(PartialEq)]
 #[pyclass(name = "AuthorizationContext", eq)]

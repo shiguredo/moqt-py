@@ -7,7 +7,7 @@ draft-ietf-moq-c4m-01 付録 A のテストベクタ、CBOR / COSE / JWK / JWT /
 import binascii
 
 import pytest
-from moqt import c4m
+from moqt import c4m, msf
 from moqt.c4m import (
     Algorithm,
     AuthorizationContext,
@@ -1007,6 +1007,38 @@ def test_dpop_proof_build_and_verify() -> None:
     confirmation = Confirmation()
     confirmation.jwk_thumbprint = es256_jwk().thumbprint_sha256()
     proof.verify_key_binding(confirmation)
+
+
+def test_authorization_context_accepts_serialized_names() -> None:
+    """
+    `moqt.msf` の正規シリアライズ結果を `tns` / `tn` へそのまま渡せることを確認する。
+
+    Track Namespace の `.` と Track 名の `-` はリテラルでないためエスケープが要る
+    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。生の
+    名前を渡すと `verify_target` が一致しないため、変換関数を通す。
+    """
+    namespace = [b"example.com"]
+    track_name = b"video-hd"
+    context = AuthorizationContext(
+        context_type=c4m.MOQT_AUTHORIZATION_CONTEXT_TYPE,
+        action=MoqtAction.PUBLISH.authorization_context,
+        track_namespace=msf.serialize_namespace(namespace),
+        track_name=msf.serialize_track_name(track_name),
+    )
+
+    assert context.track_namespace == "example.2ecom"
+    assert context.track_name == "video.2dhd"
+    context.verify_action(MoqtAction.PUBLISH)
+    context.verify_target(namespace, track_name)
+
+    # 生の名前を渡した場合は一致しない
+    with pytest.raises(ValueError, match="does not match the target"):
+        AuthorizationContext(
+            context_type=c4m.MOQT_AUTHORIZATION_CONTEXT_TYPE,
+            action=MoqtAction.PUBLISH.authorization_context,
+            track_namespace="example.com",
+            track_name="video-hd",
+        ).verify_target(namespace, track_name)
 
 
 def test_dpop_proof_freshness_errors() -> None:

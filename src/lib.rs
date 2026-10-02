@@ -114,8 +114,9 @@ mod _native {
     use crate::msf::{
         Accessibility, AuthInfo, Buffers, Catalog, CloneTrack, DeltaUpdate, EventTimeline,
         InitData, MediaTimeline, RemoveTrack, Template, Track, Uri, parse_fragment_pairs,
-        parse_msf_fragment, parse_name, resolve_catalog_variables, resolve_timeline_template,
-        serialize_name,
+        parse_msf_fragment, parse_name, parse_namespace, parse_track_name,
+        resolve_catalog_variables, resolve_timeline_template, serialize_name, serialize_namespace,
+        serialize_track_name,
     };
 
     // C4M の codec (moqt.c4m)

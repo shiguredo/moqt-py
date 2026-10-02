@@ -1746,6 +1746,56 @@ pub(crate) fn serialize_name(namespace: Vec<Vec<u8>>, track_name: &[u8]) -> PyRe
     Ok(name::serialize_name(&namespace, track_name))
 }
 
+/// namespace を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+/// の正規表現へ変換する。
+///
+/// 各フィールドを `-` で連結し、リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは
+/// `.` と 16 進 2 桁へエスケープする。0 フィールドの namespace は空文字列になる。
+/// DPoP の Authorization Context の `tns` へそのまま渡せる
+/// (draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
+#[pyfunction]
+pub(crate) fn serialize_namespace(namespace: Vec<Vec<u8>>) -> PyResult<String> {
+    let namespace = crate::core::track_namespace_from_python(namespace)?;
+    Ok(name::serialize_namespace(&namespace))
+}
+
+/// namespace の正規表現をタプルへパースする。
+///
+/// `serialize_namespace` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+/// 適用する。空文字列は 0 フィールドの namespace になる。パースできない場合は
+/// `ValueError` を送出し、メッセージには moqt-rs の `NameParseError` の `Display` 表現を
+/// そのまま使う。
+#[pyfunction]
+pub(crate) fn parse_namespace(py: Python<'_>, text: &str) -> PyResult<Py<PyList>> {
+    let namespace = name::parse_namespace(text)
+        .map_err(|error| PyValueError::new_err(format!("invalid namespace: {error}")))?;
+    track_namespace_to_python(py, &namespace)
+}
+
+/// Track 名を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+/// の正規表現へ変換する。
+///
+/// 単体の Track 名を表す関数であり、Full Track Name の長さ制約 (§8.7) は適用しない。
+/// `-` は namespace の区切りと衝突するため `.2d` へエスケープされる。DPoP の
+/// Authorization Context の `tn` へそのまま渡せる
+/// (draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
+#[pyfunction]
+pub(crate) fn serialize_track_name(track_name: &[u8]) -> String {
+    name::serialize_track_name(track_name)
+}
+
+/// Track 名の正規表現をバイト列へパースする。
+///
+/// `serialize_track_name` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+/// 適用する。パースできない場合は `ValueError` を送出し、メッセージには moqt-rs の
+/// `NameParseError` の `Display` 表現をそのまま使う。
+#[pyfunction]
+pub(crate) fn parse_track_name(py: Python<'_>, text: &str) -> PyResult<Py<PyBytes>> {
+    let track_name = name::parse_track_name(text)
+        .map_err(|error| PyValueError::new_err(format!("invalid track name: {error}")))?;
+    Ok(PyBytes::new(py, &track_name).unbind())
+}
+
 /// MSF の定数をモジュール定数として登録する。
 pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("MSF_VERSION", MSF_VERSION)?;

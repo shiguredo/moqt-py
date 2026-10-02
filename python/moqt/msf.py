@@ -12,6 +12,12 @@ delta 更新の適用を担う。
 ``DeltaUpdate`` の各メソッドがそれらを取り込む。追加した内容が draft の MUST に
 違反する場合は encode 時に ``ValueError`` になる。
 
+Track 識別子 (``namespace--track``) と、その構成要素である namespace と Track 名の
+正規表現 (draft-ietf-moq-transport-21 §8.8) の相互変換も扱う。``parse_name`` /
+``serialize_name`` が識別子全体、``parse_namespace`` / ``serialize_namespace`` と
+``parse_track_name`` / ``serialize_track_name`` が構成要素である。``moqt.c4m`` の
+``AuthorizationContext`` が要求する ``tns`` / ``tn`` は後者の表現である。
+
 MSF は draft 由来であり、将来の改訂で変更される可能性がある。
 """
 
@@ -33,9 +39,13 @@ from moqt._native import (
     parse_fragment_pairs,
     parse_msf_fragment,
     parse_name,
+    parse_namespace,
+    parse_track_name,
     resolve_catalog_variables,
     resolve_timeline_template,
     serialize_name,
+    serialize_namespace,
+    serialize_track_name,
 )
 
 MSF_VERSION: str = _native.MSF_VERSION
@@ -63,7 +73,11 @@ __all__ = [
     "parse_fragment_pairs",
     "parse_msf_fragment",
     "parse_name",
+    "parse_namespace",
+    "parse_track_name",
     "resolve_catalog_variables",
     "resolve_timeline_template",
     "serialize_name",
+    "serialize_namespace",
+    "serialize_track_name",
 ]
