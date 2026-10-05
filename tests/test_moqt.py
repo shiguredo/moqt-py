@@ -1749,20 +1749,32 @@ def test_send_accepts_the_parameters_of_a_received_message() -> None:
     assert round_tripped.subscriber_priority == 10
 
 
-def test_send_rejects_a_filter_body_without_a_length_prefix() -> None:
+def test_send_accepts_a_location_filter_body() -> None:
     """
-    長さプレフィックスを持たないフィルタ本体を送信経路が拒否することを確認する。
+    LOCATION_FILTER は Length を持たないため、フィルタ本体をそのまま値に渡せることを
+    確認する。
 
-    `LocationFilter.encode` が返すのはフィルタ本体であり、パラメータの値ではない。
-    長さが合わない値を黙って別のフィルタとして解釈しないよう拒否する
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    `LocationFilter.encode` が返すのは Location Filter Type を含む値そのものである
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
     client, _server = _setup()
 
-    with pytest.raises(ValueError, match="requires an encoded value"):
-        client.send_subscribe(
-            [b"ns"], b"t", {moqt.PARAM_LOCATION_FILTER: LocationFilter("next_object").encode()}
-        )
+    events = client.send_subscribe(
+        [b"ns"], b"t", {moqt.PARAM_LOCATION_FILTER: LocationFilter("next_object").encode()}
+    )
+
+    assert [event.kind for event in events] == ["send_request"]
+
+
+def test_send_rejects_a_range_filter_body_without_a_length_prefix() -> None:
+    """
+    長さプレフィックスを持たない Range Filter 本体を送信経路が拒否することを確認する。
+
+    Range Filter の値は先頭の vi64 が値本体の長さである。フィルタ本体だけを渡すと
+    長さが合わないため、黙って別のフィルタとして解釈しないよう拒否する
+    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    """
+    client, _server = _setup()
 
     with pytest.raises(ValueError, match="requires an encoded value"):
         client.send_subscribe(
@@ -1849,15 +1861,28 @@ def test_decode_parameter_restores_an_authorization_token_alias() -> None:
 
 def test_message_parameters_rejects_raw_filter_bytes() -> None:
     """
-    長さプレフィックスを持たないフィルタのバイト列を拒否することを確認する。
+    長さプレフィックスを持たない Range Filter のバイト列を拒否することを確認する。
 
-    パラメータの値は `Event.parameters` / `Message.parameters` と同じ「長さプレフィックスを
-    含むエンコード済みバイト列」であり、`LocationFilter.encode` が返すフィルタ本体は
-    そのままでは渡せない。取り違えを黙って別の値として解釈しないよう、長さが合わない
-    値は拒否する (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    Range Filter の値は先頭の vi64 が値本体の長さである。フィルタ本体だけを渡すと
+    長さが合わないため、取り違えを黙って別の値として解釈しないよう拒否する
+    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    LOCATION_FILTER は Type-prefixed であり、フィルタ本体をそのまま値に渡せる。
+    このとき値域全体が 1 つのフィルタとして解釈できなければならない
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
-    with pytest.raises(ValueError, match="requires an encoded value"):
-        MessageParameters({moqt.PARAM_LOCATION_FILTER: LocationFilter("next_object").encode()})
+    # LOCATION_FILTER は `LocationFilter.encode` の結果をそのまま値に使える
+    parameters = MessageParameters(
+        {moqt.PARAM_LOCATION_FILTER: LocationFilter("next_object").encode()}
+    )
+
+    assert parameters.location_filter_typed == LocationFilter("next_object")
+
+    # 値域全体が 1 つのフィルタでなければならない (余剰バイトは拒否する)
+    with pytest.raises(ValueError, match="trailing bytes"):
+        MessageParameters({moqt.PARAM_LOCATION_FILTER: b"\x05\x00"})
+
+    with pytest.raises(ValueError, match="unknown Location Filter Type"):
+        MessageParameters({moqt.PARAM_LOCATION_FILTER: b"\x06"})
 
     with pytest.raises(ValueError, match="requires an encoded value"):
         MessageParameters({moqt.PARAM_SUBGROUP_FILTER: b"\x00\x01\x64\x00"})
@@ -1878,8 +1903,8 @@ def test_message_parameters_reads_a_typed_location_filter() -> None:
     """
     LOCATION_FILTER を型付きで読み出せることを確認する。
 
-    wire 形式は Length でフィールド数が決まる optional vi64 群である
-    (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+    wire 形式は先頭の Location Filter Type が後続の vi64 フィールドを定め、
+    Length を持たない (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
     parameters = MessageParameters(
         {
@@ -1894,10 +1919,10 @@ def test_message_parameters_reads_a_typed_location_filter() -> None:
     )
     assert parameters.location_filter_typed is not None
     assert parameters.location_filter_typed.kind == "absolute_range"
-    # `location_filter` は長さプレフィックスを含まないフィルタ本体を返す
-    assert parameters.location_filter == b"\x05\x09\x02"
+    # `location_filter` は Location Filter Type を含む値そのものを返す
+    assert parameters.location_filter == b"\x03\x05\x09\x02"
     assert LocationFilter.decode(parameters.location_filter) == parameters.location_filter_typed
-    # エンコード済みの辞書の値は長さプレフィックスを含む
+    # 辞書の値も同じバイト列になる (LOCATION_FILTER は Length を持たない)
     assert parameters.to_dict()[moqt.PARAM_LOCATION_FILTER] == b"\x03\x05\x09\x02"
 
 
@@ -1905,8 +1930,9 @@ def test_message_parameters_reports_a_location_filter_update() -> None:
     """
     REQUEST_UPDATE の LOCATION_FILTER の 3 状態を区別できることを確認する。
 
-    draft-ietf-moq-transport-21 §3.3.1 (Location Filters): Length 0 はフィルタの削除を
-    表し、パラメータの省略 (値の変更なし) と区別する。
+    draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter): Location Filter
+    Type 0x00 (no filter) はフィルタの削除を表し、パラメータの省略 (値の変更なし) と
+    区別する。
     """
     unchanged = MessageParameters()
     removed = MessageParameters({moqt.PARAM_LOCATION_FILTER: b"\x00"})
@@ -1916,6 +1942,8 @@ def test_message_parameters_reports_a_location_filter_update() -> None:
     assert unchanged.location_filter_update.filter is None
     assert removed.location_filter_update.kind == "removed"
     assert removed.location_filter_typed is None
+    # フィルタなしも値を持つため、削除指示はバイト列として読める
+    assert removed.location_filter == b"\x00"
     assert replaced.location_filter_update.kind == "set"
     assert replaced.location_filter_update.filter == LocationFilter("next_object")
 
@@ -1952,21 +1980,23 @@ def test_message_parameters_sets_largest_object() -> None:
 @pytest.mark.parametrize(
     ("kind", "fields", "encoded"),
     [
-        ("relative_group", {"start_group": 2}, b"\x02"),
-        ("next_object", {}, b"\x00\x00"),
-        ("absolute_start", {"start_group": 5, "start_object": 9}, b"\x05\x09"),
+        ("none", {}, b"\x00"),
+        ("relative_group", {"start_group": 2}, b"\x01\x02"),
+        ("next_object", {}, b"\x05"),
+        ("absolute_start", {"start_group": 5, "start_object": 9}, b"\x02\x05\x09"),
         (
             "absolute_range",
             {"start_group": 5, "start_object": 9, "end_group_delta": 2},
-            b"\x05\x09\x02",
+            b"\x03\x05\x09\x02",
         ),
         (
             "absolute_range_with_end",
             {"start_group": 5, "start_object": 9, "end_group_delta": 2, "end_object": 4},
-            b"\x05\x09\x02\x04",
+            b"\x04\x05\x09\x02\x04",
         ),
     ],
     ids=[
+        "none",
         "relative-group",
         "next-object",
         "absolute-start",
@@ -1982,8 +2012,8 @@ def test_location_filter_round_trips_through_bytes(
     """
     LOCATION_FILTER が wire 形式のバイト列と往復することを確認する。
 
-    フィールド数が値の意味を決める
-    (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+    先頭の Location Filter Type が後続フィールドを定める
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
     location_filter = LocationFilter(kind, **fields)
 
@@ -2011,17 +2041,27 @@ def test_location_filter_reports_its_fields() -> None:
     assert relative.end_group_delta is None
     assert relative.end_object is None
 
+    none = LocationFilter("none")
 
-def test_location_filter_normalizes_an_absolute_start_of_zero() -> None:
+    assert none.kind == "none"
+    assert none.start_group is None
+    assert none.start_object is None
+    assert none.end_group_delta is None
+    assert none.end_object is None
+
+
+def test_location_filter_keeps_an_absolute_start_of_zero() -> None:
     """
-    Start が両方 0 の absolute_start が next_object として読み直されることを確認する。
+    Start が両方 0 の absolute_start と next_object が別の符号化で区別されることを
+    確認する。
 
-    wire 上は 2 フィールドの 0,0 であり区別できない
-    (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+    Type 0x02 (absolute_start) と Type 0x05 (next_object) は別の値である
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
     location_filter = LocationFilter("absolute_start", start_group=0, start_object=0)
 
-    assert LocationFilter.decode(location_filter.encode()) == LocationFilter("next_object")
+    assert LocationFilter.decode(location_filter.encode()) == location_filter
+    assert LocationFilter.decode(location_filter.encode()) != LocationFilter("next_object")
 
 
 @pytest.mark.parametrize(
@@ -2061,12 +2101,15 @@ def test_location_filter_rejects_mismatched_fields(
 
 def test_location_filter_rejects_a_malformed_value() -> None:
     """
-    フィールド数が 5 以上のバイト列を拒否することを確認する。
+    未知の Location Filter Type と余剰バイトを拒否することを確認する。
 
-    (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))
     """
-    with pytest.raises(ValueError, match="more than 4 fields"):
-        LocationFilter.decode(b"\x01\x01\x01\x01\x01")
+    with pytest.raises(ValueError, match="unknown Location Filter Type"):
+        LocationFilter.decode(b"\x06")
+
+    with pytest.raises(ValueError, match="trailing bytes"):
+        LocationFilter.decode(b"\x01\x01\x01")
 
 
 # ─── セッションの状態 ───────────────────────────────────────

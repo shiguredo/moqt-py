@@ -472,8 +472,9 @@ VARINT_PARAMETER_TYPES = (
     PARAM_NEW_GROUP_REQUEST,
 )
 
-# LOCATION_FILTER の種別 (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+# LOCATION_FILTER の種別 (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
 LOCATION_FILTER_KINDS = (
+    "none",
     "relative_group",
     "next_object",
     "absolute_start",
@@ -487,7 +488,7 @@ def _location_filters(draw: st.DrawFn) -> LocationFilter:
     """任意の LOCATION_FILTER を生成する。"""
     kind = draw(st.sampled_from(LOCATION_FILTER_KINDS))
     fields: dict[str, int] = {}
-    if kind != "next_object":
+    if kind not in ("none", "next_object"):
         fields["start_group"] = draw(
             st.integers(min_value=0, max_value=MAX_MESSAGE_PARAMETER_VALUE)
         )
@@ -502,12 +503,7 @@ def _location_filters(draw: st.DrawFn) -> LocationFilter:
         )
     if kind == "absolute_range_with_end":
         fields["end_object"] = draw(st.integers(min_value=0, max_value=MAX_MESSAGE_PARAMETER_VALUE))
-    location_filter = LocationFilter(kind, **fields)
-    # Start が両方 0 の absolute_start は wire 上で next_object と区別できないため、
-    # 往復が一致する組み合わせだけを生成する
-    if kind == "absolute_start" and fields["start_group"] == 0 and fields["start_object"] == 0:
-        return LocationFilter("next_object")
-    return location_filter
+    return LocationFilter(kind, **fields)
 
 
 @st.composite
@@ -593,8 +589,8 @@ def prop_location_filter_round_trip(location_filter: LocationFilter) -> None:
     """
     LOCATION_FILTER が wire 形式のバイト列と往復することを確認する。
 
-    フィールド数が値の意味を決め、AbsoluteStart の {0, 0} だけは NextObject へ
-    正規化される (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+    先頭の Location Filter Type が後続フィールドを定める
+    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     """
     encoded = location_filter.encode()
 

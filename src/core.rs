@@ -31,12 +31,12 @@ use shiguredo_moqt::message::{
     RequestOk, RequestUpdate, Subscribe, SubscribeOk, TrackStatus,
 };
 use shiguredo_moqt::message_parameter::{
-    AuthorizationToken, MessageParameter, MessageParameterValue, MessageParameters,
-    PARAM_AUTHORIZATION_TOKEN, PARAM_FILL_PARAMETERS, PARAM_FORWARD, PARAM_GROUP_ORDER,
-    PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT, PARAM_LOCATION_FILTER,
-    PARAM_OBJECT_PROPERTY_FILTER, PARAM_OBJECTID_FILTER, PARAM_PRIORITY_FILTER,
-    PARAM_SUBGROUP_FILTER, PARAM_SUBSCRIBER_PRIORITY, PARAM_TRACK_NAMESPACE_PREFIX,
-    PARAM_TRACK_PROPERTY_FILTER,
+    AuthorizationToken, LocationFilter as MoqtLocationFilter, MessageParameter,
+    MessageParameterValue, MessageParameters, PARAM_AUTHORIZATION_TOKEN, PARAM_FILL_PARAMETERS,
+    PARAM_FORWARD, PARAM_GROUP_ORDER, PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT,
+    PARAM_LOCATION_FILTER, PARAM_OBJECT_PROPERTY_FILTER, PARAM_OBJECTID_FILTER,
+    PARAM_PRIORITY_FILTER, PARAM_SUBGROUP_FILTER, PARAM_SUBSCRIBER_PRIORITY,
+    PARAM_TRACK_NAMESPACE_PREFIX, PARAM_TRACK_PROPERTY_FILTER,
 };
 use shiguredo_moqt::parameter::{
     SETUP_OPTION_AUTHORIZATION_TOKEN, SETUP_OPTION_MOQT_IMPLEMENTATION, SetupOption,
@@ -198,11 +198,12 @@ fn reason_from_python(reason: &str) -> PyResult<shiguredo_moqt::message::ReasonP
 ///
 /// これらの型の値は先頭の vi64 が値本体の長さである
 /// (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+/// LOCATION_FILTER は Location Filter Type が後続フィールドを定める Type-prefixed であり、
+/// ここには含めない (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
 fn is_length_prefixed(param_type: u64) -> bool {
     matches!(
         param_type,
         PARAM_AUTHORIZATION_TOKEN
-            | PARAM_LOCATION_FILTER
             | PARAM_SUBGROUP_FILTER
             | PARAM_OBJECTID_FILTER
             | PARAM_PRIORITY_FILTER
@@ -212,32 +213,25 @@ fn is_length_prefixed(param_type: u64) -> bool {
     )
 }
 
-/// エンコード済みの値が必要なパラメータ型について、値の作り方を返す。
-///
-/// フィルタ本体のような長さプレフィックスを持たないバイト列を渡されたときに、
-/// どう直せばよいかをエラーメッセージで示すために使う。
-fn encoded_value_hint(param_type: u64) -> &'static str {
-    if param_type == PARAM_LOCATION_FILTER {
-        "pass the filter as a LocationFilter or use MessageParameters.to_dict()"
-    } else {
-        "build the value with encode_varint(len(body)) + body"
-    }
-}
-
 /// 長さ付きバイト列のパラメータの値がエンコード済みであることを検証する。
 ///
-/// フィルタ本体 (`LocationFilter.encode` や `MessageParameters.location_filter` が
-/// 返す長さプレフィックスを持たないバイト列) を渡された場合に、黙って別の値として
-/// 解釈しないよう長さを照合する。
+/// フィルタ本体 (Range Filter の `SetID | Start Delta | End Delta`) のような
+/// 長さプレフィックスを持たないバイト列を渡された場合に、黙って別の値として
+/// 解釈しないよう長さを照合する。LOCATION_FILTER は値そのものが 1 つのフィルタで
+/// あり、値域全体がフィルタとして解釈できなければならない。
 fn validate_encoded_value(param_type: u64, value: &[u8]) -> PyResult<()> {
+    if param_type == PARAM_LOCATION_FILTER {
+        // Type が必須フィールド数を定めるため、余剰バイトはエラーになる
+        MoqtLocationFilter::decode(value).map_err(codec_error)?;
+        return Ok(());
+    }
     if !is_length_prefixed(param_type) {
         return Ok(());
     }
     let Some((declared, prefix_len)) = decode_varint_prefix(value).map_err(codec_error)? else {
         return Err(PyValueError::new_err(format!(
-            "message parameter {param_type:#x} requires an encoded value with a length prefix, got {} bytes; {}",
-            value.len(),
-            encoded_value_hint(param_type)
+            "message parameter {param_type:#x} requires an encoded value with a length prefix, got {} bytes; build the value with encode_varint(len(body)) + body",
+            value.len()
         )));
     };
     let remaining = (value.len() - prefix_len) as u64;
@@ -265,13 +259,13 @@ pub(crate) fn parameter_from_python(
     param_type: u64,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<MessageParameter> {
-    // 型付きのフィルタは長さプレフィックスを持たないため、バイト列より先に受け付ける
+    // LOCATION_FILTER の型付き表現はバイト列より先に受け付ける
     if param_type == PARAM_LOCATION_FILTER
         && let Ok(filter) = value.cast::<LocationFilter>()
     {
         return Ok(MessageParameter {
             param_type,
-            value: MessageParameterValue::LengthPrefixed(filter.borrow().body_bytes()),
+            value: MessageParameterValue::LocationFilter(filter.borrow().inner()),
         });
     }
     // エンコード済みバイト列 (受信側が返す辞書の値と同じ形式) として解釈する
@@ -296,16 +290,20 @@ fn typed_parameter_value_from_python(
         | PARAM_SUBSCRIBER_PRIORITY
         | PARAM_GROUP_ORDER
         | PARAM_INCLUDE_PROPERTIES => Ok(MessageParameterValue::Uint8(value.extract::<u8>()?)),
-        // 長さ付きバイト列で表現するフィルタは、エンコード済みバイト列か
-        // LOCATION_FILTER の型付き表現だけを受け付ける。エンコード済みバイト列は
-        // 呼び出し元の `parameter_from_python` が処理済みである
-        PARAM_LOCATION_FILTER
-        | PARAM_SUBGROUP_FILTER
+        // 長さ付きバイト列で表現するフィルタは、エンコード済みバイト列だけを受け付ける。
+        // エンコード済みバイト列は呼び出し元の `parameter_from_python` が処理済みである
+        PARAM_SUBGROUP_FILTER
         | PARAM_OBJECTID_FILTER
         | PARAM_PRIORITY_FILTER
         | PARAM_OBJECT_PROPERTY_FILTER
         | PARAM_TRACK_PROPERTY_FILTER => Err(PyValueError::new_err(format!(
             "message parameter {param_type:#x} requires an encoded value with a length prefix, got {}",
+            value.get_type().name()?
+        ))),
+        // LOCATION_FILTER は Type-prefixed であり、`LocationFilter` かエンコード済みの
+        // フィルタ本体だけを受け付ける。どちらも `parameter_from_python` が処理済みである
+        PARAM_LOCATION_FILTER => Err(PyValueError::new_err(format!(
+            "message parameter {param_type:#x} requires a LocationFilter or encoded filter bytes, got {}",
             value.get_type().name()?
         ))),
         // Track Namespace で表現するパラメータ
@@ -499,6 +497,7 @@ pub(crate) fn decode_parameter_to_python(
 ///
 /// AUTHORIZATION_TOKEN は `kind` で種別を表す辞書になり、キーは種別ごとに異なる
 /// (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+/// LOCATION_FILTER は `LocationFilter` になる。
 pub(crate) fn parameter_value_to_python(
     py: Python<'_>,
     value: &MessageParameterValue,
@@ -549,6 +548,9 @@ pub(crate) fn parameter_value_to_python(
                 }
             }
             Ok(dict.into_any().unbind())
+        }
+        MessageParameterValue::LocationFilter(filter) => {
+            Ok(Py::new(py, LocationFilter::wrap(*filter))?.into_any())
         }
         MessageParameterValue::FillParameters(parameters) => {
             Ok(message_parameters_to_python(py, parameters)?.into_any())

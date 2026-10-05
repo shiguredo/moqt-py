@@ -2756,20 +2756,22 @@ class LocProperties:
 @final
 class LocationFilter:
     """
-    LOCATION_FILTER (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter)) の
+    LOCATION_FILTER (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter)) の
     型付き表現。
     
-    wire 形式は Length-prefixed な optional vi64 群であり、Length (バイト数) で
-    フィールド数が決まる。フィールド数と意味の対応は次のとおりである。
+    wire 形式は先頭の Location Filter Type (vi64) が後続の vi64 フィールドを一意に定め、
+    Length フィールドを持たない。Type と意味の対応は次のとおりである。
     
-    - 1 フィールド: StartGroup (Largest Object 相対)
-    - 2 フィールド: StartGroup + StartObject (両方 0 なら Next Object、そうでなければ absolute)
-    - 3 フィールド: absolute Start + EndGroupDelta (End Group の全 Object を含む)
-    - 4 フィールド: absolute Start + EndGroupDelta + EndObject
+    - 0x00 (`none`): フィルタなし
+    - 0x01 (`relative_group`): StartGroup (Largest Object 相対)
+    - 0x02 (`absolute_start`): absolute Start
+    - 0x03 (`absolute_range`): absolute Start + EndGroupDelta (End Group の全 Object を含む)
+    - 0x04 (`absolute_range_with_end`): absolute Start + EndGroupDelta + EndObject
+    - 0x05 (`next_object`): Next Object から open-ended
     
-    `kind` は `relative_group` / `next_object` / `absolute_start` / `absolute_range` /
-    `absolute_range_with_end` のいずれかであり、種別ごとに必要なフィールドが異なる。
-    過不足のあるフィールドを渡すと `ValueError` になる。
+    `kind` は `none` / `relative_group` / `next_object` / `absolute_start` /
+    `absolute_range` / `absolute_range_with_end` のいずれかであり、種別ごとに必要な
+    フィールドが異なる。過不足のあるフィールドを渡すと `ValueError` になる。
     
     この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
     """
@@ -2780,6 +2782,7 @@ class LocationFilter:
         
         `kind` ごとに必要なフィールドは次のとおりである。
         
+        - `none`: なし
         - `relative_group`: `start_group`
         - `next_object`: なし
         - `absolute_start`: `start_group` / `start_object`
@@ -2793,16 +2796,16 @@ class LocationFilter:
         """
         wire format のバイト列から LOCATION_FILTER を読み込む。
         
-        フィールド数が 0 または 5 以上の場合と、壊れた vi64 は `ValueError` になる
-        (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+        未知の Location Filter Type と、Type が要求するフィールドの欠落、余剰バイトは
+        `ValueError` になる
+        (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
         """
     def encode(self, /) -> bytes:
         """
         LOCATION_FILTER のフィルタ本体をバイト列へ書き出す。
         
-        長さプレフィックスを含まないため、パラメータ辞書の値にはそのまま使えない。
-        辞書の値にする場合は [`MessageParameters::to_dict`] を使うか、この
-        `LocationFilter` をそのまま辞書の値として渡す。
+        出力は Location Filter Type を含む値そのものであり、長さプレフィックスを含まない。
+        LOCATION_FILTER のパラメータ辞書の値にはこのバイト列をそのまま使える。
         """
     @property
     def end_group_delta(self, /) -> int |None:
@@ -2833,11 +2836,12 @@ class LocationFilter:
 @final
 class LocationFilterUpdate:
     """
-    LOCATION_FILTER の更新指示 (draft-ietf-moq-transport-21 §3.3.1 (Location Filters))。
+    LOCATION_FILTER の更新指示 (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     
-    REQUEST_UPDATE では Length 0 がフィルタの削除を表す。パラメータの省略 (値の変更なし)
-    と区別するために 3 状態で返す。`kind` は `unchanged` / `removed` / `set` のいずれかで
-    あり、`set` のときだけ `filter` が入る。
+    REQUEST_UPDATE / PUBLISH_STATE_NOTIFY では Location Filter Type 0x00 (no filter) が
+    フィルタの削除を表す。パラメータの省略 (値の変更なし) と区別するために 3 状態で返す。
+    `kind` は `unchanged` / `removed` / `set` のいずれかであり、`set` のときだけ
+    `filter` が入る。
     
     この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
     """
@@ -3132,15 +3136,16 @@ class MessageParameters:
         """
         LOCATION_FILTER (type 0x21) のフィルタ本体をバイト列として返す。
         
-        長さプレフィックスを含まないため、[`LocationFilter::decode`] へそのまま渡せる。
-        解釈した値が必要な場合は [`MessageParameters::location_filter_typed`] を使う。
+        パラメータを持たない場合は `None` になる。フィルタなし (Type 0x00) の場合は
+        その値 (`b"\x00"`) を返す。解釈した値が必要な場合は
+        [`MessageParameters::location_filter_typed`] を使う。
         """
     @property
     def location_filter_typed(self, /) -> LocationFilter |None:
         """
         LOCATION_FILTER (type 0x21) を [`LocationFilter`] として返す。
         
-        パラメータが無い場合と Length 0 (no filter) の場合は `None` になる。
+        パラメータが無い場合と Type 0x00 (no filter) の場合は `None` になる。
         REQUEST_UPDATE での削除指示と省略を区別する場合は
         [`MessageParameters::location_filter_update`] を使う。
         """
@@ -3148,9 +3153,9 @@ class MessageParameters:
     def location_filter_update(self, /) -> LocationFilterUpdate:
         """
         LOCATION_FILTER (type 0x21) の更新指示を返す
-        (draft-ietf-moq-transport-21 §3.3.1 (Location Filters))。
+        (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
         
-        `kind` が `unchanged` なら省略、`removed` なら Length 0 による削除、
+        `kind` が `unchanged` なら省略、`removed` なら Type 0x00 (no filter) による削除、
         `set` なら `filter` への置き換えである。
         """
     @property

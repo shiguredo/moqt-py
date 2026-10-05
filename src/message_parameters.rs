@@ -23,20 +23,22 @@ use crate::core::{
 };
 use crate::errors::codec_error;
 
-/// LOCATION_FILTER (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter)) の
+/// LOCATION_FILTER (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter)) の
 /// 型付き表現。
 ///
-/// wire 形式は Length-prefixed な optional vi64 群であり、Length (バイト数) で
-/// フィールド数が決まる。フィールド数と意味の対応は次のとおりである。
+/// wire 形式は先頭の Location Filter Type (vi64) が後続の vi64 フィールドを一意に定め、
+/// Length フィールドを持たない。Type と意味の対応は次のとおりである。
 ///
-/// - 1 フィールド: StartGroup (Largest Object 相対)
-/// - 2 フィールド: StartGroup + StartObject (両方 0 なら Next Object、そうでなければ absolute)
-/// - 3 フィールド: absolute Start + EndGroupDelta (End Group の全 Object を含む)
-/// - 4 フィールド: absolute Start + EndGroupDelta + EndObject
+/// - 0x00 (`none`): フィルタなし
+/// - 0x01 (`relative_group`): StartGroup (Largest Object 相対)
+/// - 0x02 (`absolute_start`): absolute Start
+/// - 0x03 (`absolute_range`): absolute Start + EndGroupDelta (End Group の全 Object を含む)
+/// - 0x04 (`absolute_range_with_end`): absolute Start + EndGroupDelta + EndObject
+/// - 0x05 (`next_object`): Next Object から open-ended
 ///
-/// `kind` は `relative_group` / `next_object` / `absolute_start` / `absolute_range` /
-/// `absolute_range_with_end` のいずれかであり、種別ごとに必要なフィールドが異なる。
-/// 過不足のあるフィールドを渡すと `ValueError` になる。
+/// `kind` は `none` / `relative_group` / `next_object` / `absolute_start` /
+/// `absolute_range` / `absolute_range_with_end` のいずれかであり、種別ごとに必要な
+/// フィールドが異なる。過不足のあるフィールドを渡すと `ValueError` になる。
 ///
 /// この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
 #[pyclass(name = "LocationFilter", frozen)]
@@ -46,16 +48,15 @@ pub(crate) struct LocationFilter {
 
 impl LocationFilter {
     /// `MoqtLocationFilter` を包む。
-    fn wrap(inner: MoqtLocationFilter) -> Self {
+    pub(crate) fn wrap(inner: MoqtLocationFilter) -> Self {
         Self { inner }
     }
 
-    /// フィルタ本体 (長さプレフィックスを含まない) をバイト列へ書き出す。
+    /// 包んでいる `MoqtLocationFilter` を返す。
     ///
-    /// パラメータの値は長さプレフィックスを含む形で組み立てるため、この本体は
-    /// 呼び出し元が長さ付きの値として包む。
-    pub(crate) fn body_bytes(&self) -> Vec<u8> {
-        self.inner.encode_to_bytes()
+    /// `MoqtLocationFilter` は `Copy` であり、値のまま取り出せる。
+    pub(crate) fn inner(&self) -> MoqtLocationFilter {
+        self.inner
     }
 }
 
@@ -95,6 +96,18 @@ fn location_filter_from_parts(
     end_object: Option<u64>,
 ) -> PyResult<MoqtLocationFilter> {
     match kind {
+        "none" => {
+            forbid_fields(
+                kind,
+                &[
+                    ("start_group", start_group),
+                    ("start_object", start_object),
+                    ("end_group_delta", end_group_delta),
+                    ("end_object", end_object),
+                ],
+            )?;
+            Ok(MoqtLocationFilter::NoFilter)
+        }
         "relative_group" => {
             let start_group = require_field(kind, "start_group", start_group)?;
             forbid_fields(
@@ -165,7 +178,7 @@ fn location_filter_from_parts(
             })
         }
         other => Err(PyValueError::new_err(format!(
-            "unknown LOCATION_FILTER kind '{other}': expected one of relative_group / next_object / absolute_start / absolute_range / absolute_range_with_end"
+            "unknown LOCATION_FILTER kind '{other}': expected one of none / relative_group / next_object / absolute_start / absolute_range / absolute_range_with_end"
         ))),
     }
 }
@@ -176,6 +189,7 @@ impl LocationFilter {
     ///
     /// `kind` ごとに必要なフィールドは次のとおりである。
     ///
+    /// - `none`: なし
     /// - `relative_group`: `start_group`
     /// - `next_object`: なし
     /// - `absolute_start`: `start_group` / `start_object`
@@ -208,8 +222,9 @@ impl LocationFilter {
 
     /// wire format のバイト列から LOCATION_FILTER を読み込む。
     ///
-    /// フィールド数が 0 または 5 以上の場合と、壊れた vi64 は `ValueError` になる
-    /// (draft-ietf-moq-transport-21 §9.20.10 (LOCATION FILTER Parameter))。
+    /// 未知の Location Filter Type と、Type が要求するフィールドの欠落、余剰バイトは
+    /// `ValueError` になる
+    /// (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     #[staticmethod]
     fn decode(data: &[u8]) -> PyResult<Self> {
         Ok(Self::wrap(
@@ -219,9 +234,8 @@ impl LocationFilter {
 
     /// LOCATION_FILTER のフィルタ本体をバイト列へ書き出す。
     ///
-    /// 長さプレフィックスを含まないため、パラメータ辞書の値にはそのまま使えない。
-    /// 辞書の値にする場合は [`MessageParameters::to_dict`] を使うか、この
-    /// `LocationFilter` をそのまま辞書の値として渡す。
+    /// 出力は Location Filter Type を含む値そのものであり、長さプレフィックスを含まない。
+    /// LOCATION_FILTER のパラメータ辞書の値にはこのバイト列をそのまま使える。
     fn encode<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, &self.inner.encode_to_bytes())
     }
@@ -230,6 +244,7 @@ impl LocationFilter {
     #[getter]
     fn kind(&self) -> &'static str {
         match self.inner {
+            MoqtLocationFilter::NoFilter => "none",
             MoqtLocationFilter::RelativeGroup { .. } => "relative_group",
             MoqtLocationFilter::NextObject => "next_object",
             MoqtLocationFilter::AbsoluteStart { .. } => "absolute_start",
@@ -246,7 +261,7 @@ impl LocationFilter {
             MoqtLocationFilter::AbsoluteStart { start }
             | MoqtLocationFilter::AbsoluteRange { start, .. }
             | MoqtLocationFilter::AbsoluteRangeWithEnd { start, .. } => Some(start.group_id),
-            MoqtLocationFilter::NextObject => None,
+            MoqtLocationFilter::NoFilter | MoqtLocationFilter::NextObject => None,
         }
     }
 
@@ -257,7 +272,9 @@ impl LocationFilter {
             MoqtLocationFilter::AbsoluteStart { start }
             | MoqtLocationFilter::AbsoluteRange { start, .. }
             | MoqtLocationFilter::AbsoluteRangeWithEnd { start, .. } => Some(start.object_id),
-            MoqtLocationFilter::RelativeGroup { .. } | MoqtLocationFilter::NextObject => None,
+            MoqtLocationFilter::NoFilter
+            | MoqtLocationFilter::RelativeGroup { .. }
+            | MoqtLocationFilter::NextObject => None,
         }
     }
 
@@ -303,11 +320,12 @@ impl LocationFilter {
     }
 }
 
-/// LOCATION_FILTER の更新指示 (draft-ietf-moq-transport-21 §3.3.1 (Location Filters))。
+/// LOCATION_FILTER の更新指示 (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
 ///
-/// REQUEST_UPDATE では Length 0 がフィルタの削除を表す。パラメータの省略 (値の変更なし)
-/// と区別するために 3 状態で返す。`kind` は `unchanged` / `removed` / `set` のいずれかで
-/// あり、`set` のときだけ `filter` が入る。
+/// REQUEST_UPDATE / PUBLISH_STATE_NOTIFY では Location Filter Type 0x00 (no filter) が
+/// フィルタの削除を表す。パラメータの省略 (値の変更なし) と区別するために 3 状態で返す。
+/// `kind` は `unchanged` / `removed` / `set` のいずれかであり、`set` のときだけ
+/// `filter` が入る。
 ///
 /// この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
 #[pyclass(name = "LocationFilterUpdate", frozen, get_all)]
@@ -479,16 +497,25 @@ impl MessageParameters {
 
     /// LOCATION_FILTER (type 0x21) のフィルタ本体をバイト列として返す。
     ///
-    /// 長さプレフィックスを含まないため、[`LocationFilter::decode`] へそのまま渡せる。
-    /// 解釈した値が必要な場合は [`MessageParameters::location_filter_typed`] を使う。
+    /// パラメータを持たない場合は `None` になる。フィルタなし (Type 0x00) の場合は
+    /// その値 (`b"\x00"`) を返す。解釈した値が必要な場合は
+    /// [`MessageParameters::location_filter_typed`] を使う。
     #[getter]
-    fn location_filter(&self) -> Option<Vec<u8>> {
-        self.inner.location_filter().map(<[u8]>::to_vec)
+    fn location_filter(&self) -> PyResult<Option<Vec<u8>>> {
+        Ok(
+            match self.inner.location_filter_update().map_err(codec_error)? {
+                MoqtLocationFilterUpdate::Set(filter) => Some(filter.encode_to_bytes()),
+                MoqtLocationFilterUpdate::Removed => {
+                    Some(MoqtLocationFilter::NoFilter.encode_to_bytes())
+                }
+                MoqtLocationFilterUpdate::Unchanged => None,
+            },
+        )
     }
 
     /// LOCATION_FILTER (type 0x21) を [`LocationFilter`] として返す。
     ///
-    /// パラメータが無い場合と Length 0 (no filter) の場合は `None` になる。
+    /// パラメータが無い場合と Type 0x00 (no filter) の場合は `None` になる。
     /// REQUEST_UPDATE での削除指示と省略を区別する場合は
     /// [`MessageParameters::location_filter_update`] を使う。
     #[getter]
@@ -500,9 +527,9 @@ impl MessageParameters {
     }
 
     /// LOCATION_FILTER (type 0x21) の更新指示を返す
-    /// (draft-ietf-moq-transport-21 §3.3.1 (Location Filters))。
+    /// (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
     ///
-    /// `kind` が `unchanged` なら省略、`removed` なら Length 0 による削除、
+    /// `kind` が `unchanged` なら省略、`removed` なら Type 0x00 (no filter) による削除、
     /// `set` なら `filter` への置き換えである。
     #[getter]
     fn location_filter_update(&self, py: Python<'_>) -> PyResult<LocationFilterUpdate> {
