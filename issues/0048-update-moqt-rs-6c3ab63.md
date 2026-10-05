@@ -1,7 +1,7 @@
 # moqt-rs の develop を 6c3ab63 へ更新し、LOCATION_FILTER の符号化変更に追随する
 
 - Created: 2026-10-05
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-05
 - Branch: feature/update-moqt-rs-6c3ab63
 - Polished: {YYYY-MM-DD}
 
@@ -44,3 +44,16 @@ moqt-py が固定している `056cf19` は現行 `develop` の祖先ではな�
 - `cargo update -p shiguredo_moqt` 後の `Cargo.lock` で `uv run pytest` が全件通ること
 - `cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` が通ること
 - `python/moqt/_native.pyi` がビルドから再生成した内容と一致すること
+
+## 解決方法
+
+- `Cargo.lock` の `shiguredo_moqt` を `056cf19` から `6c3ab63` へ更新した
+- `src/message_parameters.rs` の `LocationFilter` に `none` kind と `NoFilter` の処理を
+  追加し、`location_filter` は `location_filter_update` からフィルタ本体を返すようにした
+- `src/core.rs` の `parameter_from_python` は型付きフィルタを
+  `MessageParameterValue::LocationFilter` として渡し、`parameter_value_to_python` は
+  `LocationFilter` を Python 側の値へ変換するようにした。生バイト列は
+  `LocationFilter::decode` で値域全体を検証する
+- `python/moqt/_native.pyi` を再生成し、テストの wire 期待値を新しい符号化へ更新した
+- 検証: `uv run pytest` は 525 件すべて通る (relay が要る 7 件は skip)。
+  `cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` も通ることを確認した
