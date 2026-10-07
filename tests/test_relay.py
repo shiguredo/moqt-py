@@ -306,8 +306,8 @@ async def test_relay_accepts_a_native_quic_connection() -> None:
     """
     QUIC 直接接続 (native QUIC) で relay へ接続できることを確認する。
 
-    QUIC では AUTHORITY と PATH を SETUP で通知し、ALPN は `moqt-21` を使う
-    (draft-ietf-moq-transport-21 §6.2.2 (Native QUIC))。WebTransport と違い
+    QUIC では AUTHORITY と PATH を SETUP で通知し、ALPN は `moqt-22` を使う
+    (draft-ietf-moq-transport-22 §6.2.2 (Native QUIC))。WebTransport と違い
     ストリームの多重化に HTTP/3 を挟まないため、経路が別である。
     """
     client = Client(url=_require_uri(), transport=Transport.Quic, verify_peer=VERIFY_PEER)

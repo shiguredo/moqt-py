@@ -73,7 +73,7 @@ uv add moqt-py
 
 接続先は MOQT の URI (`moqt://host:port/path`) であり、接続方式は `transport` で選びます (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。
 
-- `Transport.Quic`: QUIC 直接接続。URI の authority、path、query を SETUP の AUTHORITY と PATH で通知し、ALPN は `moqt-21` (§6.2.2 (Native QUIC))
+- `Transport.Quic`: QUIC 直接接続。URI の authority、path、query を SETUP の AUTHORITY と PATH で通知し、ALPN は `moqt-22` (§6.2.2 (Native QUIC))
 - `Transport.WebTransportOverHTTP3` (省略時) / `Transport.WebTransportOverHTTP2`: WebTransport。URI のスキームを `https` に置き換えて extended CONNECT を送る (§6.2.1 (WebTransport))
 
 ```python
