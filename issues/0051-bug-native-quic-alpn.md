@@ -1,7 +1,7 @@
 # native QUIC で relay へ接続できず E2E テストが失敗する
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/fix-native-quic-alpn
 - Polished:
 
@@ -42,3 +42,19 @@ QUIC の接続テストだけで失敗し続けている。ALPN が relay の要
 
 - native QUIC の接続テスト (`test_relay_accepts_a_native_quic_connection`) が成功すること
 - `uv run pytest` / `cargo fmt` / `cargo clippy` / `ruff` / `ty` が通ること
+
+## 解決方法
+
+`python/moqt/moq/transport.py` の `MOQT_PROTOCOL` を `moqt-21` から `moqt-22` へ変更した。
+draft の節番号も draft-ietf-moq-transport-22 に揃え、値を説明している README と
+`tests/test_relay.py` の doc を追随させた。ALPN の値以外の挙動は変えていない。
+
+### 確認
+
+e2e-test ワークフローで `uv run pytest tests/test_connect.py tests/test_relay.py` を実行し、
+7 件すべて通ることを確認した。修正前は `test_relay_accepts_a_native_quic_connection` だけが
+`ConnectionError: failed to establish a QUIC connection` で失敗していた。
+
+`uv run pytest` は 528 件すべて通る (relay が要る 7 件は skip)。`cargo fmt` /
+`cargo clippy` / `ruff` / `ty` と `prek run --all-files` (pre-commit ステージ) も通ることを
+確認した。
