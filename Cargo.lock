@@ -261,7 +261,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "shiguredo_moqt"
 version = "2026.0.0"
-source = "git+https://github.com/shiguredo/moqt-rs.git?branch=develop#6c3ab63e89f7c196d269deaee51881dfd9d71730"
+source = "git+https://github.com/shiguredo/moqt-rs.git?branch=develop#e8f9eb4fe01f291e3bf2e15f67e82e8f1d23553f"
 dependencies = [
  "aws-lc-rs",
  "base64ct",
