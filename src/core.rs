@@ -610,6 +610,9 @@ fn request_kind_to_python(kind: RequestKind) -> &'static str {
 /// `peer_stream_reset` の `error_code` は `None` になりうる。`None` は peer が
 /// アプリケーションエラーコードを載せなかったことを表す
 /// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
+///
+/// `goaway_timeout` は自側が request stream 上の GOAWAY の deadline 満了で送信方向を
+/// reset したことを表す (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
 fn termination_reason_to_python(
     py: Python<'_>,
     reason: &TerminationReason,
@@ -633,6 +636,9 @@ fn termination_reason_to_python(
         TerminationReason::MalformedTrack { reason } => {
             dict.set_item("kind", "malformed_track")?;
             dict.set_item("reason", *reason)?;
+        }
+        TerminationReason::GoawayTimeout => {
+            dict.set_item("kind", "goaway_timeout")?;
         }
     }
     Ok(dict.unbind())

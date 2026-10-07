@@ -106,6 +106,32 @@ def _fetch_round_trip(
     return request_id
 
 
+def _terminate_by_goaway_timeout(
+    session: Session, request_id: int, request_kind: str
+) -> list[Event]:
+    """request stream 上の GOAWAY の deadline 満了による終端までを進める。
+
+    draft-ietf-moq-transport-22 §9.2 (GOAWAY) は request stream 上の GOAWAY について
+    "SHOULD reset the stream with GOING_AWAY after the indicated timeout" と定める。
+    deadline は送信時の時刻を基準に決まるため、先に tick で時刻を挿入する。
+    `request_kind` は終端通知が運ぶ request 種別であり、その値までここで確認する。
+    満了時のイベントを返す。
+    """
+    session.tick(1000)
+    sent = session.send_goaway_on_request_stream(request_id, b"", 100)
+    assert [event.kind for event in sent] == ["send_on_stream"]
+
+    events = session.tick(1100)
+    terminated = [event for event in events if event.kind == "request_terminated"]
+    assert len(terminated) == 1
+    assert terminated[0].request_id == request_id
+    assert terminated[0].message == {
+        "request_kind": request_kind,
+        "reason": {"kind": "goaway_timeout"},
+    }
+    return events
+
+
 def _object_datagram(
     track_alias: int,
     group_id: int,
@@ -864,10 +890,12 @@ def test_track_status_ok_is_empty_when_include_properties_is_zero() -> None:
 def test_track_status_entry_is_terminated_when_the_requester_cancels() -> None:
     """応答前に requester が cancel した TRACK_STATUS を回収できることを確認する。
 
-    draft-ietf-moq-transport-21 §6.4.2.3 (Request Cancellation and Rejection): 自側が
+    draft-ietf-moq-transport-22 §6.4.2.3 (Request Cancellation and Rejection): 自側が
     publisher (responder) の TRACK_STATUS は、応答を送る前に stream が終端すると応答を
     送れなくなる。状態機械は entry を終端済みとして記録するため、アプリは回収できる。
-    回収しないと GOAWAY の drain が完了しない。
+    応答を送れない entry は購読や fetch と同じく drain の blocker にしない。blocker の
+    判定条件は回収 ( `forget_track_status` ) の受理条件と共通であり、応答済みか終端済みなら
+    回収前でも drain を妨げない。entry 自体は回収するまで状態照会に残る。
     """
     client, server = _setup()
     events = client.send_track_status([b"ns"], b"t", {})
@@ -888,12 +916,121 @@ def test_track_status_entry_is_terminated_when_the_requester_cancels() -> None:
     # 応答は送っていないが、終端したため応答は送れない
     assert entry["response"] == "pending"
     assert entry["terminated"] is True
-    assert server.goaway_drain_ready() is False
+    # 応答を送れない entry は回収前でも drain を妨げない
+    assert server.goaway_drain_ready() is True
 
-    # 終端した entry を回収すると GOAWAY の drain を妨げなくなる
+    # 終端した entry を回収すると状態照会から消える
     assert server.forget_track_status(request_id) is True
     assert server.track_status_request(request_id) is None
     assert server.goaway_drain_ready() is True
+
+
+def test_request_stream_goaway_timeout_terminates_the_request() -> None:
+    """request stream 上の GOAWAY の deadline 満了で request が終端することを確認する。
+
+    draft-ietf-moq-transport-22 §9.2 (GOAWAY): "When sent on a request stream, the sender
+    SHOULD reset the stream with GOING_AWAY after the indicated timeout." reset の時点で
+    まだ終端していない request は応答を送れないため、状態機械が終端として通知する。
+    deadline は送信時の時刻を基準に決まるため、tick で時刻を挿入してから送る。
+    この節番号・規則は draft 由来であり将来 draft 改定で変わる可能性がある。
+    """
+    client, _server = _setup()
+    events = client.send_track_status([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+
+    events = _terminate_by_goaway_timeout(client, request_id, "track_status")
+
+    # reset と終端が 1 回ずつ出る
+    assert [event.kind for event in events] == [
+        "reset_request_stream",
+        "request_terminated",
+    ]
+    assert events[0].request_id == request_id
+    assert events[0].code == moqt.STREAM_GOING_AWAY
+    entry = client.track_status_request(request_id)
+    assert entry is not None
+    assert entry["terminated"] is True
+    # 応答は合成しないため、遅れて届く peer の応答を吸収できる状態のまま残る
+    assert entry["response"] == "pending"
+    assert client.goaway_drain_ready() is True
+
+    # 満了後の tick では reset も終端通知も再発行しない
+    assert client.tick(2000) == []
+
+
+def test_request_stream_goaway_timeout_absorbs_late_responses() -> None:
+    """GOAWAY の deadline 満了で終端した request へ遅れて届く応答を吸収することを確認する。
+
+    request stream は方向ごとに独立に閉じるため (draft-ietf-moq-transport-22 §6.4.2.2
+    (Graceful Request Stream Closure))、送信方向の reset 後も peer の送信方向は開いたままである
+    (同 §9.2 (GOAWAY))。peer が GOAWAY や reset を観測する前に送った応答は正当な traffic で
+    あり、PROTOCOL_VIOLATION でセッションを閉じず、状態遷移もさせずに受理する。
+    """
+    # SUBSCRIBE (応答待ち) の遅延 SUBSCRIBE_OK
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+    _terminate_by_goaway_timeout(client, request_id, "subscribe")
+
+    ok = server.send_subscribe_ok(request_id, 1, {}, {})
+    assert client.receive_request_stream(4, _message_data(ok[0]), "local") == []
+    assert client.state() == "established"
+    # 吸収した応答では購読が成立せず、終端のまま残る
+    subscription = client.subscription(request_id)
+    assert subscription is not None
+    assert subscription["state"] == "terminated"
+
+    # FETCH (応答待ち) の遅延 FETCH_OK
+    client, server = _setup()
+    events = client.send_fetch([b"fetch-ns"], b"fetch-track", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+    _terminate_by_goaway_timeout(client, request_id, "fetch")
+
+    ok = server.send_fetch_ok(request_id, False, (0, 0), {}, {})
+    assert client.receive_request_stream(4, _message_data(ok[0]), "local") == []
+    assert client.state() == "established"
+
+    # TRACK_STATUS (応答待ち) の遅延 TRACK_STATUS_OK
+    client, server = _setup()
+    events = client.send_track_status([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+    _terminate_by_goaway_timeout(client, request_id, "track_status")
+
+    ok = server.send_request_ok(request_id, {}, {})
+    assert client.receive_request_stream(4, _message_data(ok[0]), "local") == []
+    assert client.state() == "established"
+
+    # 吸収した応答で応答状態は確定せず、entry は回収まで残る
+    entry = client.track_status_request(request_id)
+    assert entry is not None
+    assert entry["response"] == "pending"
+    assert client.forget_track_status(request_id) is True
+
+
+def test_request_stream_goaway_timeout_absorbs_a_late_peer_reset() -> None:
+    """GOAWAY の deadline 満了で終端した request への遅延 RESET_STREAM を吸収することを確認する。
+
+    reset するのは自側の送信方向だけであり、peer は自側の reset を観測する前に自身の送信方向を
+    閉じうる (draft-ietf-moq-transport-22 §6.4.2.2 (Graceful Request Stream Closure))。
+    終端済みの request への 1 回目の終端通知は no-op で吸収し、終端理由を二重に通知しない。
+    """
+    client, server = _setup()
+    events = client.send_subscribe([b"ns"], b"t", {})
+    request_id = _request_id(events[0])
+    client.register_local_request_stream(4, request_id)
+    server.receive_request_stream(4, _message_data(events[0]), "peer")
+
+    _terminate_by_goaway_timeout(client, request_id, "subscribe")
+
+    assert client.receive_request_stream_closed(4, True, 0) == []
+    assert client.state() == "established"
 
 
 def test_track_status_request_does_not_create_subscription_state() -> None:
