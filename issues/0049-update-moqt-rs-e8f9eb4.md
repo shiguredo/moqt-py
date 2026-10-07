@@ -1,7 +1,7 @@
 # moqt-rs の develop を e8f9eb4 へ更新し、GOAWAY の deadline 満了による終端に追随する
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/update-moqt-rs-e8f9eb4
 - Polished:
 
@@ -55,3 +55,32 @@ deadline 満了時に未終端の request を終端する挙動 (draft-ietf-moq-
 - `cargo update -p shiguredo_moqt` 後の `Cargo.lock` で `uv run pytest` が全件通ること
 - `cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` が通ること
 - `python/moqt/_native.pyi` がビルドから再生成した内容と一致すること
+
+## 解決方法
+
+`Cargo.lock` の `shiguredo_moqt` を `6c3ab63` から `e8f9eb4` へ更新した。
+
+`src/core.rs` の `termination_reason_to_python` に `TerminationReason::GoawayTimeout` を
+追加し、Python 側では `{"kind": "goaway_timeout"}` として通知するようにした。
+
+`tests/test_moqt.py` は次のとおり更新した。
+
+- `test_track_status_entry_is_terminated_when_the_requester_cancels` は、終端した
+  TRACK_STATUS が回収前でも GOAWAY の drain を妨げないという新しい判定に合わせた
+- request stream 上の GOAWAY の deadline 満了による終端 (終端理由 `goaway_timeout` と
+  `STREAM_GOING_AWAY` による `reset_request_stream`、満了後に再発行しないこと) を固定する
+  テストを追加した
+- 終端後に遅延して届く応答 (SUBSCRIBE_OK / FETCH_OK / TRACK_STATUS_OK) と RESET_STREAM を
+  吸収し、セッションを閉じないことを固定するテストを追加した
+
+`playout` / `media_clock` の変更は moqt-py の公開 API に関係しないため追随していない。
+`python/moqt/_native.pyi` は再生成した内容と一致し、差分が出ないことを確認した。
+
+### 確認
+
+`uv run pytest` は 528 件すべて通る (relay が要る 7 件は skip)。`cargo fmt` /
+`cargo clippy` / `cargo test` / `ruff` / `ty` と `prek run --all-files` (pre-commit ステージ)
+も通ることを確認した。
+
+なお `tests/test_e2e.py` の wt-h3 のデータグラム系テストは、この更新とは関係なくまれに
+失敗する。更新前の `6c3ab63` でも同じ失敗を再現したため、別 issue として起票する。
