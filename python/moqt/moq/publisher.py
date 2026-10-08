@@ -14,7 +14,7 @@ from moqt import moqt
 from moqt.moq._runtime import Runtime
 
 # PUBLISH_DONE の既定コード
-# (draft-ietf-moq-transport-21 §16.11.3 (PUBLISH_DONE Codes))
+# (draft-ietf-moq-transport-22 §16.11.3 (PUBLISH_DONE Codes))
 DEFAULT_PUBLISH_DONE_CODE: int = moqt.PUBLISH_DONE_TRACK_ENDED
 
 
@@ -43,14 +43,14 @@ class Publication:
     キーはパラメータ型、値はエンコード済みバイト列である。SUBSCRIBE_OK と
     REQUEST_OK はどちらも publisher が購読条件を確定する値 (EXPIRES /
     LARGEST_OBJECT / GROUP_ORDER / DEFAULT_PUBLISHER_PRIORITY) を運ぶ
-    (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
     """
 
     track_properties: dict[int, object] = field(default_factory=dict)
     """配信を確立した応答が運んだ Track Properties。
 
     キーは Track Property 型、値は偶数型なら `int`、奇数型なら `bytes` である
-    (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     """
 
     _group_ids: dict[int, int] = field(default_factory=dict)
@@ -73,7 +73,7 @@ class Publication:
         `status` に `moqt.moqt.OBJECT_STATUS_END_OF_GROUP` や
         `moqt.moqt.OBJECT_STATUS_END_OF_TRACK` を渡すと、その Location 以降に
         オブジェクトが無いことを通知する。このとき `payload` は空でなければならない
-        (draft-ietf-moq-transport-21 §11.1.2 (Object Status))。
+        (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。
 
         `subgroup_id_mode` は Subgroup ID のエンコードモードであり、
         `moqt.moq.SUBGROUP_ID_MODE_ZERO` / `SUBGROUP_ID_MODE_FIRST_OBJECT_ID` /
@@ -81,13 +81,13 @@ class Publication:
         渡せば `explicit`、渡さなければ `zero` になる。`first_object_id` を選ぶと
         Subgroup ID フィールドを送らず、このストリームの最初の Object ID が
         Subgroup ID になる
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない場合は
         `MOQTError` になる。Properties の有無は subgroup ヘッダで固定されるため、
         同じ subgroup の最初のオブジェクトで決める
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
         """
         await self.runtime.send_subgroup_object(
             self.request_id,
@@ -118,7 +118,7 @@ class Publication:
         `publisher_priority` を省略すると DEFAULT_PRIORITY bit が立ち、購読を確立した
         制御メッセージで指定された優先度を継承する。受信側では
         `MOQTObject.publisher_priority` が `None` になる
-        (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
 
         `status` の扱いは `send_object` と同じである。
 
@@ -126,11 +126,11 @@ class Publication:
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない場合は
         `MOQTError` になる。データグラムは Properties Length = 0 を持てず、非 Normal の
         `status` に Properties を付けることもできない
-        (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram) / §11.1.3 (Object Properties))。
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram) / §11.1.3 (Object Properties))。
 
         データグラムの合計サイズが `moqt.moqt.MAX_DATAGRAM_SIZE` を超える場合は警告を
         記録する。上限は経路 MTU に依存し、超えたデータグラムは通知なく破棄される
-        (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。大きいオブジェクトは
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。大きいオブジェクトは
         subgroup ストリームで送ること。
         """
         await self.runtime.send_object_datagram(
@@ -150,7 +150,7 @@ class Publication:
         """PUBLISH_STATE_NOTIFY を送る。
 
         応答は不要であり、購読側のクレジットも消費しない
-        (draft-ietf-moq-transport-21 §9.10 (PUBLISH_STATE_NOTIFY))。
+        (draft-ietf-moq-transport-22 §9.10 (PUBLISH_STATE_NOTIFY))。
         """
         await self.runtime.send_publish_state_notify(self.request_id, parameters)
 
@@ -170,7 +170,7 @@ class Publication:
         """送信中の subgroup ストリームを reset する。
 
         送信済みのオブジェクトは破棄される
-        (draft-ietf-moq-transport-21 §16.11.4 (Stream Reset Codes))。
+        (draft-ietf-moq-transport-22 §16.11.4 (Stream Reset Error Codes))。
         """
         await self.runtime.reset_subgroup(self.request_id, error_code)
 
@@ -182,7 +182,7 @@ class Publication:
         """送信中の subgroup ストリームを RESET_STREAM_AT で reset する。
 
         先頭 `reliable_size` バイトは peer へ確実に届き、残りは破棄される
-        (draft-ietf-moq-transport-21 §11.3.2 (Subgroup Object))。
+        (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
         `reliable_size` は stream type と subgroup ヘッダを含む送信済みバイト数である。
         """
         await self.runtime.reset_subgroup_at(self.request_id, reliable_size, error_code)

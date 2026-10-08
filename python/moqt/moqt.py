@@ -1,6 +1,6 @@
 """MOQT (Media over QUIC Transport) のプロトコル層。
 
-draft-ietf-moq-transport-21 の codec と sans I/O セッション状態機械を公開する。
+draft-ietf-moq-transport-22 の codec と sans I/O セッション状態機械を公開する。
 この層はストリームの実体に触れない。呼び出し側が peer のストリーム種別を判定して
 `Session.receive_*` を呼び、戻り値の `Event` に従ってバイト列を送る。
 
@@ -41,18 +41,18 @@ from moqt._native import (
 )
 
 # SUBSCRIBER_PRIORITY の既定値
-# (draft-ietf-moq-transport-21 §9.20.6 (SUBSCRIBER_PRIORITY Parameter))
+# (draft-ietf-moq-transport-22 §9.20.7 (SUBSCRIBER PRIORITY Parameter))
 DEFAULT_SUBSCRIBER_PRIORITY: int = 128
 
 # ストリーム種別
-# (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+# (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
 SETUP_STREAM_TYPE: int = _native.SETUP_STREAM_TYPE
 FETCH_HEADER_TYPE: int = _native.FETCH_HEADER_TYPE
 PADDING_STREAM_TYPE: int = _native.PADDING_STREAM_TYPE
 PADDING_DATAGRAM_TYPE: int = _native.PADDING_DATAGRAM_TYPE
 
 # メッセージパラメータ
-# (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))
+# (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
 PARAM_OBJECT_DELIVERY_TIMEOUT: int = _native.PARAM_OBJECT_DELIVERY_TIMEOUT
 PARAM_AUTHORIZATION_TOKEN: int = _native.PARAM_AUTHORIZATION_TOKEN
 PARAM_RENDEZVOUS_TIMEOUT: int = _native.PARAM_RENDEZVOUS_TIMEOUT
@@ -75,7 +75,7 @@ PARAM_TRACK_NAMESPACE_PREFIX: int = _native.PARAM_TRACK_NAMESPACE_PREFIX
 PARAM_INCLUDE_PROPERTIES: int = _native.PARAM_INCLUDE_PROPERTIES
 
 # SETUP オプションの型番号
-# (draft-ietf-moq-transport-21 §9.1 (SETUP))
+# (draft-ietf-moq-transport-22 §9.1 (SETUP))
 SETUP_OPTION_PATH: int = _native.SETUP_OPTION_PATH
 """PATH。クライアントが要求する path。"""
 
@@ -98,7 +98,7 @@ SETUP_OPTION_MAX_REQUEST_UPDATES: int = _native.SETUP_OPTION_MAX_REQUEST_UPDATES
 """MAX_REQUEST_UPDATES。"""
 
 # REQUEST_ERROR のコード
-# (draft-ietf-moq-transport-21 §16.11.2 (REQUEST_ERROR Codes))
+# (draft-ietf-moq-transport-22 §16.11.2 (REQUEST_ERROR Codes))
 REQUEST_INTERNAL_ERROR: int = _native.REQUEST_INTERNAL_ERROR
 REQUEST_UNAUTHORIZED: int = _native.REQUEST_UNAUTHORIZED
 REQUEST_TIMEOUT: int = _native.REQUEST_TIMEOUT
@@ -119,7 +119,7 @@ REQUEST_CONFLICTING_FILTERS: int = _native.REQUEST_CONFLICTING_FILTERS
 REQUEST_INVALID_FILTER: int = _native.REQUEST_INVALID_FILTER
 
 # PUBLISH_DONE のコード
-# (draft-ietf-moq-transport-21 §16.11.3 (PUBLISH_DONE Codes))
+# (draft-ietf-moq-transport-22 §16.11.3 (PUBLISH_DONE Codes))
 PUBLISH_DONE_INTERNAL_ERROR: int = _native.PUBLISH_DONE_INTERNAL_ERROR
 PUBLISH_DONE_UNAUTHORIZED: int = _native.PUBLISH_DONE_UNAUTHORIZED
 PUBLISH_DONE_TRACK_ENDED: int = _native.PUBLISH_DONE_TRACK_ENDED
@@ -131,7 +131,7 @@ PUBLISH_DONE_EXCESSIVE_LOAD: int = _native.PUBLISH_DONE_EXCESSIVE_LOAD
 PUBLISH_DONE_MALFORMED_TRACK: int = _native.PUBLISH_DONE_MALFORMED_TRACK
 
 # ストリーム reset のコード
-# (draft-ietf-moq-transport-21 §16.11.4 (Stream Reset Codes))
+# (draft-ietf-moq-transport-22 §16.11.4 (Stream Reset Error Codes))
 STREAM_INTERNAL_ERROR: int = _native.STREAM_INTERNAL_ERROR
 STREAM_CANCELLED: int = _native.STREAM_CANCELLED
 STREAM_DELIVERY_TIMEOUT: int = _native.STREAM_DELIVERY_TIMEOUT
@@ -144,7 +144,7 @@ STREAM_EXCESSIVE_LOAD: int = _native.STREAM_EXCESSIVE_LOAD
 STREAM_MALFORMED_TRACK: int = _native.STREAM_MALFORMED_TRACK
 
 # Session Termination のコード
-# (draft-ietf-moq-transport-21 §16.11.1 (Session Termination Codes))
+# (draft-ietf-moq-transport-22 §16.11.1 (Session Termination Error Codes))
 SESSION_NO_ERROR: int = _native.SESSION_NO_ERROR
 SESSION_INTERNAL_ERROR: int = _native.SESSION_INTERNAL_ERROR
 SESSION_UNAUTHORIZED: int = _native.SESSION_UNAUTHORIZED
@@ -172,7 +172,7 @@ SESSION_LOCAL_DATAGRAM_TIMEOUT: int = _native.SESSION_LOCAL_DATAGRAM_TIMEOUT
 """自側でデータグラムの待ち合わせが期限切れになった。wire には出ない。"""
 
 # Object Status
-# (draft-ietf-moq-transport-21 §11.1.2 (Object Status))
+# (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
 OBJECT_STATUS_NORMAL: int = 0x0
 """通常のオブジェクト。非 0 長のオブジェクトでは暗黙の値である。"""
 
@@ -183,7 +183,7 @@ OBJECT_STATUS_END_OF_TRACK: int = _native.OBJECT_STATUS_END_OF_TRACK
 """指定した Location 以降のオブジェクトが存在しない。"""
 
 # Subgroup Header の SUBGROUP_ID_MODE (bits 1-2、mask 0x06)
-# (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))
+# (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
 SUBGROUP_ID_MODE_ZERO: str = _native.SUBGROUP_ID_MODE_ZERO
 """Subgroup ID を 0 に固定するモード (SUBGROUP_ID_MODE = 0b00)。"""
 
@@ -199,7 +199,7 @@ SUBGROUP_ID_MODE_EXPLICIT: str = _native.SUBGROUP_ID_MODE_EXPLICIT
 # (RFC 9000 §8.1)。DATAGRAM フレームは分割できないため、QUIC と HTTP/3 の
 # オーバーヘッドを差し引いたこの値を超えるデータグラムは、経路 MTU によっては
 # 通知なく破棄される。破棄は送信側から検知できない
-# (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+# (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
 #
 # 経路 MTU が大きい場合 (典型的な Ethernet では 1500 バイト) はこれを超える
 # データグラムも配送できるが、その上限は moqt-py からは知り得ない。
@@ -207,31 +207,31 @@ MAX_DATAGRAM_SIZE: int = 1100
 """経路に依存せず配送できるデータグラムの合計サイズ (ヘッダを含む)。"""
 
 # PUBLISHER_PRIORITY の既定値
-# (draft-ietf-moq-transport-21 §9.20.5 (PUBLISHER_PRIORITY Parameter))
+# (draft-ietf-moq-transport-22 §10.4 (DEFAULT PUBLISHER PRIORITY))
 PUBLISHER_PRIORITY_DEFAULT: int = _native.PUBLISHER_PRIORITY_DEFAULT
 
 # DEFAULT_PUBLISHER_GROUP_ORDER の既定値
-# (draft-ietf-moq-transport-21 §10.5 (DEFAULT PUBLISHER GROUP ORDER))
+# (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER))
 DEFAULT_PUBLISHER_GROUP_ORDER_ASCENDING: int = _native.DEFAULT_PUBLISHER_GROUP_ORDER_ASCENDING
 """Ascending。宣言が省略されたときの publisher の選好。"""
 
 # キャンセル済み peer publisher alias の tombstone 保持期間の既定値 (ms)
-# (draft-ietf-moq-transport-21 §3.1.2 (Track Alias))
+# (draft-ietf-moq-transport-22 §3.1.3 (Track Alias))
 DEFAULT_PEER_ALIAS_RETENTION_MS: int = _native.DEFAULT_PEER_ALIAS_RETENTION_MS
 """遅延 Object を捨てられる程度に短く、通常の再確立を妨げない値。"""
 
 # GOAWAY の New Session URI の最大長
-# (draft-ietf-moq-transport-21 §9.2 (GOAWAY))
+# (draft-ietf-moq-transport-22 §9.2 (GOAWAY))
 MAX_NEW_SESSION_URI_LENGTH: int = _native.MAX_NEW_SESSION_URI_LENGTH
 """セッション移行先を示す URI の最大長 (バイト)。"""
 
 # PUBLISH_DONE の STREAM_COUNT が不明であることを示す番兵
-# (draft-ietf-moq-transport-21 §9.9 (PUBLISH_DONE))
+# (draft-ietf-moq-transport-22 §9.9 (PUBLISH_DONE))
 PUBLISH_DONE_STREAM_COUNT_UNKNOWN: int = _native.PUBLISH_DONE_STREAM_COUNT_UNKNOWN
 """publisher が stream 数を表明しない場合の値。"""
 
 # GREASE (Generate Random Extensions And Sustain Extensibility)
-# (draft-ietf-moq-transport-21 §13 (Grease))
+# (draft-ietf-moq-transport-22 §13 (Grease))
 GREASE_BASE: int = _native.GREASE_BASE
 """GREASE 値の基数 (0x9D)。"""
 
@@ -242,7 +242,7 @@ GREASE_MAX: int = _native.GREASE_MAX
 """GREASE 値の上限 (0x3FFFFFFFFFFFFFDE)。"""
 
 # Object Properties の型番号
-# (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+# (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
 PROP_PRIOR_GROUP_ID_GAP: int = _native.PROP_PRIOR_GROUP_ID_GAP
 """直前の存在しない Group の個数 (§10.8)。"""
 
@@ -250,7 +250,7 @@ PROP_PRIOR_OBJECT_ID_GAP: int = _native.PROP_PRIOR_OBJECT_ID_GAP
 """直前の存在しない Object の個数 (§10.9)。"""
 
 # Track Properties の型番号
-# (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+# (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
 PROP_OBJECT_DELIVERY_TIMEOUT: int = _native.PROP_OBJECT_DELIVERY_TIMEOUT
 """Object の配送期限 (ms) (§10.2)。"""
 
@@ -286,7 +286,7 @@ def generate(source: Callable[[int], int] | None = None) -> int:
     オブジェクトである。省略すると標準ライブラリの `random.randrange` を使う。
     乱数源を渡せるため、テストでは決定的な値を再現できる。
 
-    (draft-ietf-moq-transport-21 §13 (Grease))
+    (draft-ietf-moq-transport-22 §13 (Grease))
     """
     return _native.generate(source)
 
@@ -296,7 +296,7 @@ def is_grease(value: int) -> bool:
 
     上限 `GREASE_MAX` を超えた値も値の並びに合致すれば `True` になる。
 
-    (draft-ietf-moq-transport-21 §13 (Grease))
+    (draft-ietf-moq-transport-22 §13 (Grease))
     """
     return _native.is_grease(value)
 

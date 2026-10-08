@@ -145,13 +145,13 @@ mod _native {
     /// モジュール定数を登録する。
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
-        // ストリーム種別 (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+        // ストリーム種別 (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
         module.add("SETUP_STREAM_TYPE", SETUP_STREAM_TYPE)?;
         module.add("FETCH_HEADER_TYPE", FETCH_HEADER_TYPE)?;
         module.add("PADDING_STREAM_TYPE", PADDING_STREAM_TYPE)?;
         module.add("PADDING_DATAGRAM_TYPE", PADDING_DATAGRAM_TYPE)?;
 
-        // Message Parameters (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))
+        // Message Parameters (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
         module.add(
             "PARAM_OBJECT_DELIVERY_TIMEOUT",
             PARAM_OBJECT_DELIVERY_TIMEOUT,
@@ -179,7 +179,7 @@ mod _native {
         module.add("PARAM_TRACK_NAMESPACE_PREFIX", PARAM_TRACK_NAMESPACE_PREFIX)?;
         module.add("PARAM_INCLUDE_PROPERTIES", PARAM_INCLUDE_PROPERTIES)?;
 
-        // SETUP オプション (draft-ietf-moq-transport-21 §9.1 (SETUP))
+        // SETUP オプション (draft-ietf-moq-transport-22 §9.1 (SETUP))
         module.add("SETUP_OPTION_PATH", SETUP_OPTION_PATH)?;
         module.add("SETUP_OPTION_AUTHORITY", SETUP_OPTION_AUTHORITY)?;
         module.add(
@@ -203,7 +203,7 @@ mod _native {
             SETUP_OPTION_MOQT_IMPLEMENTATION,
         )?;
 
-        // REQUEST_ERROR のコード (draft-ietf-moq-transport-21 §16.11.2)
+        // REQUEST_ERROR のコード (draft-ietf-moq-transport-22 §16.11.2)
         module.add("REQUEST_INTERNAL_ERROR", REQUEST_INTERNAL_ERROR)?;
         module.add("REQUEST_UNAUTHORIZED", REQUEST_UNAUTHORIZED)?;
         module.add("REQUEST_TIMEOUT", REQUEST_TIMEOUT)?;
@@ -226,7 +226,7 @@ mod _native {
         module.add("REQUEST_CONFLICTING_FILTERS", REQUEST_CONFLICTING_FILTERS)?;
         module.add("REQUEST_INVALID_FILTER", REQUEST_INVALID_FILTER)?;
 
-        // PUBLISH_DONE のコード (draft-ietf-moq-transport-21 §16.11.3)
+        // PUBLISH_DONE のコード (draft-ietf-moq-transport-22 §16.11.3)
         module.add("PUBLISH_DONE_INTERNAL_ERROR", PUBLISH_DONE_INTERNAL_ERROR)?;
         module.add("PUBLISH_DONE_UNAUTHORIZED", PUBLISH_DONE_UNAUTHORIZED)?;
         module.add("PUBLISH_DONE_TRACK_ENDED", PUBLISH_DONE_TRACK_ENDED)?;
@@ -237,7 +237,7 @@ mod _native {
         module.add("PUBLISH_DONE_EXCESSIVE_LOAD", PUBLISH_DONE_EXCESSIVE_LOAD)?;
         module.add("PUBLISH_DONE_MALFORMED_TRACK", PUBLISH_DONE_MALFORMED_TRACK)?;
 
-        // ストリーム reset のコード (draft-ietf-moq-transport-21 §16.11.4)
+        // ストリーム reset のコード (draft-ietf-moq-transport-22 §16.11.4)
         module.add("STREAM_INTERNAL_ERROR", STREAM_INTERNAL_ERROR)?;
         module.add("STREAM_CANCELLED", STREAM_CANCELLED)?;
         module.add("STREAM_DELIVERY_TIMEOUT", STREAM_DELIVERY_TIMEOUT)?;
@@ -249,7 +249,7 @@ mod _native {
         module.add("STREAM_EXCESSIVE_LOAD", STREAM_EXCESSIVE_LOAD)?;
         module.add("STREAM_MALFORMED_TRACK", STREAM_MALFORMED_TRACK)?;
 
-        // Session Termination のコード (draft-ietf-moq-transport-21 §16.11.1)
+        // Session Termination のコード (draft-ietf-moq-transport-22 §16.11.1)
         module.add("SESSION_NO_ERROR", SESSION_NO_ERROR)?;
         module.add("SESSION_INTERNAL_ERROR", SESSION_INTERNAL_ERROR)?;
         module.add("SESSION_UNAUTHORIZED", SESSION_UNAUTHORIZED)?;
@@ -300,11 +300,11 @@ mod _native {
             SESSION_LOCAL_DATAGRAM_TIMEOUT,
         )?;
 
-        // Object Status (draft-ietf-moq-transport-21 §11.1.2 (Object Status))
+        // Object Status (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
         module.add("OBJECT_STATUS_END_OF_GROUP", OBJECT_STATUS_END_OF_GROUP)?;
         module.add("OBJECT_STATUS_END_OF_TRACK", OBJECT_STATUS_END_OF_TRACK)?;
 
-        // Subgroup ID のエンコードモード (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))
+        // Subgroup ID のエンコードモード (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
         // SUBGROUP_ID_MODE は Type Flags の bits 1-2 (mask 0x06) の 2 bit である。
         // 0b11 は将来のために予約されている
         module.add("SUBGROUP_ID_MODE_ZERO", SUBGROUP_ID_MODE_ZERO)?;
@@ -325,7 +325,7 @@ mod _native {
             DEFAULT_PEER_ALIAS_RETENTION_MS,
         )?;
 
-        // GOAWAY の New Session URI の最大長 (draft-ietf-moq-transport-21 §9.2 (GOAWAY))
+        // GOAWAY の New Session URI の最大長 (draft-ietf-moq-transport-22 §9.2 (GOAWAY))
         // Rust 側はバイト列の長さなので usize である。Python の int へは u64 として渡す
         // (既知の小さな定数なので桁落ちは起きない)
         module.add(
@@ -334,7 +334,7 @@ mod _native {
         )?;
 
         // PUBLISH_DONE の STREAM_COUNT が不明であることを示す番兵
-        // (draft-ietf-moq-transport-21 §9.9 (PUBLISH_DONE))
+        // (draft-ietf-moq-transport-22 §9.9 (PUBLISH_DONE))
         module.add(
             "PUBLISH_DONE_STREAM_COUNT_UNKNOWN",
             PUBLISH_DONE_STREAM_COUNT_UNKNOWN,

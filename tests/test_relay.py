@@ -41,7 +41,8 @@ VIDEO_TRACK_NAME = b"video"
 AUDIO_TRACK_NAME = b"audio"
 CATALOG_TRACK_NAME = b"catalog"
 
-# Track Alias は publisher が Track ごとに決める (draft-ietf-moq-transport-21 §9.5)。
+# Track Alias は publisher が Track ごとに決める
+# (draft-ietf-moq-transport-22 §3.1.3 (Track Alias))。
 VIDEO_TRACK_ALIAS = 1
 AUDIO_TRACK_ALIAS = 2
 CATALOG_TRACK_ALIAS = 3
@@ -252,7 +253,7 @@ async def test_relay_serves_the_msf_catalog_over_fetch() -> None:
     購読で object が relay へ届いたことを確かめてから FETCH する。relay が購読の確立前に
     届いた object を保持するとは限らないため、object を送る前に購読を確立しておく。
     FETCH は購読と同じ Track を対象にするが、届く経路は fetch stream である
-    (draft-ietf-moq-transport-21 §3.2 (Fetch))。
+    (draft-ietf-moq-transport-22 §3.2 (Fetch))。
     """
     catalog = msf.Catalog()
     catalog.add_track(msf.Track("video", "loc", True))
@@ -283,8 +284,8 @@ async def test_relay_delivers_dummy_audio_as_datagrams() -> None:
     """
     publisher が送ったダミー音声がデータグラムで subscriber へ届くことを確認する。
 
-    データグラムは再送されないため (draft-ietf-moq-transport-21 §11.2 (Object
-    Datagrams))、同じサンプルを複数件送り、最初に届いた 1 件だけを確認する。受信側では
+    データグラムは再送されないため (draft-ietf-moq-transport-22 §11.2 (Datagrams))。
+    同じサンプルを複数件送り、最初に届いた 1 件だけを確認する。受信側では
     データストリームを持たないため `MOQTObject.stream_id` が `None` になる。
     """
     async with _relay_clients() as (publisher, subscriber):

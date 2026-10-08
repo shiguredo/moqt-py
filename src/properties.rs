@@ -1,9 +1,9 @@
 //! MOQT の Object Properties と Track Properties の codec (`moqt.moqt`)。
 //!
-//! draft-ietf-moq-transport-21 §16.8 (Properties) Table 14 の Key-Value-Pair を
+//! draft-ietf-moq-transport-22 §16.8 (Properties) Table 15 の Key-Value-Pair を
 //! Python から encode / decode する。LOC (`moqt.loc`) と同じワイヤ形式であり、
 //! 偶数型は varint、奇数型は長さ付きバイト列である
-//! (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+//! (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
 //!
 //! Object Properties は `Event.properties` が返す生バイトを解釈するために、
 //! Track Properties は SUBSCRIBE_OK / FETCH_OK / PUBLISH が運ぶ値を組み立てるために使う。
@@ -197,7 +197,7 @@ impl TrackPropertiesIterator {
 ///
 /// ワイヤフォーマットは `Properties Length (vi64) | Key-Value-Pairs...` である。
 /// encode は prop_type の昇順にソートし、delta encoding で型番号を圧縮する。
-/// (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+/// (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
 #[pyclass(name = "ObjectProperties")]
 pub(crate) struct ObjectProperties {
     inner: MoqtObjectProperties,
@@ -279,7 +279,7 @@ impl ObjectProperties {
     /// 任意の型番号の varint 値を引く。
     ///
     /// 見つからない場合と、その型番号の値がバイト列である場合は `None` になる。
-    /// draft-ietf-moq-transport-21 §10.7 (Immutable Properties) の「MUST search both」
+    /// draft-ietf-moq-transport-22 §10.7 (Immutable Properties) の「MUST search both」
     /// に従い IMMUTABLE_PROPERTIES の内側も探索し、外側の値を優先する。
     fn find_varint(&self, prop_type: u64) -> Option<u64> {
         self.inner.find_varint(prop_type)
@@ -294,7 +294,7 @@ impl ObjectProperties {
 
     /// PRIOR_GROUP_ID_GAP (0x3C): 直前の存在しない Group の個数。
     ///
-    /// (draft-ietf-moq-transport-21 §10.8 (Prior Group ID Gap))
+    /// (draft-ietf-moq-transport-22 §10.8 (Prior Group ID Gap))
     #[getter]
     fn prior_group_id_gap(&self) -> Option<u64> {
         self.find_varint(PROP_PRIOR_GROUP_ID_GAP)
@@ -302,7 +302,7 @@ impl ObjectProperties {
 
     /// PRIOR_OBJECT_ID_GAP (0x3E): 直前の存在しない Object の個数。
     ///
-    /// (draft-ietf-moq-transport-21 §10.9 (Prior Object ID Gap))
+    /// (draft-ietf-moq-transport-22 §10.9 (Prior Object ID Gap))
     #[getter]
     fn prior_object_id_gap(&self) -> Option<u64> {
         self.find_varint(PROP_PRIOR_OBJECT_ID_GAP)
@@ -310,7 +310,7 @@ impl ObjectProperties {
 
     /// OBJECT_DELIVERY_TIMEOUT (0x02): Object の配送期限 (ms)。
     ///
-    /// (draft-ietf-moq-transport-21 §10.2 (OBJECT_DELIVERY_TIMEOUT))
+    /// (draft-ietf-moq-transport-22 §10.2 (OBJECT_DELIVERY_TIMEOUT))
     #[getter]
     fn object_delivery_timeout(&self) -> Option<u64> {
         self.find_varint(PROP_OBJECT_DELIVERY_TIMEOUT)
@@ -318,7 +318,7 @@ impl ObjectProperties {
 
     /// SUBGROUP_DELIVERY_TIMEOUT (0x06): Subgroup の配送期限 (ms)。
     ///
-    /// (draft-ietf-moq-transport-21 §10.1 (SUBGROUP_DELIVERY_TIMEOUT))
+    /// (draft-ietf-moq-transport-22 §10.1 (SUBGROUP_DELIVERY_TIMEOUT))
     #[getter]
     fn subgroup_delivery_timeout(&self) -> Option<u64> {
         self.find_varint(PROP_SUBGROUP_DELIVERY_TIMEOUT)
@@ -327,7 +327,7 @@ impl ObjectProperties {
     /// IMMUTABLE_PROPERTIES (0x0B): 途中で変化しないプロパティの入れ子リスト。
     ///
     /// 内容は解釈せず生バイト列として返す。
-    /// (draft-ietf-moq-transport-21 §10.7 (Immutable Properties))
+    /// (draft-ietf-moq-transport-22 §10.7 (Immutable Properties))
     #[getter]
     fn immutable_properties<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyBytes>> {
         self.inner
@@ -397,7 +397,7 @@ fn sorted_object_properties(properties: &MoqtObjectProperties) -> Vec<ObjectProp
 /// MOQT の Track Properties。
 ///
 /// Track 単位で決まるプロパティである。SUBSCRIBE_OK / FETCH_OK / PUBLISH が運ぶ
-/// (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)。
+/// (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)。
 #[pyclass(name = "TrackProperties")]
 pub(crate) struct TrackProperties {
     inner: MoqtTrackProperties,
@@ -429,7 +429,7 @@ impl TrackProperties {
     ///
     /// Object Properties と異なり長さプレフィックスを付けない。カウントプレフィックスを
     /// 持たない KVP 列そのものになり、空の集合は 0 バイトになる
-    /// (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    /// (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     /// subscription を送る引数へ埋め込むバイト列がこれである。
     fn encode<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let mut buf = Vec::new();
@@ -486,14 +486,14 @@ impl TrackProperties {
     ///
     /// 見つからない場合と、その型番号の値がバイト列である場合は `None` になる。
     /// IMMUTABLE_PROPERTIES の内側も探索し、外側の値を優先する
-    /// (draft-ietf-moq-transport-21 §10.7 (Immutable Properties))。
+    /// (draft-ietf-moq-transport-22 §10.7 (Immutable Properties))。
     fn find_varint(&self, prop_type: u64) -> Option<u64> {
         self.inner.find_varint(prop_type)
     }
 
     /// DYNAMIC_GROUPS (0x30): Group が動的に決まるか。
     ///
-    /// (draft-ietf-moq-transport-21 §10.6 (Dynamic Groups))
+    /// (draft-ietf-moq-transport-22 §10.6 (DYNAMIC GROUPS))
     #[getter]
     fn dynamic_groups(&self) -> Option<u64> {
         self.inner.dynamic_groups()
@@ -502,7 +502,7 @@ impl TrackProperties {
     /// DEFAULT_PUBLISHER_PRIORITY (0x0E): 既定の Publisher Priority。
     ///
     /// 省略時は `None` になる。draft の既定値 128 は適用しない
-    /// (draft-ietf-moq-transport-21 §10.4 (Default Publisher Priority))。
+    /// (draft-ietf-moq-transport-22 §10.4 (DEFAULT PUBLISHER PRIORITY))。
     #[getter]
     fn default_publisher_priority(&self) -> Option<u8> {
         self.inner.default_publisher_priority()
@@ -511,7 +511,7 @@ impl TrackProperties {
     /// DEFAULT_PUBLISHER_GROUP_ORDER (0x22): 既定の Group Order。
     ///
     /// 省略時は `None` になる。draft の既定値 Ascending (0x1) は適用しない
-    /// (draft-ietf-moq-transport-21 §10.5 (Default Publisher Group Order))。
+    /// (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
     #[getter]
     fn default_publisher_group_order(&self) -> Option<u8> {
         self.inner.default_publisher_group_order()
@@ -532,7 +532,7 @@ impl TrackProperties {
     /// 未知の必須プロパティを含むか。
     ///
     /// 必須の範囲は `MANDATORY_TRACK_PROPERTY_MIN` から `MANDATORY_TRACK_PROPERTY_MAX`
-    /// である (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)。未知の必須
+    /// である (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)。未知の必須
     /// プロパティを含む Track は扱えないため、アプリは購読を拒否できる。
     #[getter]
     fn has_unknown_mandatory(&self) -> bool {
@@ -574,11 +574,11 @@ fn sorted_track_properties(properties: &MoqtTrackProperties) -> Vec<TrackPropert
 
 /// Properties の型番号をモジュール定数として登録する。
 pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Object Properties (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+    // Object Properties (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
     module.add("PROP_PRIOR_GROUP_ID_GAP", PROP_PRIOR_GROUP_ID_GAP)?;
     module.add("PROP_PRIOR_OBJECT_ID_GAP", PROP_PRIOR_OBJECT_ID_GAP)?;
 
-    // Track Properties (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+    // Track Properties (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
     module.add("PROP_OBJECT_DELIVERY_TIMEOUT", PROP_OBJECT_DELIVERY_TIMEOUT)?;
     module.add("PROP_MAX_CACHE_DURATION", PROP_MAX_CACHE_DURATION)?;
     module.add(

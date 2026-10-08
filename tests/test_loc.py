@@ -21,7 +21,7 @@ def test_empty_properties_encode_as_a_zero_length_block() -> None:
     """
     プロパティが 1 件も無い場合に Properties Length = 0 を書くことを確認する。
 
-    draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header): "Objects with no
+    draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header): "Objects with no
     properties set Properties Length to 0" である。
     """
     assert Properties().encode() == b"\x00"

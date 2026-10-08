@@ -67,7 +67,7 @@ impl LocProperties {
     /// プロパティブロック全体をエンコードする。
     ///
     /// 空の集合は Properties Length = 0 の 1 バイトになる。
-    /// (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))
+    /// (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
     fn encode<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let data = self.inner.encode().map_err(codec_error)?;
         Ok(PyBytes::new(py, &data))

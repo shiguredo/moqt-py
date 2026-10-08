@@ -10,7 +10,7 @@
 - このランタイムが両者を接続し、ストリーム ID と Request ID の対応を保持する
 
 応答メッセージはワイヤに Request ID を含まないため、ストリームと Request ID の
-対応を I/O 層が保持する必要がある (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR))。
+対応を I/O 層が保持する必要がある (draft-ietf-moq-transport-22 §9.4 (REQUEST_ERROR))。
 """
 
 import asyncio
@@ -70,7 +70,7 @@ class NativeEvent(Protocol):
 
         型番号をキーにした辞書である。応答が Track Properties を運ばない場合は
         `None` になる
-        (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+        (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
         """
         ...
 
@@ -168,7 +168,7 @@ MAX_PENDING_DATAGRAMS = 256
 # 購読が成立しないまま届いたものである。保持し続けずに破棄する。
 MAX_DATAGRAM_RETRY_ATTEMPTS = 64
 
-# Subgroup Header の SUBGROUP_ID_MODE (draft-ietf-moq-transport-21 §11.3.1)。
+# Subgroup Header の SUBGROUP_ID_MODE (draft-ietf-moq-transport-22 §11.3.1)。
 # `ZERO` は Subgroup ID を 0 に固定し、`FIRST_OBJECT_ID` は最初の Object ID を
 # Subgroup ID として使う (Subgroup ID フィールドを送らない分だけ wire が短くなる)。
 # `EXPLICIT` は Subgroup ID フィールドを明示的に送る。0b11 は将来のために予約されている。
@@ -177,14 +177,14 @@ SUBGROUP_ID_MODE_ZERO = "zero"
 SUBGROUP_ID_MODE_FIRST_OBJECT_ID = "first_object_id"
 SUBGROUP_ID_MODE_EXPLICIT = "explicit"
 
-# GROUP_ORDER パラメータの値 (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+# GROUP_ORDER パラメータの値 (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
 # FETCH 応答の Group ID は差分で表現され、その解決方向がこの値で決まる。省略された
-# 要求では Ascending になる (draft-ietf-moq-transport-21 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
+# 要求では Ascending になる (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
 GROUP_ORDER_ASCENDING = 0x01
 GROUP_ORDER_DESCENDING = 0x02
 
 # fetch stream の End of Range の種別と Serialization Flags の特殊値
-# (draft-ietf-moq-transport-21 §11.4.1 (Fetch Header) Table 7)。
+# (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8)。
 # 値は `Fetch.ranges()` が返す種別と同じ文字列であり、送信と受信で対称になる。
 _FETCH_END_OF_RANGE_FLAGS: dict[str, int] = {
     "end_of_non_existent_range": 0x8C,
@@ -306,7 +306,7 @@ class SubgroupWriter:
     """送信中の subgroup ストリーム 1 本の状態。
 
     Object ID は subgroup ストリーム内で差分として表現されるため、
-    直前の Object ID を保持する (draft-ietf-moq-transport-21 §11.3.1)。
+    直前の Object ID を保持する (draft-ietf-moq-transport-22 §11.3.1)。
     """
 
     stream_id: int
@@ -315,14 +315,14 @@ class SubgroupWriter:
     """ストリームを開いたときの SUBGROUP_ID_MODE。
 
     同じ Group のオブジェクトは同じ encoding を続ける
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     last_object_id: int | None = None
     has_properties: bool = False
     """ヘッダが Properties を持つか。
 
     Properties の有無はヘッダで固定されるため、途中のオブジェクトで変更できない
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
 
 
@@ -332,7 +332,7 @@ class FetchWriter:
 
     fetch ストリームの Group ID と Object ID は直前のオブジェクトを基準に
     差分で表現されるため、直前の値を保持する
-    (draft-ietf-moq-transport-21 §11.4.1.1 (Flags))。
+    (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))。
     """
 
     stream_id: int
@@ -341,7 +341,7 @@ class FetchWriter:
 
     Group ID の差分の解決方向を決める。ストリームごとに解決した値を保持し、
     同じ fetch stream 内では変えない
-    (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
     """
     last_group_id: int | None = None
     last_object_id: int | None = None
@@ -374,7 +374,7 @@ class Runtime:
     ) -> None:
         # Setup Option は SETUP の交換でだけ使う。MOQT_IMPLEMENTATION は
         # implementation 引数が担うため setup_options には含めない
-        # (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        # (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         #
         # `transport` は `moqt.moq.Transport` の値である。状態機械は SETUP に載せられる
         # Setup Option を接続方式ごとに検証するため、I/O 層が選んだ方式をそのまま渡す
@@ -387,7 +387,7 @@ class Runtime:
         )
         # タイムアウトは既定で無効である。設定すると tick が期限を判定し、期限切れの
         # セッションを SESSION_CONTROL_MESSAGE_TIMEOUT / SESSION_DATA_STREAM_TIMEOUT で
-        # 終了する (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        # 終了する (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         if control_message_timeout is not None:
             self._core.set_control_message_timeout_ms(_to_milliseconds(control_message_timeout))
         if data_stream_timeout is not None:
@@ -408,7 +408,7 @@ class Runtime:
         #
         # `_streams` はストリームの終端通知で消えるが、peer の FIN は方向ごとの終端で
         # あって cancel ではないため、自側はまだ応答を送れる。終端後も送信先を引ける
-        # ように別に保持する (draft-ietf-moq-transport-21 §6.4.2.2
+        # ように別に保持する (draft-ietf-moq-transport-22 §6.4.2.2
         # (Graceful Request Stream Closure))。
         self._incoming_request_streams: dict[int, int] = {}
         # 自側が開始したストリーム ID
@@ -451,7 +451,7 @@ class Runtime:
         キーは Setup Option Type、値は偶数型なら `int`、奇数型なら `bytes` である。
         AUTHORIZATION_TOKEN は Token の辞書のリストになる。SETUP を受信して
         いない場合は空の辞書を返す
-        (draft-ietf-moq-transport-21 §9.1 (SETUP) / §16.4 (Setup Options))。
+        (draft-ietf-moq-transport-22 §9.1 (SETUP) / §16.4 (Setup Options))。
         """
         return dict(self._core.peer_setup_options())
 
@@ -466,7 +466,7 @@ class Runtime:
 
         宣言が無い場合は 0 である。AUTHORIZATION_TOKEN の Token Alias を登録する
         アプリは、この値と登録量を突き合わせて peer の上限に収まるか判断する
-        (draft-ietf-moq-transport-21 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+        (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
         """
         return self._core.peer_max_auth_token_cache_size
 
@@ -474,7 +474,7 @@ class Runtime:
     def peer_alias_retention_ms(self) -> int:
         """キャンセル済み peer publisher alias の保持期間 (ms) を返す。
 
-        draft-ietf-moq-transport-21 §3.1.2 (Track Alias) の SHOULD に対応する
+        draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する
         保持期間である。
         """
         return self._core.peer_alias_retention_ms
@@ -491,7 +491,7 @@ class Runtime:
         """制御メッセージの応答待ちタイムアウト (ms) を返す。
 
         無効の場合は `None` である
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         """
         return self._core.control_message_timeout_ms
 
@@ -500,7 +500,7 @@ class Runtime:
         """データストリームの停止を検出するタイムアウト (ms) を返す。
 
         無効の場合は `None` である
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         """
         return self._core.data_stream_timeout_ms
 
@@ -510,7 +510,7 @@ class Runtime:
         キーは `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
         `blocking_track_status_request_ids` である。GOAWAY を送った後にこれらが
         空になった時点で、drain が完了したと判断できる
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration) /
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
         §9.2 (GOAWAY))。
         """
         return {key: list(value) for key, value in self._core.goaway_drain_snapshot().items()}
@@ -520,7 +520,7 @@ class Runtime:
         """GOAWAY の drain が完了しているかを返す。
 
         drain を妨げる request が 1 件も無ければ `True` である
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration))。
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
         """
         return self._core.goaway_drain_ready()
 
@@ -528,7 +528,7 @@ class Runtime:
         """指定 subscription で open 中の送信 fill fetch stream 数を返す。
 
         1 つの subscription に複数本の fill fetch stream が同時に開くことがある
-        (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。
+        (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
         """
         return self._core.open_outgoing_fill_stream_count(request_id)
 
@@ -588,7 +588,7 @@ class Runtime:
         破棄できた場合は `True` を返す。応答を受信していない TRACK_STATUS と、
         保持していない Request ID では `False` を返す。応答前に request stream が
         終端した場合はエラー応答として記録されるため破棄できる
-        (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+        (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
         """
         return bool(self._core.forget_track_status(request_id))
 
@@ -601,7 +601,7 @@ class Runtime:
         回収は `*_cleanup_ready` が真を返したときだけ行う。
 
         TRACK_STATUS には `*_cleanup_ready` が無いため、応答の有無と終端の有無で判断する
-        (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+        (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
 
         自側が publisher (responder) の TRACK_STATUS は、応答を送る前に peer が cancel
         すると response を持たないまま終端する。終端した entry は応答を送れないため
@@ -740,7 +740,7 @@ class Runtime:
 
         トランスポートの終了に伴う終端は、状態機械がプロトコル違反として拒否することが
         ある。例えば制御ストリームは session の生存中に閉じてはならないため
-        (draft-ietf-moq-transport-21 §6.4.1 (Control Streams))、WebTransport session の
+        (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams))、WebTransport session の
         終了と前後して届いた FIN は違反として扱われる。これはアプリケーションが
         対処できる失敗ではないので、例外を送出せずセッションの終了として扱う。
         """
@@ -962,7 +962,7 @@ class Runtime:
 
         peer から FILL_PARAMETERS 付きの購読要求を受けたときに開く。FETCH_HEADER に
         載せる Request ID は状態機械が通知した値をそのまま使う
-        (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。
+        (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
 
         Returns:
             ストリーム ID
@@ -986,7 +986,7 @@ class Runtime:
         `GROUP_ORDER` は FETCH と SUBSCRIBE が運ぶ。fill fetch stream は fetch では
         なく subscription に紐づくため、fetch を保持していない場合は subscription の
         値を使う。どちらも省略していれば既定値の Ascending になる
-        (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter) /
+        (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter) /
         §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
         """
         entry = self._core.fetch(request_id)
@@ -1015,7 +1015,7 @@ class Runtime:
             raise MOQTError(f"fetch stream {stream_id} is not open")
         # 状態機械へ通知する前にバイト列を組み立て、不正な組み合わせでは送信しない。
         # 宣言長と実データ長が一致しない Properties もここで拒否する
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         properties_bytes = None if properties_data is None else _properties_blob(properties_data)
         data = _encode_fetch_object(
             writer,
@@ -1045,7 +1045,7 @@ class Runtime:
 
         `kind` は `end_of_non_existent_range` / `end_of_unknown_range` /
         `end_of_timed_out_range` のいずれかである
-        (draft-ietf-moq-transport-21 §11.4.1 (Fetch Header) Table 7)。
+        (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8)。
         """
         writer = self._fetch_streams.get(stream_id)
         if writer is None:
@@ -1054,7 +1054,7 @@ class Runtime:
         await self._apply_events(self._core.send_fetch_object(stream_id))
         await self._ops.send_stream_data(stream_id, data, False)
         # End of Range の後は Group ID と Object ID の基準が End of Range の値になる
-        # (draft-ietf-moq-transport-21 §11.4.1.2 (End of Range))。
+        # (draft-ietf-moq-transport-22 §11.4.1.2 (End of Range))。
         writer.last_group_id = group_id
         writer.last_object_id = object_id
 
@@ -1174,7 +1174,7 @@ class Runtime:
         `new_session_uri` は移行先のセッション URI である。Server はこれで移行先を
         通知でき、Client は空の URI しか送れない。`MAX_NEW_SESSION_URI_LENGTH` を
         超える値は送信せずに `MOQTError` にする
-        (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
         """
         if len(new_session_uri) > moqt.MAX_NEW_SESSION_URI_LENGTH:
             raise MOQTError(
@@ -1191,7 +1191,7 @@ class Runtime:
         """fetch を取り消す (subscriber 側の STOP_SENDING)。
 
         状態機械は bidi request stream と fetch stream の終端を確認したうえで
-        fetch を回収する (draft-ietf-moq-transport-21 §3.2.1 (Fetch State Management))。
+        fetch を回収する (draft-ietf-moq-transport-22 §3.2.4 (Fetch State Management))。
         """
         await self._apply_events(self._core.send_fetch_stop_sending(request_id))
 
@@ -1199,7 +1199,7 @@ class Runtime:
         """送信中の subgroup ストリームを reset する。
 
         送信済みのオブジェクトは破棄される
-        (draft-ietf-moq-transport-21 §16.11.4 (Stream Reset Codes))。
+        (draft-ietf-moq-transport-22 §16.11.4 (Stream Reset Error Codes))。
         """
         writer = self._subgroups.pop(request_id, None)
         if writer is None:
@@ -1214,7 +1214,7 @@ class Runtime:
         """送信中の subgroup ストリームを RESET_STREAM_AT で reset する。
 
         先頭 `reliable_size` バイトは peer へ確実に届き、残りは破棄される
-        (draft-ietf-moq-transport-21 §11.3.2 (Subgroup Object))。
+        (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
         `reliable_size` は stream type と subgroup ヘッダを含む送信済みバイト数である。
         """
         writer = self._subgroups.pop(request_id, None)
@@ -1253,11 +1253,11 @@ class Runtime:
         `first_object_id` を選ぶと Subgroup ID フィールドを送らず、このストリームの
         最初の Object ID が Subgroup ID になる。モードは Group ごとに固定され、
         同じ Group の途中で違うモードを指定すると `MOQTError` になる
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
 
         `properties_data` の有無は、そのストリームの最初のオブジェクトでヘッダの
         PROPERTIES bit に固定される
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。以降のオブジェクトの
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。以降のオブジェクトの
         Properties の有無がヘッダと食い違うと `MOQTError` になる。
         """
         mode = _resolve_subgroup_id_mode(subgroup_id, subgroup_id_mode)
@@ -1281,7 +1281,7 @@ class Runtime:
             )
         # Object ID は subgroup ストリーム内の差分として表現する。新しいストリームを
         # 開く場合は絶対値で書くため、直前の Group の Object ID を基準にしない
-        # (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))
+        # (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
         delta = (
             object_id
             if opens_stream or writer is None or writer.last_object_id is None
@@ -1290,7 +1290,7 @@ class Runtime:
         # 状態機械が OBJECT_PROPERTY_FILTER を評価するバイト列と、wire へ書く
         # バイト列を同一にする。moqt-rs の `Session::send_subgroup_object` は
         # `Properties Length | Key-Value-Pairs` の生バイト列を受け取る
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         properties_bytes = None if properties_data is None else _properties_blob(properties_data)
         data = _encode_subgroup_object(delta, payload, status, properties_bytes)
 
@@ -1399,7 +1399,7 @@ class Runtime:
             raise MOQTError(f"subscription {request_id} has no track alias")
         # 状態機械がフィルタ評価に使うバイト列と wire へ書くバイト列を同一にする。
         # 宣言長と実データ長が一致しない Properties はここで拒否する
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         properties_bytes = None if properties_data is None else _properties_blob(properties_data)
         # 状態機械へ通知する前にバイト列を組み立て、不正な組み合わせでは送信しない
         datagram = _encode_object_datagram(
@@ -1413,7 +1413,7 @@ class Runtime:
         )
         if len(datagram) > moqt.MAX_DATAGRAM_SIZE:
             # 上限を超えたデータグラムは経路によっては通知なく破棄され、送信側から
-            # 検知できない (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+            # 検知できない (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
             # 原因が分からないまま受信待ちで止まらないよう、送信前に警告する
             logger.warning(
                 "MOQT datagram size %d exceeds the portable limit %d; "
@@ -1546,7 +1546,7 @@ class Runtime:
         """peer から届いた request stream を Request ID から引く。
 
         peer の FIN を受信したあとも自側は応答を送れるため、`_streams` の登録が
-        消えていても `_incoming_request_streams` から引ける (draft-ietf-moq-transport-21
+        消えていても `_incoming_request_streams` から引ける (draft-ietf-moq-transport-22
         §6.4.2.2 (Graceful Request Stream Closure))。
         """
         if request_id is None:
@@ -1592,7 +1592,7 @@ class Runtime:
         閉じることが SHOULD で求められている。自側が responder の場合は、PUBLISH 起点の
         subscription で peer の PUBLISH_DONE を受信した時点で自側が送るべきメッセージが
         無くなるため、送信方向を FIN で閉じる
-        (draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure))。
+        (draft-ietf-moq-transport-22 §6.4.2.2 (Graceful Request Stream Closure))。
         この節番号・規則は draft 由来であり、将来 draft 改定で変わる可能性がある。
 
         既に FIN した request では `_request_streams` からエントリが消えているため、
@@ -1624,7 +1624,7 @@ class Runtime:
             if stream_id is not None:
                 if event.reliable_size is not None:
                     # RESET_STREAM_AT である。先頭 reliable_size バイトは peer へ届く
-                    # (draft-ietf-moq-transport-21 §11.3.2 (Subgroup Object))。
+                    # (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
                     # webtransport-py の reset_stream は reliable size を運べないため、
                     # 状態機械の判断を記録だけして通常の reset を送る
                     logger.info(
@@ -1675,26 +1675,26 @@ class Runtime:
             await self._notify(self._events.on_request_terminated, event)
         elif kind == "request_update":
             # peer からの REQUEST_UPDATE には応答が必須である
-            # (draft-ietf-moq-transport-21 §9.5 (REQUEST_UPDATE))。
+            # (draft-ietf-moq-transport-22 §9.5 (REQUEST_UPDATE))。
             # アプリのコールバックを先に呼び、例外を送出した場合は REQUEST_ERROR で拒否する
             await self._respond_request_update(event)
         elif kind == "publish_done":
             await self._notify(self._events.on_publish_done, event)
         elif kind == "publish_state_notify":
             # 状態機械が購読の状態へ反映済みであり、応答は不要である
-            # (draft-ietf-moq-transport-21 §9.10 (PUBLISH_STATE_NOTIFY))。
+            # (draft-ietf-moq-transport-22 §9.10 (PUBLISH_STATE_NOTIFY))。
             # アプリが通知を観測できるようにする
             await self._notify(self._events.on_publish_state_notify, event)
         elif kind == "open_fill_fetch_stream":
             # peer が FILL_PARAMETERS 付きで購読した。fill fetch stream を開く必要がある
-            # (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。
+            # (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
             await self._notify(self._events.on_fill_fetch_stream, event.request_id or 0)
         elif kind == "goaway":
             await self._notify(self._events.on_goaway, event)
         elif kind == "unsupported":
             # 定義済みだが実装しない request は状態機械が REQUEST_ERROR
-            # (NOT_SUPPORTED) + FIN で拒否する (draft-ietf-moq-transport-21
-            # §1.5 (Modularity))。応答は状態機械が send_on_stream として発行するため、
+            # (NOT_SUPPORTED) + FIN で拒否する (draft-ietf-moq-transport-22
+            # §1.6 (Modularity))。応答は状態機械が send_on_stream として発行するため、
             # アプリへは通知せず、送信先のストリームだけ覚える
             self._remember_incoming_request(event)
         elif kind in {
@@ -1830,9 +1830,8 @@ class Runtime:
 #
 # 制御メッセージは moqt-rs がエンコードするが、データストリームのヘッダと
 # オブジェクトは I/O 層が組み立てる。
-# - Subgroup Header: draft-ietf-moq-transport-21 §11.3.1
-# - Subgroup Object: draft-ietf-moq-transport-21 §11.3.2
-# - Object Datagram: draft-ietf-moq-transport-21 §11.2.1
+# - Subgroup Header と Subgroup Object: draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header)
+# - Object Datagram: draft-ietf-moq-transport-22 §11.2.1 (Object Datagram)
 
 
 def _event_bytes(event: NativeEvent, key: str) -> bytes:
@@ -1891,7 +1890,7 @@ def _resolve_subgroup_id_mode(subgroup_id: int | None, subgroup_id_mode: str | N
 
     モードを省略した場合は `subgroup_id` の有無から決める。モードと `subgroup_id` の
     組み合わせが不正な場合は `MOQTError` を送出する
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     if subgroup_id_mode is None:
         return SUBGROUP_ID_MODE_EXPLICIT if subgroup_id is not None else SUBGROUP_ID_MODE_ZERO
@@ -1917,7 +1916,7 @@ def _subgroup_type_byte(
     default_priority: bool,
     first_object: bool = False,
 ) -> int:
-    """subgroup ヘッダの type byte を組み立てる (draft-ietf-moq-transport-21 §11.3.1)。
+    """subgroup ヘッダの type byte を組み立てる (draft-ietf-moq-transport-22 §11.3.1)。
 
     bit 4 (0x10) は常に 1 でなければならない。SUBGROUP_ID_MODE は bits 1-2
     (mask 0x06) の 2 bit であり、`zero` は 0b00、`first_object_id` は 0b01、
@@ -1951,7 +1950,7 @@ def _encode_subgroup_header(
     has_properties: bool = False,
     end_of_group: bool = False,
 ) -> bytes:
-    """subgroup ヘッダをエンコードする (draft-ietf-moq-transport-21 §11.3.1)。
+    """subgroup ヘッダをエンコードする (draft-ietf-moq-transport-22 §11.3.1)。
 
     Subgroup ID フィールドを書くのは `explicit` モードだけである。
     """
@@ -1975,7 +1974,7 @@ def _encode_subgroup_header(
 
 
 def _encode_fetch_header(request_id: int) -> bytes:
-    """FETCH_HEADER をエンコードする (draft-ietf-moq-transport-21 §11.4.1)。
+    """FETCH_HEADER をエンコードする (draft-ietf-moq-transport-22 §11.4.1)。
 
     ストリーム先頭の stream type (0x05) と Request ID を並べる。
     """
@@ -1997,7 +1996,7 @@ def _encode_fetch_object(
     datagram_origin: bool = False,
 ) -> bytes:
     """fetch stream のオブジェクトをエンコードする
-    (draft-ietf-moq-transport-21 §11.4.1.1 (Flags))。
+    (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))。
 
     Group ID と Object ID の表現は直前のオブジェクトに依存する。
 
@@ -2010,12 +2009,12 @@ def _encode_fetch_object(
     Group ID の差分は要求された GROUP_ORDER の向きで解決されるため、Ascending では
     `今回 - 前回 - 1`、Descending では `前回 - 今回 - 1` を書く。要求と逆向きの
     Group は peer が解決できないので拒否する
-    (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
 
     `properties_bytes` は `Properties Length | Key-Value-Pairs` の形である。
     `datagram_origin` を真にすると、Subgroup ID を運ばないことを示す bit を立てて
     Subgroup ID フィールドを書かない
-    (draft-ietf-moq-transport-21 §11.4.1.1 (Flags): Datagram 起源のオブジェクトは
+    (draft-ietf-moq-transport-22 §11.4.1.1 (Flags): Datagram 起源のオブジェクトは
     Subgroup ID を持たない)。この節番号・規則は draft 由来であり将来の改訂で
     変更されうる。
     """
@@ -2063,7 +2062,7 @@ def _encode_fetch_end_of_range(kind: str, group_id: int, object_id: int) -> byte
 
     End of Range は Serialization Flags の特殊値で表し、Group ID と Object ID を
     絶対値で運ぶ。Subgroup ID / Publisher Priority / Properties は持たない
-    (draft-ietf-moq-transport-21 §11.4.1 (Fetch Header) Table 7 /
+    (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8 /
     §11.4.1.2 (End of Range))。この節番号・規則は draft 由来であり将来の改訂で
     変更されうる。
     """
@@ -2082,7 +2081,7 @@ def _fetch_group_id_delta(group_order: int, previous_group_id: int, group_id: in
 
     Group Order の向きに従い、Ascending では `今回 - 前回 - 1`、Descending では
     `前回 - 今回 - 1` になる
-    (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
     要求と同じ向きで進まない Group は差分で表現できないため `MOQTError` にする。
     この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     """
@@ -2106,7 +2105,7 @@ def _object_status_to_write(status: int | None, payload: bytes) -> int | None:
 
     ペイロード長 0 のオブジェクトは Object Status を明示しなければならない。
     非 0 長のオブジェクトは Normal 以外の status を持てない
-    (draft-ietf-moq-transport-21 §11.1.2 (Object Status))。
+    (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。
 
     Returns:
         書くべき status。フィールドを書かない場合は `None`。
@@ -2133,7 +2132,7 @@ def _properties_content(properties_data: bytes) -> bytes:
     """Properties ブロックから `Properties Length` を外して内容だけを返す。
 
     ワイヤ上のオブジェクトは `Properties Length | Key-Value-Pairs` を持つ
-    (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。`ObjectProperties.encode`
+    (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。`ObjectProperties.encode`
     が返す値はこの全体であるため、オブジェクトへ書き込むときは長さ部分を分離する。
 
     宣言長が後続バイト数と一致しないブロックは解釈できない。長さを付け直すと呼び出し側が
@@ -2159,7 +2158,7 @@ def _properties_blob(properties_data: bytes) -> bytes:
     状態機械へ渡すバイト列と wire へ書くバイト列を同じにするために使う。
     渡す値は `Properties Length` を含む生バイト列でなければならず、宣言長と
     実データ長が一致しない場合は `MOQTError` になる
-    (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+    (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
     """
     content = _properties_content(properties_data)
     return moqt.encode_varint(len(content)) + content
@@ -2175,7 +2174,7 @@ def _encode_subgroup_object(
 
     `object_id_delta` は最初のオブジェクトでは絶対値、以降は
     `(今回の Object ID) - (前回の Object ID) - 1` である
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
 
     `properties_bytes` は `Properties Length | Key-Value-Pairs` の形である。
     省略した場合は Properties を書かない。
@@ -2185,7 +2184,7 @@ def _encode_subgroup_object(
     body += moqt.encode_varint(object_id_delta)
     if properties_bytes is not None:
         # オブジェクトは `Properties Length | Key-Value-Pairs` の順に書く
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         body += properties_bytes
     body += moqt.encode_varint(len(payload))
     if written is None:
@@ -2206,7 +2205,7 @@ def _encode_object_datagram(
     end_of_group: bool = False,
     status: int | None = None,
 ) -> bytes:
-    """オブジェクトデータグラムをエンコードする (draft-ietf-moq-transport-21 §11.2.1)。
+    """オブジェクトデータグラムをエンコードする (draft-ietf-moq-transport-22 §11.2.1)。
 
     フィールドの並びは Type Flags、Track Alias、Group ID、Object ID である。
     bit 4 は未定義であり、設定してはならない。Object ID が 0 の場合は
@@ -2220,19 +2219,19 @@ def _encode_object_datagram(
     """
     written = _object_status_to_write(status, payload)
     # STATUS と END_OF_GROUP を同時に指定すると無効な Type 値になる
-    # (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+    # (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
     if written is not None and end_of_group:
         raise MOQTError("STATUS and END_OF_GROUP cannot both be set")
     if properties_bytes is not None:
         length, _ = moqt.decode_varint(properties_bytes)
         # データグラムは Properties Length = 0 を持てない。Properties を付けるなら
-        # 1 バイト以上の内容が要る (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+        # 1 バイト以上の内容が要る (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
         if length == 0:
             raise MOQTError(
                 "datagram properties length 0 is invalid when the PROPERTIES bit is set"
             )
         # 非 Normal status のオブジェクトは Properties を持てない
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         if written is not None and written != moqt.OBJECT_STATUS_NORMAL:
             raise MOQTError("properties on non-Normal status object is not allowed")
     type_byte = 0x00
@@ -2248,7 +2247,7 @@ def _encode_object_datagram(
     if written is not None:
         # データグラムはペイロード長を持たないため、Object Status を運ぶ場合は
         # STATUS bit を立ててペイロードが無いことを示す
-        # (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+        # (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
         type_byte |= 0x20
     datagram = bytearray()
     datagram += moqt.encode_varint(type_byte)
@@ -2260,7 +2259,7 @@ def _encode_object_datagram(
         datagram.append(publisher_priority)
     if properties_bytes is not None:
         # データグラムは `Properties Length | Key-Value-Pairs` を書く
-        # (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        # (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
         datagram += properties_bytes
     if written is None:
         datagram += payload

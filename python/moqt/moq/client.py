@@ -58,7 +58,7 @@ def _parse_target(url: str) -> _Target:
     """MOQT の URL を接続先へ分解する。
 
     MOQT の URI は `moqt://` であり、接続方式とは独立である
-    (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。path には query を
+    (draft-ietf-moq-transport-22 §6.1 (MOQT URI Scheme))。path には query を
     `?` で連結し、path が空の場合は `/` にする (§9.1.2 (PATH))。
     """
     parsed = urlsplit(url)
@@ -90,7 +90,7 @@ def _create_transport(
     """
     if transport is Transport.Quic:
         # 直接 QUIC 接続では MOQT の ALPN を提示する
-        # (draft-ietf-moq-transport-21 §6.2 (Session establishment))。
+        # (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
         return quic.Client(
             host=target.host,
             port=target.port,
@@ -99,7 +99,7 @@ def _create_transport(
             ca_file=ca_file,
         )
     # WebTransport では moqt URI のスキームを https に置き換えた URI へ
-    # extended CONNECT を送る (draft-ietf-moq-transport-21 §6.2.1 (WebTransport))。
+    # extended CONNECT を送る (draft-ietf-moq-transport-22 §6.2.1 (WebTransport))。
     https_url = f"https://{target.authority}{target.path}"
     if transport is Transport.WebTransportOverHTTP2:
         # WT-H2 は ca_file を受け取らない
@@ -154,7 +154,7 @@ class MOQTObject:
     """Object Status。
 
     ペイロード長 0 のオブジェクトだけが持ち、非 0 長では `None` になる。
-    (draft-ietf-moq-transport-21 §11.1.2 (Object Status))
+    (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
     """
 
     properties: bytes | None = None
@@ -162,7 +162,7 @@ class MOQTObject:
 
     `moqt.moqt.ObjectProperties.decode` で解釈する。データグラムと subgroup の
     どちらでも同じ形になる。
-    (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+    (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
     """
 
     publisher_priority: int | None = None
@@ -171,7 +171,7 @@ class MOQTObject:
     `None` は DEFAULT_PRIORITY bit が立ち、購読を確立した制御メッセージで指定された
     優先度を継承することを示す。データグラムは明示的な優先度を持つ場合だけ値が入り、
     DEFAULT_PRIORITY bit が立っている場合は `None` になる。
-    (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram) /
+    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram) /
     §11.3.1 (Subgroup Header))
     """
 
@@ -180,7 +180,7 @@ class MOQTObject:
 
     ヘッダが Subgroup ID を最初の Object ID として決めるモードでも、最初の
     オブジェクトを受信した時点で確定した値が入る
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     データグラムでは常に `None` になる。
     """
 
@@ -207,14 +207,14 @@ class Subscription:
     キーはパラメータ型、値はエンコード済みバイト列である。AUTHORIZATION_TOKEN は
     リストになる。EXPIRES / LARGEST_OBJECT / GROUP_ORDER /
     DEFAULT_PUBLISHER_PRIORITY など publisher が購読条件を確定するために返す値が
-    入る (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+    入る (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
     """
 
     track_properties: dict[int, object]
     """SUBSCRIBE_OK が運んだ Track Properties。
 
     キーは Track Property 型、値は偶数型なら `int`、奇数型なら `bytes` である
-    (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     """
 
     _objects: asyncio.Queue[MOQTObject | None] = field(default_factory=asyncio.Queue)
@@ -240,7 +240,7 @@ class Subscription:
         """REQUEST_UPDATE を送り、REQUEST_OK の受信を待つ。
 
         購読の条件を更新する。REQUEST_UPDATE は同じ request stream に書ける
-        (draft-ietf-moq-transport-21 §9.5 (REQUEST_UPDATE))。
+        (draft-ietf-moq-transport-22 §9.5 (REQUEST_UPDATE))。
         """
         runtime = self._runtime
         if runtime is None:
@@ -308,7 +308,7 @@ class Fetch:
 
         データストリームの受信を止めるよう peer へ通知し、状態機械から fetch を
         回収する。取り消し後はオブジェクトも範囲の終端も届かない
-        (draft-ietf-moq-transport-21 §3.2.1 (Fetch State Management))。
+        (draft-ietf-moq-transport-22 §3.2.4 (Fetch State Management))。
         """
         runtime = self._runtime
         if runtime is None:
@@ -354,21 +354,21 @@ class Client:
 
         `url` は MOQT の URI である (`moqt://host:port/path`)。接続方式は
         `transport` で選び、省略した場合は `Transport.WebTransportOverHTTP3`
-        になる (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。
+        になる (draft-ietf-moq-transport-22 §6.1 (MOQT URI Scheme))。
 
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
         セッションが終了する
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
 
         `setup_options` は SETUP で送る Setup Option である。キーは Setup Option Type、
         値は偶数型なら `int`、奇数型なら `bytes`、AUTHORIZATION_TOKEN なら Token の
         辞書またはそのリストである。MOQT_IMPLEMENTATION は `implementation` 引数が
         担うため指定できない
-        (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
 
         QUIC 直接接続では接続先から AUTHORITY と PATH の Setup Option を作る
-        (draft-ietf-moq-transport-21 §6.2.2 (Native QUIC))。どちらも WebTransport
+        (draft-ietf-moq-transport-22 §6.2.2 (Native QUIC))。どちらも WebTransport
         では送ってはならない (§9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
         """
         target = _parse_target(url)
@@ -441,7 +441,7 @@ class Client:
 
         キーは Setup Option Type、値は偶数型なら `int`、奇数型なら `bytes` である。
         AUTHORIZATION_TOKEN は Token の辞書のリストになる。未接続の場合は空の辞書を
-        返す (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        返す (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         """
         runtime = self._runtime
         return {} if runtime is None else runtime.peer_setup_options
@@ -478,7 +478,7 @@ class Client:
 
         宣言が無い場合は 0 である。AUTHORIZATION_TOKEN の Token Alias を登録する
         アプリは、この値と登録量を突き合わせて peer の上限に収まるか判断する
-        (draft-ietf-moq-transport-21 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+        (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
         """
         return self._require_runtime().peer_max_auth_token_cache_size
 
@@ -486,7 +486,7 @@ class Client:
     def peer_alias_retention_ms(self) -> int:
         """キャンセル済み peer publisher alias の保持期間 (ms) を返す。
 
-        draft-ietf-moq-transport-21 §3.1.2 (Track Alias) の SHOULD に対応する
+        draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する
         保持期間である。
         """
         return self._require_runtime().peer_alias_retention_ms
@@ -504,7 +504,7 @@ class Client:
 
         GOAWAY を送った後、購読や fetch の終了を待ってからセッションを閉じる
         判断に使う
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration))。
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
         """
         return self._require_runtime().goaway_drain_ready
 
@@ -513,7 +513,7 @@ class Client:
 
         キーは `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
         `blocking_track_status_request_ids` である
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration) /
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
         §9.2 (GOAWAY))。
         """
         return self._require_runtime().goaway_drain_snapshot()
@@ -558,7 +558,7 @@ class Client:
         """PUBLISH_STATE_NOTIFY を受信したときに呼ぶコールバックを登録する。
 
         状態機械が購読の状態へ反映済みであり、応答は不要である
-        (draft-ietf-moq-transport-21 §9.10 (PUBLISH_STATE_NOTIFY))。
+        (draft-ietf-moq-transport-22 §9.10 (PUBLISH_STATE_NOTIFY))。
         """
         self._publish_state_notify_callback = callback
 
@@ -711,7 +711,7 @@ class Client:
 
         返る `Publication` は REQUEST_OK が運んだパラメータと Track Properties を
         保持する。EXPIRES は配信の有効期限である
-        (draft-ietf-moq-transport-21 §9.3 (REQUEST_OK))。
+        (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK))。
         """
         runtime = self._require_runtime()
         request_id, event = await runtime.publish(
@@ -795,7 +795,7 @@ class Client:
         `new_session_uri` は移行先のセッション URI である。URI を通知できるのは
         Server だけであり、Client は空の URI しか送れない。
         `MAX_NEW_SESSION_URI_LENGTH` を超える値は送信せずに `MOQTError` になる
-        (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
         """
         runtime = self._require_runtime()
         await runtime.send_goaway(timeout, new_session_uri)

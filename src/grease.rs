@@ -1,6 +1,6 @@
 //! GREASE (Generate Random Extensions And Sustain Extensibility) のヘルパー (`moqt.moqt`)。
 //!
-//! draft-ietf-moq-transport-21 §13 (Grease) が定める予約値を生成・判定する。
+//! draft-ietf-moq-transport-22 §13 (Grease) が定める予約値を生成・判定する。
 //! GREASE 値は「未知の値を無視できるか」を検証するために、Setup Options /
 //! Properties / エラーコードなどのレジストリへ意図的に混ぜる値である。
 //! この仕様は draft 由来であり、将来の改訂で計算式が変更される可能性がある。

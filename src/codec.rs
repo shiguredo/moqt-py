@@ -25,7 +25,7 @@ use crate::errors::{codec_error, runtime_error};
 /// Python 側へ渡す制御メッセージ 1 件。
 ///
 /// メッセージ本体は種別ごとに異なる辞書であり、キーは
-/// [draft-ietf-moq-transport-21 §9 (Control Messages)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/)
+/// [draft-ietf-moq-transport-22 §9 (Control Messages)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/)
 /// の各メッセージが運ぶフィールドに対応する。
 #[pyclass(name = "Message", frozen)]
 pub(crate) struct Message {
@@ -51,7 +51,7 @@ impl Message {
     /// `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` /
     /// `unsupported` のいずれかである。
     ///
-    /// `unsupported` は draft-ietf-moq-transport-21 §9 Table 5 に定義済みだが
+    /// `unsupported` は draft-ietf-moq-transport-22 §9 Table 5 に定義済みだが
     /// moqt-rs が実装しない制御メッセージ (relay 専用の namespace 発見・告知機構と
     /// その応答) であり、本体は生バイト列のまま公開する。`body` は `type_id`
     /// (メッセージ Type) と `request_id` (`None` の場合もある) と `body`
@@ -71,7 +71,7 @@ impl Message {
     /// メッセージが運ぶ Request ID。
     ///
     /// 応答メッセージはワイヤに Request ID を含まないため `None` を返す。
-    /// (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR))
+    /// (draft-ietf-moq-transport-22 §9.4 (REQUEST_ERROR))
     ///
     /// `unsupported` では Request ID (vi64) で始まる型 (PUBLISH_NAMESPACE /
     /// SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS) のときだけ `Some` になり、
@@ -138,7 +138,7 @@ impl Message {
 /// 途中で切れている場合と、メッセージとして不正な場合は `ValueError` を送出する。
 ///
 /// 制御メッセージは Type (vi64) + Length (u16 big-endian) + Message Body で構成される
-/// (draft-ietf-moq-transport-21 §9 (Control Messages))。
+/// (draft-ietf-moq-transport-22 §9 (Control Messages))。
 #[pyfunction]
 pub(crate) fn decode_message(py: Python<'_>, data: &[u8]) -> PyResult<(Message, usize)> {
     let Some((type_id, _)) = decode_varint_prefix_inner(data).map_err(codec_error)? else {
@@ -174,7 +174,7 @@ pub(crate) fn decode_message(py: Python<'_>, data: &[u8]) -> PyResult<(Message, 
     ))
 }
 
-/// vi64 をエンコードする (draft-ietf-moq-transport-21 §8.1 (Variable-Length Integers))。
+/// vi64 をエンコードする (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers))。
 ///
 /// 最小バイト数の表現を返す。
 #[pyfunction]
@@ -211,7 +211,7 @@ pub(crate) fn decode_varint_prefix(data: &[u8]) -> PyResult<Option<(u64, usize)>
 /// `FILL_PARAMETERS` は入れ子の辞書になる。
 ///
 /// `AUTHORIZATION_TOKEN` の辞書は `kind` で種別を表し、キーは種別ごとに異なる
-/// (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+/// (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
 ///
 /// - `delete` / `use_alias`: `alias`
 /// - `register`: `alias` / `token_type` / `token_value`
@@ -219,7 +219,7 @@ pub(crate) fn decode_varint_prefix(data: &[u8]) -> PyResult<Option<(u64, usize)>
 ///
 /// 解釈できないバイト列は `ValueError` になる。この節番号・規則は draft 由来であり
 /// 将来の改訂で変更されうる。
-/// (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))
+/// (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
 #[pyfunction]
 pub(crate) fn decode_parameter(
     py: Python<'_>,
@@ -234,7 +234,7 @@ pub(crate) fn decode_parameter(
 /// データストリームの場合は種別を表す文字列を返す。制御ストリームと未知の値は
 /// `None` を返す。
 ///
-/// (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+/// (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
 #[pyfunction]
 pub(crate) fn classify_data_stream_type(type_id: u64) -> Option<&'static str> {
     stream::classify_data_stream_type(type_id).map(|stream_type| match stream_type {

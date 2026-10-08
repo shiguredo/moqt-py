@@ -85,7 +85,7 @@ class ServerSession:
         `new_session_uri` は移行先のセッション URI である。Server はこれで移行先を
         通知でき、Client は空の URI しか送れない。`MAX_NEW_SESSION_URI_LENGTH` を
         超える値は送信せずに `MOQTError` になる
-        (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
         """
         await self.runtime.send_goaway(timeout, new_session_uri)
 
@@ -94,7 +94,7 @@ class ServerSession:
         """peer が SETUP で宣言した MAX_AUTH_TOKEN_CACHE_SIZE を返す。
 
         宣言が無い場合は 0 である
-        (draft-ietf-moq-transport-21 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+        (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
         """
         return self.runtime.peer_max_auth_token_cache_size
 
@@ -102,7 +102,7 @@ class ServerSession:
     def peer_alias_retention_ms(self) -> int:
         """キャンセル済み peer publisher alias の保持期間 (ms) を返す。
 
-        draft-ietf-moq-transport-21 §3.1.2 (Track Alias) の SHOULD に対応する
+        draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する
         保持期間である。
         """
         return self.runtime.peer_alias_retention_ms
@@ -120,7 +120,7 @@ class ServerSession:
 
         GOAWAY を送った後、購読や fetch の終了を待ってからセッションを閉じる
         判断に使う
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration))。
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
         """
         return self.runtime.goaway_drain_ready
 
@@ -129,7 +129,7 @@ class ServerSession:
 
         キーは `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
         `blocking_track_status_request_ids` である
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration) /
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
         §9.2 (GOAWAY))。
         """
         return self.runtime.goaway_drain_snapshot()
@@ -213,7 +213,7 @@ class SubscriptionRequest:
         返る `Publication` は送った SUBSCRIBE_OK のパラメータと Track Properties を
         保持する。publisher が購読条件を確定する値 (EXPIRES / LARGEST_OBJECT /
         GROUP_ORDER / DEFAULT_PUBLISHER_PRIORITY) はここで通知した値である
-        (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+        (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
         """
         await self.runtime.send_subscribe_ok(
             self.request_id, track_alias, parameters, track_properties
@@ -308,16 +308,16 @@ class FetchResponse:
 
         オブジェクトは `GROUP_ORDER` で要求された向きの順に送る。逆向きの Group を
         送ろうとすると `MOQTError` になる
-        (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない
         場合は `MOQTError` になる
-        (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+        (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
 
         `datagram_origin` を真にすると、もともとデータグラムで届いたオブジェクトで
         あることを示す。この場合 Subgroup ID は wire に載らず、受信側では 0 として
-        解決される (draft-ietf-moq-transport-21 §11.4.1.1 (Flags))。
+        解決される (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))。
         """
         await self.runtime.send_fetch_stream_object(
             self.stream_id,
@@ -334,7 +334,7 @@ class FetchResponse:
         """要求された範囲にオブジェクトが存在しないことを通知する。
 
         `group_id` と `object_id` は存在しない範囲の終端である。
-        (draft-ietf-moq-transport-21 §11.4.1.2 (End of Range))
+        (draft-ietf-moq-transport-22 §11.4.1.2 (End of Range))
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_non_existent_range", group_id, object_id
@@ -344,7 +344,7 @@ class FetchResponse:
         """要求された範囲のオブジェクトが不明であることを通知する。
 
         `group_id` と `object_id` は不明な範囲の終端である。
-        (draft-ietf-moq-transport-21 §11.4.1.2 (End of Range))
+        (draft-ietf-moq-transport-22 §11.4.1.2 (End of Range))
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_unknown_range", group_id, object_id
@@ -354,7 +354,7 @@ class FetchResponse:
         """要求された範囲のオブジェクトが期限切れで取得できなかったことを通知する。
 
         `group_id` と `object_id` は期限切れの範囲の終端である。
-        (draft-ietf-moq-transport-21 §11.4.1 (Fetch Header) Table 7)
+        (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8)
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_timed_out_range", group_id, object_id
@@ -396,7 +396,7 @@ class PublisherRequest:
 
         PUBLISH の応答は REQUEST_OK であり、SUBSCRIBE_OK とは異なり Track Alias を
         運ばない。peer が通知した Track Alias をそのまま使う
-        (draft-ietf-moq-transport-21 §9.3 (REQUEST_OK))。
+        (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK))。
 
         返る `Publication` は送った REQUEST_OK のパラメータと Track Properties を
         保持する。
@@ -451,13 +451,13 @@ class Server:
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
         セッションが終了する
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
 
         `setup_options` は SETUP で送る Setup Option である。キーは Setup Option Type、
         値は偶数型なら `int`、奇数型なら `bytes`、AUTHORIZATION_TOKEN なら Token の
         辞書またはそのリストである。MOQT_IMPLEMENTATION は `implementation` 引数が
         担うため指定できない
-        (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         """
         if transport is Transport.Quic:
             # webtransport-py の QUIC server にはストリームの reset / STOP_SENDING と
@@ -565,7 +565,7 @@ class Server:
         引数は GOAWAY を受信した session と、その内容である。GOAWAY の受信後は
         状態機械がその peer への新規 request の送信を拒否する。移行先が通知された
         場合は、アプリが新しいセッションへ接続し直す
-        (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
         """
         self._goaway_callback = callback
 
@@ -592,7 +592,7 @@ class Server:
         過去のオブジェクトを補充するには `runtime.send_fetch_stream_object` を使う。
         fill fetch stream は購読の成立に必須ではないため、コールバックが未登録でも
         ストリームは開かれる
-        (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。
+        (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
         """
         self._fill_fetch_callback = callback
 
@@ -865,7 +865,7 @@ class Server:
         WT-H3 で `error_code` が `None` の場合は「アプリケーションエラーコード無しの
         リセット」である (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         WT-H2 では WT_RESET_STREAM が MOQT のエラーコードをそのまま運ぶため常に
-        コードがある (draft-ietf-moq-transport-21 §12.5 (Stream Reset Error Codes))。
+        コードがある (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
         """
         connection = self._connections.get(_session_context(session))
         if connection is not None:

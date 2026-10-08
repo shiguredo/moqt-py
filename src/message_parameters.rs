@@ -1,6 +1,6 @@
 //! Message Parameters の型付きアクセサ (`moqt.moqt`)。
 //!
-//! draft-ietf-moq-transport-21 §9.20 (Control Message Parameters) はパラメータ型ごとに
+//! draft-ietf-moq-transport-22 §9.20 (Control Message Parameters) はパラメータ型ごとに
 //! 値の形式と意味を定める。このモジュールは、`Event.parameters` / `Message.parameters` が
 //! 返す「型番号をキーにしたエンコード済みバイト列の辞書」を型付きで読み書きする口を
 //! 公開する。辞書との相互変換も提供する。
@@ -343,7 +343,7 @@ impl LocationFilterUpdate {
     }
 }
 
-/// Message Parameters (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+/// Message Parameters (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
 ///
 /// `Event.parameters` / `Message.parameters` が返す「型番号をキーにしたエンコード済み
 /// バイト列の辞書」と同じ内容を、draft が定める値の型と意味で読み書きする。
@@ -376,7 +376,7 @@ impl MessageParameters {
     /// `use_value` を選び、キーは種別ごとに異なる。`delete` と `use_alias` は `alias`、
     /// `register` は `alias` / `token_type` / `token_value`、`use_value` は
     /// `token_type` / `token_value` を取る
-    /// (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+    /// (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
     ///
     /// 長さ付きバイト列のパラメータは、長さプレフィックスを含むエンコード済みの値を
     /// 要求する。長さが合わない値と解釈できない値は `ValueError` になる。
@@ -403,7 +403,7 @@ impl MessageParameters {
     }
 
     /// LARGEST_OBJECT (type 0x09) の値を `(group_id, object_id)` として返す
-    /// (draft-ietf-moq-transport-21 §9.20.9 (LARGEST_OBJECT Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))。
     #[getter]
     fn largest_object(&self) -> Option<(u64, u64)> {
         self.inner.largest_object()
@@ -417,7 +417,7 @@ impl MessageParameters {
     }
 
     /// FORWARD (type 0x10) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.19 (FORWARD Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.18 (FORWARD Parameter))。
     ///
     /// 0 は転送しない、1 は転送するである。
     #[getter]
@@ -426,7 +426,7 @@ impl MessageParameters {
     }
 
     /// EXPIRES (type 0x08) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.17 (EXPIRES Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.16 (EXPIRES Parameter))。
     ///
     /// 値が 0 の場合と、パラメータが無い場合はどちらも `None` になる。0 を指定された
     /// ことを区別するには [`MessageParameters::has_expires`] を使う。
@@ -444,42 +444,42 @@ impl MessageParameters {
     }
 
     /// GROUP_ORDER (type 0x22) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
     #[getter]
     fn group_order(&self) -> Option<u8> {
         self.inner.group_order()
     }
 
     /// OBJECT_DELIVERY_TIMEOUT (type 0x02) の値をミリ秒で返す
-    /// (draft-ietf-moq-transport-21 §9.20.2 (OBJECT_DELIVERY_TIMEOUT Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.4 (OBJECT_DELIVERY_TIMEOUT Parameter))。
     #[getter]
     fn object_delivery_timeout(&self) -> Option<u64> {
         self.inner.object_delivery_timeout()
     }
 
     /// SUBGROUP_DELIVERY_TIMEOUT (type 0x06) の値をミリ秒で返す
-    /// (draft-ietf-moq-transport-21 §9.20.4 (SUBGROUP_DELIVERY_TIMEOUT Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.3 (SUBGROUP_DELIVERY_TIMEOUT Parameter))。
     #[getter]
     fn subgroup_delivery_timeout(&self) -> Option<u64> {
         self.inner.subgroup_delivery_timeout()
     }
 
     /// FILL_TIMEOUT (type 0x0A) の値をミリ秒で返す
-    /// (draft-ietf-moq-transport-21 §9.20.6 (FILL TIMEOUT Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.5 (FILL TIMEOUT Parameter))。
     #[getter]
     fn fill_timeout(&self) -> Option<u64> {
         self.inner.fill_timeout()
     }
 
     /// SUBSCRIBER_PRIORITY (type 0x20) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.6 (SUBSCRIBER_PRIORITY Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.7 (SUBSCRIBER PRIORITY Parameter))。
     #[getter]
     fn subscriber_priority(&self) -> Option<u8> {
         self.inner.subscriber_priority()
     }
 
     /// INCLUDE_PROPERTIES (type 0x35) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.22 (INCLUDE_PROPERTIES Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.21 (INCLUDE_PROPERTIES Parameter))。
     ///
     /// 0 は Properties を送らない、1 は送るである。パラメータが無い場合の既定は 1 で
     /// あるため、判定する側が既定を補う。
@@ -489,7 +489,7 @@ impl MessageParameters {
     }
 
     /// NEW_GROUP_REQUEST (type 0x32) の値を返す
-    /// (draft-ietf-moq-transport-21 §9.20.20 (NEW_GROUP_REQUEST Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.19 (NEW GROUP REQUEST Parameter))。
     #[getter]
     fn new_group_request(&self) -> Option<u64> {
         self.inner.new_group_request()
@@ -551,7 +551,7 @@ impl MessageParameters {
     }
 
     /// FILL_PARAMETERS (type 0x23) の内側のパラメータ群を返す
-    /// (draft-ietf-moq-transport-21 §9.20.16 (FILL PARAMETERS Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.15 (FILL PARAMETERS Parameter))。
     ///
     /// 内側は外側とは別のパラメータスコープであり、パラメータが無い場合は `None` になる。
     #[getter]
@@ -562,7 +562,7 @@ impl MessageParameters {
     }
 
     /// AUTHORIZATION_TOKEN (type 0x03) の値を出現順に返す
-    /// (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+    /// (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
     ///
     /// 各要素は `decode_parameter` が返すものと同じ「`kind` で種別を表す辞書」であり、
     /// 4 種すべてで alias / token_type / token_value が復元される。AUTHORIZATION_TOKEN は
@@ -577,7 +577,7 @@ impl MessageParameters {
     }
 
     /// TRACK_NAMESPACE_PREFIX (type 0x34) の値を namespace のフィールド列として返す
-    /// (draft-ietf-moq-transport-21 §9.20.21 (TRACK_NAMESPACE_PREFIX Parameter))。
+    /// (draft-ietf-moq-transport-22 §9.20.20 (TRACK_NAMESPACE_PREFIX Parameter))。
     #[getter]
     fn track_namespace_prefix(&self, py: Python<'_>) -> PyResult<Option<Py<PyList>>> {
         match self.inner.track_namespace_prefix() {
@@ -587,7 +587,7 @@ impl MessageParameters {
     }
 
     /// 指定した Range Filter 型 (0x25-0x29) の全インスタンスのフィルタ本体を出現順に返す
-    /// (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+    /// (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
     ///
     /// Range Filter は同一 Parameter Type が同一メッセージ内で複数回出現できるため、
     /// 単一の値ではなく列として返す。長さプレフィックスは含まない。Range Filter 型以外を
@@ -601,14 +601,14 @@ impl MessageParameters {
     }
 
     /// Range Filter を 1 つ以上持つかを返す
-    /// (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+    /// (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
     #[getter]
     fn has_range_filters(&self) -> bool {
         self.inner.has_range_filters()
     }
 
     /// Range Filter の個数を返す
-    /// (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+    /// (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
     #[getter]
     fn range_filter_count(&self) -> u64 {
         self.inner.count_range_filters()

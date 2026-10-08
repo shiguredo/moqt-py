@@ -1014,7 +1014,7 @@ def test_authorization_context_accepts_serialized_names() -> None:
     `moqt.msf` の正規シリアライズ結果を `tns` / `tn` へそのまま渡せることを確認する。
 
     Track Namespace の `.` と Track 名の `-` はリテラルでないためエスケープが要る
-    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。生の
+    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。生の
     名前を渡すと `verify_target` が一致しないため、変換関数を通す。
     """
     namespace = [b"example.com"]

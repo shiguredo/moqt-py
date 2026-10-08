@@ -1,6 +1,6 @@
 """MOQT (Media over QUIC Transport) の codec と状態機械を扱う Python ライブラリ。
 
-`moqt-rs` が MOQT (draft-ietf-moq-transport-21) の codec と sans I/O セッション
+`moqt-rs` が MOQT (draft-ietf-moq-transport-22) の codec と sans I/O セッション
 状態機械を、LOC (draft-ietf-moq-loc-04) / MSF (draft-ietf-moq-msf-01) /
 C4M (draft-ietf-moq-c4m-01) の codec を PyO3 経由で提供し、このパッケージが
 それらを公開する。

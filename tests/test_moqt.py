@@ -23,7 +23,7 @@ from moqt.moqt import (
 )
 
 # 実装名がワイヤ長の上限を超えるケースで使う長さ。
-# draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure) の値長上限は 2^16-1 である。
+# draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure) の値長上限は 2^16-1 である。
 IMPLEMENTATION_WIRE_LIMIT = 2**16
 
 
@@ -145,7 +145,7 @@ def _object_datagram(
     Object ID (vi64)、Publisher Priority (8 bits、省略可能)、Payload である。
     Object ID が 0 の場合は ZERO_OBJECT_ID bit を立てて Object ID を省略し、
     Publisher Priority が `None` の場合は DEFAULT_PRIORITY bit を立てて省略する
-    (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
     """
     type_byte = 0x00
     if object_id == 0:
@@ -270,7 +270,7 @@ def test_responder_fin_asks_the_requester_to_finish_its_direction() -> None:
     responder の FIN を受けた requester に、送信方向を FIN で閉じるよう依頼することを
     確認する。
 
-    draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure):
+    draft-ietf-moq-transport-22 §6.4.2.2 (Graceful Request Stream Closure):
     「応答とその後のメッセージを送った後の responder の FIN は request の完了を示し、
     まだ閉じていない requester は自分の方向へ FIN を送る SHOULD がある」。
     SUBSCRIBE では購読を開始した subscriber が requester である
@@ -292,7 +292,7 @@ def test_requester_fin_does_not_terminate_the_request_at_the_responder() -> None
     """
     requester の FIN だけでは responder 側の request が終端しないことを確認する。
 
-    draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure) の FIN は
+    draft-ietf-moq-transport-22 §6.4.2.2 (Graceful Request Stream Closure) の FIN は
     方向ごとの終端であり cancel ではない。自側が responder (publisher 役) の場合は
     PUBLISH_DONE を送るまで送信方向が開いており、requester の FIN を受けた時点で
     終端すると必須の応答を送れなくなる。request の終端は、peer の FIN の受信と
@@ -327,15 +327,15 @@ def test_start_emits_control_stream_type_and_implementation_option() -> None:
     session = Session.client(implementation)
     data = session.start()
 
-    # draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3 の
+    # draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2 の
     # SETUP 制御ストリームは 0x2F00 で、vi64 では 2 バイトになる。
     assert data[:2] == b"\xaf\x00"
 
-    # draft-ietf-moq-transport-21 §9.1 (SETUP) の SETUP メッセージは
+    # draft-ietf-moq-transport-22 §9.1 (SETUP) の SETUP メッセージは
     # stream type と同じ 0x2F00 を使う。
     assert data[2:4] == b"\xaf\x00"
 
-    # draft-ietf-moq-transport-21 §9.1.5 (MOQT IMPLEMENTATION) の option type は
+    # draft-ietf-moq-transport-22 §9.1.5 (MOQT IMPLEMENTATION) の option type は
     # 0x07 で、値は長さ付きバイト列として実装名を運ぶ。
     value = implementation.encode()
     assert b"\x07" + encode_varint(len(value)) + value in data[4:]
@@ -381,7 +381,7 @@ def test_client_rejects_an_implementation_option_over_the_wire_limit() -> None:
     """
     SETUP option の値長上限を超える実装名を拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure) の値長上限は
+    draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure) の値長上限は
     2^16-1 バイトである。
     """
     with pytest.raises(ValueError, match="implementation is too long"):
@@ -394,7 +394,7 @@ def test_quic_transport_accepts_authority_and_path_setup_options() -> None:
 
     状態機械は接続方式ごとに載せられる Setup Option を検証する。I/O 層が選んだ方式を
     状態機械へ伝えないと、QUIC の SETUP が WebTransport の規則で拒否される
-    (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
     """
     options = {
         moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443",
@@ -412,7 +412,7 @@ def test_server_cannot_send_authority_or_path() -> None:
     server role が AUTHORITY と PATH を送れないことを確認する。
 
     どちらも Client が自分の接続先を通知するための Setup Option である
-    (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
     """
     with pytest.raises(RuntimeError, match="server MUST NOT send AUTHORITY"):
         Session.server("moqt-py", {moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443"}, "quic")
@@ -447,7 +447,7 @@ def test_setup_options_are_sent_and_observed() -> None:
     SETUP で送った Setup Option が peer から参照できることを確認する。
 
     偶数型は varint、奇数型は長さ付きバイト列で表現する
-    (draft-ietf-moq-transport-21 §9.1 (SETUP) / §16.4 (Setup Options))。
+    (draft-ietf-moq-transport-22 §9.1 (SETUP) / §16.4 (Setup Options))。
     MOQT_IMPLEMENTATION は `implementation` 引数が担う。
     """
     client = Session.client(
@@ -486,7 +486,7 @@ def test_setup_option_rejects_moqt_implementation() -> None:
     MOQT_IMPLEMENTATION を setup_options で二重に指定できないことを確認する。
 
     MOQT_IMPLEMENTATION は `implementation` 引数が担う
-    (draft-ietf-moq-transport-21 §9.1.5 (MOQT_IMPLEMENTATION))。
+    (draft-ietf-moq-transport-22 §9.1.5 (MOQT IMPLEMENTATION))。
     """
     with pytest.raises(ValueError, match="MOQT_IMPLEMENTATION is specified"):
         Session.client("c", {moqt.SETUP_OPTION_MOQT_IMPLEMENTATION: b"other"})
@@ -496,13 +496,13 @@ def test_range_filter_requires_the_peer_to_declare_max_filter_ranges() -> None:
     """
     peer が MAX_FILTER_RANGES を宣言している場合だけ Range Filter を送れることを確認する。
 
-    draft-ietf-moq-transport-21 §9.1.6 (MAX FILTER RANGES): Range Filter は
+    draft-ietf-moq-transport-22 §9.1.6 (MAX FILTER RANGES): Range Filter は
     自側 SETUP の MAX_FILTER_RANGES が 0 でない場合だけ許される。
     """
     # SetID=0 で Object ID 0..=1 を指定する Range Filter
-    # (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+    # (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
     # パラメータの値は長さプレフィックスを含むエンコード済みの形である
-    # (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))
+    # (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))
     object_id_filter_body = bytes([0]) + encode_varint(0) + encode_varint(1)
     object_id_filter = encode_varint(len(object_id_filter_body)) + object_id_filter_body
 
@@ -554,7 +554,7 @@ def test_encode_varint_uses_the_minimum_length(value: int, expected: bytes) -> N
     vi64 が先頭 1 ビット列の長さで最小バイト数にエンコードされることを確認する。
 
     先頭バイトの leading-1-bits がエンコード長を決める
-    (draft-ietf-moq-transport-21 §8.1 (Variable-Length Integers) Table 3)。
+    (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers) Table 3)。
     """
     assert encode_varint(value) == expected
 
@@ -591,7 +591,7 @@ def test_decode_varint_accepts_a_non_minimal_encoding() -> None:
     """
     非最小エンコーディングの vi64 を受理することを確認する。
 
-    draft-ietf-moq-transport-21 Appendix A.3 (Since draft-ietf-moq-transport-17) は
+    draft-ietf-moq-transport-22 Appendix A.5 (Since draft-ietf-moq-transport-17) は
     非最小エンコーディングを許容する。
     """
     # 2 バイト表現の 10xxxxxx xxxxxxxx で値 1 を表す。
@@ -720,7 +720,7 @@ def test_decode_message_reports_a_defined_but_unimplemented_message() -> None:
     """
     定義済みだが実装しない制御メッセージを `unsupported` としてデコードすることを確認する。
 
-    draft-ietf-moq-transport-21 §9 Table 5 は PUBLISH_NAMESPACE (0x06) を request として
+    draft-ietf-moq-transport-22 §9 Table 5 は PUBLISH_NAMESPACE (0x06) を request として
     定義する。relay 専用の namespace 発見・告知機構は moqt-rs が実装しないため、
     本体は型 ID と生バイト列のまま公開される。先頭の Request ID (vi64) だけは解釈される。
     """
@@ -741,7 +741,7 @@ def test_decode_message_reports_a_response_only_message_without_a_request_id() -
     """
     Request ID を持たない定義済みメッセージを `request_id=None` としてデコードすることを確認する。
 
-    draft-ietf-moq-transport-21 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
+    draft-ietf-moq-transport-22 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
     Request ID で始まらない。
     """
     # Type (vi64) 0x08 + Length (u16 big-endian) 1 + Message Body (Track Namespace Suffix)
@@ -788,7 +788,7 @@ def test_classify_data_stream_type(type_id: int, expected: str | None) -> None:
     stream type の varint からデータストリームの種別を判定することを確認する。
 
     制御ストリームと未知の値は `None` になる。subgroup は bit4 が立つ値である。
-    (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+    (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
     """
     assert classify_data_stream_type(type_id) == expected
 
@@ -797,7 +797,7 @@ def test_setup_stream_type_returns_the_control_stream_type() -> None:
     """
     制御ストリームの stream type が SETUP (0x2F00) であることを確認する。
 
-    (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+    (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
     """
     assert setup_stream_type() == 0x2F00
 
@@ -816,7 +816,7 @@ def test_is_padding_datagram(data: bytes, expected: bool) -> None:
     データグラムの先頭 varint からパディングかを判定することを確認する。
 
     データグラムは stream type を持たないため、先頭の varint だけで判定する。
-    (draft-ietf-moq-transport-21 §11.5.2 (Padding Datagrams))
+    (draft-ietf-moq-transport-22 §11.5.2 (Padding Datagrams))
     """
     assert is_padding_datagram(data) is expected
 
@@ -827,7 +827,7 @@ def test_is_padding_datagram(data: bytes, expected: bool) -> None:
 def test_track_status_round_trip() -> None:
     """TRACK_STATUS に publisher が TRACK_STATUS_OK で応答することを確認する。
 
-    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "The receiver of a TRACK_STATUS
+    draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS): "The receiver of a TRACK_STATUS
     message treats it identically as if it had received a SUBSCRIBE message, except it
     does not create downstream subscription state or send any Objects. If successful, the
     publisher responds with a TRACK_STATUS_OK with the same parameters and Track Properties
@@ -868,7 +868,7 @@ def test_track_status_round_trip() -> None:
 def test_track_status_ok_is_empty_when_include_properties_is_zero() -> None:
     """`INCLUDE_PROPERTIES=0` の TRACK_STATUS_OK が Track Properties を空にすることを確認する。
 
-    draft-ietf-moq-transport-21 §9.20.22 (INCLUDE_PROPERTIES Parameter): "If
+    draft-ietf-moq-transport-22 §9.20.21 (INCLUDE_PROPERTIES Parameter): "If
     INCLUDE_PROPERTIES is 0, the Track Properties are still present in the message, but
     they SHOULD be empty." 空化は受信した要求の値で判断するため、応答側が渡した
     Track Properties はそのままでは送られない。
@@ -1036,7 +1036,7 @@ def test_request_stream_goaway_timeout_absorbs_a_late_peer_reset() -> None:
 def test_track_status_request_does_not_create_subscription_state() -> None:
     """TRACK_STATUS が購読状態も Track Alias も作らないことを確認する。
 
-    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "Track Alias is not used."
+    draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS): "Track Alias is not used."
     状態機械が TRACK_STATUS を購読として扱うと、購読の状態照会に現れてしまう。
     """
     client, server = _setup()
@@ -1053,7 +1053,7 @@ def test_defined_but_unimplemented_request_is_rejected_with_not_supported() -> N
     """
     定義済みだが実装しない request を NOT_SUPPORTED で拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §1.5 (Modularity): "Limited endpoints SHOULD respond to
+    draft-ietf-moq-transport-22 §1.6 (Modularity): "Limited endpoints SHOULD respond to
     any unsupported messages with the appropriate NOT_SUPPORTED error code, rather than
     ignoring them." §9 Table 5 の PUBLISH_NAMESPACE (0x06) は relay 専用の namespace
     発見・告知機構であり、moqt-rs は実装しない。受信したセッションは閉じない。
@@ -1082,7 +1082,7 @@ def test_defined_but_unimplemented_response_message_closes_the_session() -> None
     """
     応答専用の定義済みメッセージを request として受信するとセッションを閉じることを確認する。
 
-    draft-ietf-moq-transport-21 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
+    draft-ietf-moq-transport-22 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
     対応する request を持たない。request stream の先頭に届くのはプロトコル違反である。
     """
     _client, server = _setup()
@@ -1104,7 +1104,7 @@ def test_request_error_redirect_round_trips() -> None:
     """
     REQUEST_ERROR の Redirect が encode / decode を往復することを確認する。
 
-    draft-ietf-moq-transport-21 §9.4.1 (Redirect Structure): Redirect は接続先 URI と
+    draft-ietf-moq-transport-22 §9.4.1 (Redirect Structure): Redirect は接続先 URI と
     Redirect target (Track Namespace + Track Name) を運ぶ。
     """
     client, server = _setup()
@@ -1136,7 +1136,7 @@ def test_request_error_redirect_rejects_an_over_long_full_track_name() -> None:
     """
     Redirect target が Full Track Name の上限を超える REQUEST_ERROR を拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §8.7 (Track Namespace Structure): Full Track Name
+    draft-ietf-moq-transport-22 §8.7 (Track Namespace Structure): Full Track Name
     (Track Namespace + Track Name) は 4096 バイトまでである。Redirect target は
     Full Track Name そのものなので、超える値は encode で拒否される。
     """
@@ -1178,7 +1178,7 @@ def test_subscribe_accepts_the_rendezvous_timeout_parameter() -> None:
     """
     SUBSCRIBE が RENDEZVOUS_TIMEOUT を定義済みパラメータとして受理することを確認する。
 
-    draft-ietf-moq-transport-21 §9.20 (Control Message Parameters) は未知名の
+    draft-ietf-moq-transport-22 §9.20 (Control Message Parameters) は未知名の
     パラメータを PROTOCOL_VIOLATION とする。RENDEZVOUS_TIMEOUT (0x04) は §16.7 の
     Table 13 に定義済みであるため、relay 専用の機構であっても受信は拒否しない。
     値は varint であり、アプリは `decode_parameter` で解釈できる。
@@ -1202,7 +1202,7 @@ def test_subscribe_accepts_the_rendezvous_timeout_parameter() -> None:
 def test_unknown_mandatory_track_property_cancels_the_subscription() -> None:
     """未知の必須トラックプロパティを含む SUBSCRIBE_OK が購読の cancel になることを確認する。
 
-    draft-ietf-moq-transport-21 §3.6 (Mandatory Track Properties): 未知の必須トラック
+    draft-ietf-moq-transport-22 §3.7 (Mandatory to Understand Track Properties): 未知の必須トラック
     プロパティを含む応答を受けた購読は cancel する。cancel は §6.4.2.3 (Request
     Cancellation and Rejection) のストリーム終端を含むため、受信方向を STOP_SENDING、
     送信方向を RESET_STREAM で打ち切る。セッションは閉じない。
@@ -1233,7 +1233,7 @@ def test_unknown_mandatory_track_property_cancels_the_subscription() -> None:
 def test_publish_done_finishes_the_publish_originated_request() -> None:
     """PUBLISH 起点の subscription で PUBLISH_DONE を受けた側が FIN を送ることを確認する。
 
-    draft-ietf-moq-transport-21 §6.4.2.2 (Graceful Request Stream Closure): responder が
+    draft-ietf-moq-transport-22 §6.4.2.2 (Graceful Request Stream Closure): responder が
     応答とその後のメッセージを送り終えて FIN を送ると request は完了する。PUBLISH 起点の
     subscription では PUBLISH を受けた側が subscriber responder であり、PUBLISH_DONE の
     受信で送るべきメッセージが無くなるため、自側の送信方向を閉じる。
@@ -1265,7 +1265,7 @@ def test_request_update_uses_a_separate_request_id() -> None:
     REQUEST_UPDATE の wire Request ID は対象 request のものと一致しない。対象 request
     は同じ bidi stream 上で送ることで識別されるため、受信側はストリームに紐付けた
     Request ID で解決しなければならない
-    (draft-ietf-moq-transport-21 §6.4.2.1 (Request ID) / §9.5 (REQUEST_UPDATE))。
+    (draft-ietf-moq-transport-22 §6.4.2.1 (Request ID) / §9.5 (REQUEST_UPDATE))。
     """
     client, server = _setup()
     request_id = _subscribe_round_trip(client, server, 4)
@@ -1283,7 +1283,7 @@ def test_object_properties_round_trip() -> None:
     """Object Properties の encode / decode が往復することを確認する。
 
     偶数型は varint、奇数型は長さ付きバイト列である
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
     """
     properties = ObjectProperties()
     properties.add(PROP_PRIOR_GROUP_ID_GAP, 2)
@@ -1303,7 +1303,7 @@ def test_object_properties_round_trip() -> None:
 def test_object_properties_accepts_a_grease_type_in_the_mandatory_range() -> None:
     """Object Properties が必須トラックプロパティの範囲に入る GREASE 値を受理することを確認する。
 
-    draft-ietf-moq-transport-21 §16.8 (Properties) Table 14 は GREASE の Property Type
+    draft-ietf-moq-transport-22 §16.8 (Properties) Table 15 は GREASE の Property Type
     (`0x7f * N + 0x9D`) を Scope Any として予約している。N = 128 の 0x401D から
     N = 256 の 0x7F9D までは §3.6 (Mandatory Track Properties) の 0x4000-0x7FFF に入るが、
     GREASE 値は登録された必須トラックプロパティではないため、未知の Property として
@@ -1325,7 +1325,7 @@ def test_object_properties_accepts_a_grease_type_in_the_mandatory_range() -> Non
 def test_object_properties_rejects_a_mandatory_type_in_the_object_scope() -> None:
     """必須トラックプロパティの型を Object Properties で受信すると拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §3.6 (Mandatory Track Properties): 0x4000-0x7FFF の
+    draft-ietf-moq-transport-22 §3.7 (Mandatory to Understand Track Properties): 0x4000-0x7FFF の
     Mandatory Track Property は Track スコープだけに現れる。GREASE 値ではない
     0x4000 は Object Properties として受け取れない。
     """
@@ -1352,7 +1352,7 @@ def test_object_properties_rejects_a_truncated_block() -> None:
 def test_object_properties_rejects_a_value_that_is_too_long() -> None:
     """65535 バイトを超える奇数型の値を encode が拒否することを確認する。
 
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))
+    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))
     """
     properties = ObjectProperties()
     properties.add(0x0D, b"\x00" * (2**16))
@@ -1380,7 +1380,7 @@ def test_track_properties_detects_an_unknown_mandatory_property() -> None:
     """未知の必須 Track Property を検出することを確認する。
 
     必須の範囲は 0x4000-0x7FFF である
-    (draft-ietf-moq-transport-21 §3.6 (Mandatory Track Properties))。
+    (draft-ietf-moq-transport-22 §3.7 (Mandatory to Understand Track Properties))。
     """
     properties = TrackProperties()
     properties.add(MANDATORY_TRACK_PROPERTY_MIN, 1)
@@ -1392,7 +1392,7 @@ def test_track_properties_round_trip() -> None:
     """Track Properties の encode / decode が往復することを確認する。
 
     Track Properties には長さプレフィックスが無く、encode 結果はセッションが運ぶ
-    KVP 列そのものになる (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    KVP 列そのものになる (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     """
     properties = TrackProperties()
     properties.add(moqt.PROP_DEFAULT_PUBLISHER_PRIORITY, 200)
@@ -1421,7 +1421,7 @@ def test_track_properties_encode_of_an_empty_set_is_empty() -> None:
     """空の Track Properties が 0 バイトへエンコードされることを確認する。
 
     Track scope のプロパティは任意であり、省略時は長さプレフィックスも書かない
-    (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     """
     assert TrackProperties().encode() == b""
     assert len(TrackProperties.decode(b"")) == 0
@@ -1431,7 +1431,7 @@ def test_track_properties_rejects_a_duplicate_type() -> None:
     """同一の型番号を 2 度持つ Track Properties を encode が拒否することを確認する。
 
     型番号は delta encoding の差分 0 で表現され、受信側では重複として扱われる
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
     """
     properties = TrackProperties()
     properties.add(0x20, 1)
@@ -1444,7 +1444,7 @@ def test_track_properties_rejects_a_duplicate_type() -> None:
 def test_track_properties_rejects_a_nested_immutable_properties() -> None:
     """入れ子の IMMUTABLE_PROPERTIES を decode が拒否することを確認する。
 
-    (draft-ietf-moq-transport-21 §10.7 (Immutable Properties))
+    (draft-ietf-moq-transport-22 §10.7 (Immutable Properties))
     """
     # 内側に 0x0B 自身を含む KVP 列を IMMUTABLE_PROPERTIES の値として組み立てる
     inner = encode_varint(moqt.PROP_IMMUTABLE_PROPERTIES) + encode_varint(0)
@@ -1467,7 +1467,7 @@ def test_track_properties_encode_rejects_a_type_value_parity_mismatch() -> None:
     """型番号と値の形式が食い違う Track Property を encode が拒否することを確認する。
 
     偶数型は varint、奇数型は長さ付きバイト列である
-    (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+    (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
     """
     properties = TrackProperties()
     properties.add(0x20, b"\x01")
@@ -1512,7 +1512,7 @@ def test_object_properties_find_varint_returns_none_for_a_byte_value() -> None:
 def test_track_properties_find_varint_reads_immutable_properties() -> None:
     """`find_varint` が IMMUTABLE_PROPERTIES の内側の値を引くことを確認する。
 
-    draft-ietf-moq-transport-21 §10.7 (Immutable Properties) の「MUST search both」
+    draft-ietf-moq-transport-22 §10.7 (Immutable Properties) の「MUST search both」
     に従い、外側の値が優先される。
     """
     # 内側には 0x04 (偶数型) だけを置く
@@ -1540,7 +1540,7 @@ def test_goaway() -> None:
 def test_goaway_rejects_new_subscriptions_but_accepts_publish() -> None:
     """GOAWAY の送信後に publisher が拒否する request の範囲を確認する。
 
-    draft-ietf-moq-transport-21 §9.2 (GOAWAY): "a publisher MAY reject new requests after
+    draft-ietf-moq-transport-22 §9.2 (GOAWAY): "a publisher MAY reject new requests after
     sending a GOAWAY" の主語は publisher が応答する request 種別 (SUBSCRIBE / FETCH /
     TRACK_STATUS) である。自側が subscriber として受ける PUBLISH は拒否しない。
     """
@@ -1583,7 +1583,7 @@ def test_padding() -> None:
 def test_session_termination_codes_are_drafted_values() -> None:
     """Session Termination のコードが draft の値と一致することを確認する。
 
-    (draft-ietf-moq-transport-21 §16.11.1 (Session Termination Codes))
+    (draft-ietf-moq-transport-22 §16.11.1 (Session Termination Error Codes))
     """
     assert moqt.SESSION_NO_ERROR == 0x0
     assert moqt.SESSION_INTERNAL_ERROR == 0x1
@@ -1607,7 +1607,7 @@ def test_session_termination_codes_are_drafted_values() -> None:
 def test_request_error_codes_are_drafted_values() -> None:
     """REQUEST_ERROR のコードが draft の値と一致することを確認する。
 
-    (draft-ietf-moq-transport-21 §16.11.2 (REQUEST_ERROR Codes))
+    (draft-ietf-moq-transport-22 §16.11.2 (REQUEST_ERROR Codes))
     """
     assert moqt.REQUEST_INTERNAL_ERROR == 0x0
     assert moqt.REQUEST_UNAUTHORIZED == 0x1
@@ -1632,7 +1632,7 @@ def test_request_error_codes_are_drafted_values() -> None:
 def test_publish_done_and_stream_codes_are_drafted_values() -> None:
     """PUBLISH_DONE と stream reset のコードが draft の値と一致することを確認する。
 
-    (draft-ietf-moq-transport-21 §16.11.3 (PUBLISH_DONE Codes) /
+    (draft-ietf-moq-transport-22 §16.11.3 (PUBLISH_DONE Codes) /
      §16.11.4 (Stream Reset Codes))
     """
     assert moqt.PUBLISH_DONE_INTERNAL_ERROR == 0x0
@@ -1660,7 +1660,7 @@ def test_publish_done_and_stream_codes_are_drafted_values() -> None:
 def test_setup_option_types_are_drafted_values() -> None:
     """SETUP オプションの型番号が draft の値と一致することを確認する。
 
-    (draft-ietf-moq-transport-21 §9.1 (SETUP))
+    (draft-ietf-moq-transport-22 §9.1 (SETUP))
     """
     assert moqt.SETUP_OPTION_PATH == 0x01
     assert moqt.SETUP_OPTION_AUTHORIZATION_TOKEN == 0x03
@@ -1677,7 +1677,7 @@ def test_setup_option_types_are_drafted_values() -> None:
 def test_decode_parameter_reads_varint_values() -> None:
     """偶数型のパラメータを varint としてデコードすることを確認する。
 
-    (draft-ietf-moq-transport-21 §9.20.6 (SUBSCRIBER_PRIORITY Parameter))
+    (draft-ietf-moq-transport-22 §9.20.7 (SUBSCRIBER PRIORITY Parameter))
     """
     assert moqt.decode_parameter(moqt.PARAM_SUBSCRIBER_PRIORITY, encode_varint(128)) == 128
 
@@ -1686,7 +1686,7 @@ def test_decode_parameter_reads_uint8_values() -> None:
     """uint8 で表現するパラメータを `int` としてデコードすることを確認する。
 
     FORWARD と GROUP_ORDER は uint8 である
-    (draft-ietf-moq-transport-21 §9.20.7 (FORWARD Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.18 (FORWARD Parameter))。
     """
     assert moqt.decode_parameter(moqt.PARAM_FORWARD, b"\x01") == 1
 
@@ -1694,7 +1694,7 @@ def test_decode_parameter_reads_uint8_values() -> None:
 def test_decode_parameter_reads_a_location() -> None:
     """LARGEST_OBJECT を `(Group ID, Object ID)` としてデコードすることを確認する。
 
-    (draft-ietf-moq-transport-21 §9.20.5 (LARGEST_OBJECT Parameter))
+    (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))
     """
     value = encode_varint(3) + encode_varint(7)
 
@@ -1704,7 +1704,7 @@ def test_decode_parameter_reads_a_location() -> None:
 def test_decode_parameter_reads_a_track_namespace_prefix() -> None:
     """TRACK_NAMESPACE_PREFIX を namespace のフィールド列としてデコードすることを確認する。
 
-    (draft-ietf-moq-transport-21 §9.20.21 (TRACK_NAMESPACE_PREFIX Parameter))
+    (draft-ietf-moq-transport-22 §9.20.20 (TRACK_NAMESPACE_PREFIX Parameter))
     """
     value = b"\x01\x02ns"
 
@@ -1726,7 +1726,7 @@ def test_message_parameters_reads_typed_values() -> None:
 
     LARGEST_OBJECT は (Group ID, Object ID)、FORWARD と GROUP_ORDER は uint8、
     OBJECT_DELIVERY_TIMEOUT と SUBGROUP_DELIVERY_TIMEOUT はミリ秒の vi64 である
-    (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
     """
     parameters = MessageParameters(
         {
@@ -1769,7 +1769,7 @@ def test_message_parameters_distinguishes_expires_zero() -> None:
     """
     EXPIRES=0 を「パラメータが無い」と区別できることを確認する。
 
-    draft-ietf-moq-transport-21 §9.20.17 (EXPIRES Parameter): EXPIRES が 0 または
+    draft-ietf-moq-transport-22 §9.20.16 (EXPIRES Parameter): EXPIRES が 0 または
     不在なら subscription は expire しない。`expires` はどちらも `None` にするため、
     0 が指定されたことは `has_expires` で判定する。
     """
@@ -1811,11 +1811,11 @@ def test_send_accepts_the_encoded_parameter_dictionary() -> None:
 
     パラメータの値は `Event.parameters` / `Message.parameters` が返すものと同じ
     「長さプレフィックスを含むエンコード済みバイト列」である。受信側は同じ値として
-    解釈しなければならない (draft-ietf-moq-transport-21 §8.3
+    解釈しなければならない (draft-ietf-moq-transport-22 §8.3
     (Key-Value-Pair Structure))。
     """
     # Range Filter は peer が SETUP で MAX_FILTER_RANGES を宣言している場合だけ送れる
-    # (draft-ietf-moq-transport-21 §9.1.6 (MAX FILTER RANGES))
+    # (draft-ietf-moq-transport-22 §9.1.6 (MAX FILTER RANGES))
     client = Session.client("c")
     server = Session.server("s", {moqt.SETUP_OPTION_MAX_FILTER_RANGES: 8})
     client_setup = client.start()
@@ -1824,7 +1824,7 @@ def test_send_accepts_the_encoded_parameter_dictionary() -> None:
     client.receive_control(server_setup)
 
     # Range Filter の本体は `SetID (8 bits) | Start Delta (vi64) | End Delta (vi64)` である
-    # (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))
+    # (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))
     range_filter_body = bytes([0]) + encode_varint(10) + encode_varint(0)
     parameters = MessageParameters(
         {
@@ -1909,7 +1909,7 @@ def test_send_rejects_a_range_filter_body_without_a_length_prefix() -> None:
 
     Range Filter の値は先頭の vi64 が値本体の長さである。フィルタ本体だけを渡すと
     長さが合わないため、黙って別のフィルタとして解釈しないよう拒否する
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
     """
     client, _server = _setup()
 
@@ -1943,7 +1943,7 @@ def test_authorization_token_round_trips_all_kinds() -> None:
     """
     AUTHORIZATION_TOKEN の 4 種すべてを辞書として往復できることを確認する。
 
-    種別は draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression) の
+    種別は draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression) の
     DELETE / REGISTER / USE_ALIAS / USE_VALUE である。辞書のキーは種別ごとに異なり、
     DELETE と USE_ALIAS は `alias`、REGISTER は `alias` / `token_type` / `token_value`、
     USE_VALUE は `token_type` / `token_value` を持つ。
@@ -1972,7 +1972,7 @@ def test_decode_parameter_restores_an_authorization_token_alias() -> None:
 
     REGISTER の Token 構造は `Token Alias Type | Token Alias | Token Type | Token Value`
     であり、パラメータの値は長さ付きバイト列である
-    (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+    (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
     辞書から alias を落とすと peer が登録内容を追跡できなくなる。
     """
     # Token Alias Type = 0x01 (REGISTER)、Token Alias = 7、Token Type = 1
@@ -2002,7 +2002,7 @@ def test_message_parameters_rejects_raw_filter_bytes() -> None:
 
     Range Filter の値は先頭の vi64 が値本体の長さである。フィルタ本体だけを渡すと
     長さが合わないため、取り違えを黙って別の値として解釈しないよう拒否する
-    (draft-ietf-moq-transport-21 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
     LOCATION_FILTER は Type-prefixed であり、フィルタ本体をそのまま値に渡せる。
     このとき値域全体が 1 つのフィルタとして解釈できなければならない
     (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
@@ -2029,7 +2029,7 @@ def test_message_parameters_rejects_an_unknown_parameter_type() -> None:
     """
     未知の型番号のパラメータを拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §9.20 (Control Message Parameters) は既知の型だけを
+    draft-ietf-moq-transport-22 §9.20 (Control Message Parameters) は既知の型だけを
     定めるため、未知の型は PROTOCOL_VIOLATION になる。
     """
     with pytest.raises(ValueError, match="unknown message parameter type"):
@@ -2090,7 +2090,7 @@ def test_message_parameters_reads_nested_fill_parameters() -> None:
     FILL_PARAMETERS の内側のパラメータを型付きで読めることを確認する。
 
     内側は外側とは別のパラメータスコープである
-    (draft-ietf-moq-transport-21 §9.20.16 (FILL PARAMETERS Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.15 (FILL PARAMETERS Parameter))。
     """
     parameters = MessageParameters({moqt.PARAM_FILL_PARAMETERS: {moqt.PARAM_FILL_TIMEOUT: 1000}})
 
@@ -2305,7 +2305,7 @@ def test_subscription_cleanup_ready_is_false_while_established() -> None:
     """購読が確立している間は cleanup できないことを確認する。
 
     cleanup できるのは Terminated 状態になった後である
-    (draft-ietf-moq-transport-21 §3.1.1 (Subscription State Management))。
+    (draft-ietf-moq-transport-22 §3.1.2 (Subscription State Management))。
     """
     client, server = _setup()
     request_id = _subscribe_round_trip(client, server, 4)
@@ -2320,7 +2320,7 @@ def test_subscription_cleanup_ready_is_false_while_established() -> None:
 def test_grease_constants_are_drafted_values() -> None:
     """GREASE の定数が draft の値と一致することを確認する。
 
-    (draft-ietf-moq-transport-21 §13 (Grease))
+    (draft-ietf-moq-transport-22 §13 (Grease))
     """
     assert moqt.GREASE_BASE == 0x9D
     assert moqt.GREASE_INTERVAL == 0x7F
@@ -2434,7 +2434,7 @@ def test_received_datagram_reports_the_publisher_priority() -> None:
     DEFAULT_PRIORITY bit が立っていないデータグラムは優先度を明示しており、その値が
     イベントに入る。bit が立っているデータグラムは購読を確立した制御メッセージの
     優先度を継承するため `None` になる
-    (draft-ietf-moq-transport-21 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
     """
     client, server = _setup()
     _subscribe_round_trip(client, server, 4)
@@ -2462,7 +2462,7 @@ def test_session_state_accessors_report_peer_declared_values() -> None:
     """peer が宣言した値とセッションのタイムアウト設定を照会できることを確認する。
 
     SETUP で受け取った値はキャッシュせず、状態機械から都度取得する
-    (draft-ietf-moq-transport-21 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+    (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
     """
     client = Session.client("c", {moqt.SETUP_OPTION_MAX_AUTH_TOKEN_CACHE_SIZE: 4096})
     server = Session.server("s")
@@ -2509,7 +2509,7 @@ def test_subscription_state_accessors_report_the_subscription() -> None:
     assert entry["my_role"] == "subscriber"
     assert entry["initiator"] == "subscriber"
     # FORWARD パラメータを省略した場合は送る側の既定値 1 になる
-    # (draft-ietf-moq-transport-21 §9.20.19 (FORWARD Parameter))
+    # (draft-ietf-moq-transport-22 §9.20.18 (FORWARD Parameter))
     assert entry["forward"] is True
     assert entry["subscriber_priority"] is None
     assert entry["group_order"] is None
@@ -2559,7 +2559,7 @@ def test_request_ok_event_reports_the_response_metadata() -> None:
     状態機械のイベントは応答のパラメータしか運ばないため、Track Properties は受信した
     生バイト列から取り出す。パラメータは型番号をキーにしたエンコード済みバイト列の
     辞書であり、Track Properties は偶数型が `int`、奇数型が `bytes` の辞書である
-    (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters) /
+    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters) /
     §8.4 (Track and Object Properties))。
     """
     # 購読を確立し、SUBSCRIBE_OK にパラメータと Track Properties を載せる
@@ -2581,7 +2581,7 @@ def test_request_ok_event_reports_the_response_metadata() -> None:
 
     assert len(accepted) == 1
     # LARGEST_OBJECT は Group ID と Object ID の 2 つの vi64 である
-    # (draft-ietf-moq-transport-21 §9.20.9 (LARGEST_OBJECT Parameter))
+    # (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))
     assert accepted[0].parameters is not None
     assert accepted[0].parameters[moqt.PARAM_LARGEST_OBJECT] == encode_varint(3) + encode_varint(4)
     assert accepted[0].track_properties == {
@@ -2597,7 +2597,7 @@ def test_request_ok_event_without_track_properties_reports_an_empty_dict() -> No
     REQUEST_OK が Track Properties を運べるのは TRACK_STATUS への応答だけであり、
     TRACK_STATUS の受信側を状態機械は扱わない。ここでは購読の REQUEST_UPDATE_OK を
     使って、Track Properties を運ばない応答を確かめる
-    (draft-ietf-moq-transport-21 §9.3 (REQUEST_OK) / §9.5 (REQUEST_UPDATE))。
+    (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK) / §9.5 (REQUEST_UPDATE))。
     """
     client, server = _setup()
     subscribe_events = client.send_subscribe([b"ns"], b"t", {})
@@ -2633,7 +2633,7 @@ def test_fetch_state_accessors_report_the_fetch() -> None:
     assert entry["namespace"] == [b"fetch-ns"]
     assert entry["track_name"] == b"fetch-track"
     # FETCH_OK で確定した終端情報が入る
-    # (draft-ietf-moq-transport-21 §9.12 (FETCH_OK))
+    # (draft-ietf-moq-transport-22 §9.12 (FETCH_OK))
     assert entry["end_location"] == (0, 0)
     assert entry["end_of_track"] is False
     assert entry["response_received"] is True
@@ -2652,7 +2652,7 @@ def test_received_fetch_stream_resolves_descending_group_ids() -> None:
     GROUP_ORDER が Descending の fetch ストリームで Group ID が降順に解決されることを確認する。
 
     Group ID は直前のオブジェクトからの差分であり、解決方向は FETCH の GROUP_ORDER で
-    決まる (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter) /
+    決まる (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter) /
     §11.4.1.1 (Flags))。Ascending 前提で解決すると Group ID が誤った値になる。
     """
     client, server = _setup()
@@ -2700,7 +2700,7 @@ def test_received_fetch_stream_waits_for_the_fetch_header() -> None:
     fetch ストリームのデコーダは、Request ID を運ぶ FETCH_HEADER をデコードできるまで
     作らない。Group Order は Request ID から引くため、ヘッダが途中で切れた断片では
     デコードを保留し、続きの到着後に解決する
-    (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+    (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
     """
     client, server = _setup()
     request_id = _fetch_round_trip(client, server, 4, {moqt.PARAM_GROUP_ORDER: 0x02})
@@ -2744,7 +2744,7 @@ def test_track_status_state_accessors_report_the_response() -> None:
     """TRACK_STATUS の状態を Request ID から照会できることを確認する。
 
     TRACK_STATUS は publisher が応答する request である
-    (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。応答が届かないまま
+    (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。応答が届かないまま
     request stream が終端すると、状態機械は応答をエラーとして記録する。
     """
     client, _server = _setup()
@@ -2775,7 +2775,7 @@ def test_track_status_state_accessors_report_the_response() -> None:
 def test_track_status_state_accessor_reports_an_ok_response() -> None:
     """TRACK_STATUS の応答が届いた場合に ok と LARGEST_OBJECT が読めることを確認する。
 
-    draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS): "If successful, the publisher
+    draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS): "If successful, the publisher
     responds with a TRACK_STATUS_OK with the same parameters and Track Properties it would
     have set in a SUBSCRIBE_OK." TRACK_STATUS_OK が運べるパラメータは LARGEST_OBJECT だけ
     である (§9.20.1 (Parameter Scope))。
@@ -2787,7 +2787,7 @@ def test_track_status_state_accessor_reports_an_ok_response() -> None:
     server.receive_request_stream(4, _message_data(status_events[0]), "peer")
 
     # TRACK_STATUS_OK は LARGEST_OBJECT を運べる
-    # (draft-ietf-moq-transport-21 §9.20.18 (LARGEST OBJECT Parameter))
+    # (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))
     ok = server.send_request_ok(
         status_request_id,
         {moqt.PARAM_LARGEST_OBJECT: (3, 4)},
@@ -2808,7 +2808,7 @@ def test_terminated_subscription_is_forgotten_only_after_cleanup_is_ready() -> N
     購読が終了しても同じ Request ID への参照が残っている可能性があるため、回収は
     `subscription_cleanup_ready` が真を返したときだけ行う。終了前に `forget_subscription`
     を呼んでも状態機械は変化しない
-    (draft-ietf-moq-transport-21 §3.1.1 (Subscription State Management))。
+    (draft-ietf-moq-transport-22 §3.1.2 (Subscription State Management))。
     """
     client, server = _setup()
     request_id = _subscribe_round_trip(client, server, 4)
@@ -2837,7 +2837,7 @@ def test_terminated_fetch_is_forgotten_only_after_cleanup_is_ready() -> None:
 
     fetch は subscriber 側の cancel で `Terminated` になり、受信中のデータストリームが
     無くなった時点で回収できる。終了前に `forget_fetch` を呼んでも状態機械は変化しない
-    (draft-ietf-moq-transport-21 §3.2.1 (Fetch State Management))。
+    (draft-ietf-moq-transport-22 §3.2.4 (Fetch State Management))。
     """
     client, server = _setup()
     request_id = _fetch_round_trip(client, server, 4)
@@ -2866,7 +2866,7 @@ def test_track_status_is_forgotten_only_after_the_response() -> None:
     状態機械は TRACK_STATUS の受信側を扱わないため、relay が返す REQUEST_OK を
     購読の REQUEST_UPDATE_OK として生成し、TRACK_STATUS の request stream へ流し込む。
     応答が載る bidi request stream の終端を通知した後は request stream の対応が消えるため
-    回収できない (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+    回収できない (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
     """
     client, server = _setup()
     status_events = client.send_track_status([b"ns"], b"t", {})
@@ -2904,7 +2904,7 @@ def test_track_status_is_forgotten_after_the_stream_ended_without_a_response() -
 
     応答が届かないまま終端した場合は REQUEST_ERROR として記録されるため、状態機械は
     回収できる。回収後は Request ID の照会も二重の回収も安全である
-    (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+    (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
     """
     client, _server = _setup()
     events = client.send_track_status([b"ns"], b"t", {})
@@ -2922,7 +2922,7 @@ def test_goaway_drain_accessors_report_blocking_requests() -> None:
     """GOAWAY の drain を妨げている request を照会できることを確認する。
 
     購読が cleanup 可能になるまで drain は完了せず、妨げている Request ID が
-    snapshot に入る (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration))。
+    snapshot に入る (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
     """
     client, server = _setup()
     subscription_request_id = _subscribe_round_trip(client, server, 4)
@@ -2963,7 +2963,7 @@ def test_open_outgoing_fill_stream_count_reports_open_streams() -> None:
 
     fill fetch stream は publisher が開き、1 つの subscription に複数本が同時に
     開くことがある。stream を終端すると索引から外れる
-    (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。
+    (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
     """
     client, server = _setup()
     request_id = _subscribe_round_trip(client, server, 4)
@@ -3026,7 +3026,7 @@ def test_session_state_accessors_do_not_change_the_session() -> None:
 def test_session_defaults_are_exported() -> None:
     """セッションの既定値が `moqt.moqt` から参照できることを確認する。
 
-    (draft-ietf-moq-transport-21 §10.5 (DEFAULT PUBLISHER GROUP ORDER) /
+    (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER) /
      §3.1.2 (Track Alias) / §9.2 (GOAWAY) / §9.9 (PUBLISH_DONE))
     """
     assert moqt.DEFAULT_PUBLISHER_GROUP_ORDER_ASCENDING == 0x1
@@ -3038,7 +3038,7 @@ def test_session_defaults_are_exported() -> None:
 def test_goaway_accepts_a_new_session_uri_at_the_length_limit() -> None:
     """`MAX_NEW_SESSION_URI_LENGTH` ちょうどの URI を GOAWAY が受け付けることを確認する。
 
-    (draft-ietf-moq-transport-21 §9.2 (GOAWAY))
+    (draft-ietf-moq-transport-22 §9.2 (GOAWAY))
     """
     client, server = _setup()
     uri = b"a" * moqt.MAX_NEW_SESSION_URI_LENGTH
@@ -3053,7 +3053,7 @@ def test_goaway_accepts_a_new_session_uri_at_the_length_limit() -> None:
 def test_goaway_rejects_a_new_session_uri_beyond_the_length_limit() -> None:
     """`MAX_NEW_SESSION_URI_LENGTH` を超える URI を GOAWAY が拒否することを確認する。
 
-    (draft-ietf-moq-transport-21 §9.2 (GOAWAY))
+    (draft-ietf-moq-transport-22 §9.2 (GOAWAY))
     """
     _client, server = _setup()
     uri = b"a" * (moqt.MAX_NEW_SESSION_URI_LENGTH + 1)
@@ -3078,7 +3078,7 @@ def _received_subgroup_stream(
     Type Flags は PROPERTIES bit (0x01)、SUBGROUP_ID_MODE (bits 1-2、mask 0x06)、
     END_OF_GROUP bit (0x08)、bit 4 (0x10、必須)、DEFAULT_PRIORITY bit (0x20)、
     FIRST_OBJECT bit (0x40) から成る
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     # bit 4 は常に 1 であり、Publisher Priority を省略するため DEFAULT_PRIORITY bit を立てる
     type_byte = 0x10 | 0x20 | subgroup_id_mode
@@ -3101,7 +3101,7 @@ def test_received_subgroup_resolves_the_subgroup_id_from_the_first_object() -> N
 
     ヘッダに Subgroup ID フィールドが無いため、ヘッダ受信直後は Subgroup ID が決まらず、
     最初の Object を受信した時点で確定する
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     client, server = _setup()
     _subscribe_round_trip(client, server, 4)
@@ -3125,7 +3125,7 @@ def test_received_subgroup_header_alone_does_not_resolve_the_subgroup_id() -> No
 
     SUBGROUP_ID_MODE が 0b01 のヘッダには Subgroup ID フィールドが無いため、最初の
     Object を受信するまで Subgroup ID は確定しない
-    (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     client, server = _setup()
     _subscribe_round_trip(client, server, 4)
@@ -3152,7 +3152,7 @@ def test_received_subgroup_reports_an_explicit_subgroup_id_from_the_header() -> 
     Subgroup ID を明示するモードではヘッダの値がそのまま載ることを確認する。
 
     SUBGROUP_ID_MODE が 0b10 のヘッダは Subgroup ID フィールドを持ち、Object の受信を
-    待たずに確定する (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    待たずに確定する (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     client, server = _setup()
     _subscribe_round_trip(client, server, 4)
@@ -3174,7 +3174,7 @@ def test_received_subgroup_before_subscribe_ok_is_delivered_after_acceptance() -
     SUBSCRIBE_OK は bidi ストリーム、subgroup は uni ストリームで届くため、
     subscriber が SUBSCRIBE_OK を処理するより先にオブジェクトを処理することがある。
     この並び順でもセッションを落とさず、購読の確定後にオブジェクトを配信する
-    (draft-ietf-moq-transport-21 §3.1.2 (Track Alias))。
+    (draft-ietf-moq-transport-22 §3.1.3 (Track Alias))。
     """
     client, server = _setup()
     events = client.send_subscribe([b"ns"], b"t", {})
@@ -3270,7 +3270,7 @@ def test_received_subgroup_filtered_out_is_ignored_without_closing_the_session()
     購読が確定していても、Location Filter を通らない Group のストリームは
     `FilteredOut` になる。再試行しても結果は変わらないため、このストリームは
     以後読み捨て、セッションを落とさない
-    (draft-ietf-moq-transport-21 §3.1 (Subscriptions) のフィルタ再適用)。
+    (draft-ietf-moq-transport-22 §3.1 (Subscriptions) のフィルタ再適用)。
     """
     client, server = _setup()
     # Group 9 以降だけを購読する Location Filter。
@@ -3303,7 +3303,7 @@ def test_received_datagram_before_subscribe_ok_is_delivered_after_acceptance() -
 
     データグラムにも SUBSCRIBE_OK の処理順の逆転がありうる。購読が確定していない
     間は `unknown_track_alias` を返して破棄し、購読の確定後に届いた同じデータグラムは
-    オブジェクトとして受理する (draft-ietf-moq-transport-21 §11.2 (Datagrams))。
+    オブジェクトとして受理する (draft-ietf-moq-transport-22 §11.2 (Datagrams))。
     """
     client, server = _setup()
     events = client.send_subscribe([b"ns"], b"t", {})
@@ -3333,7 +3333,7 @@ def test_send_subgroup_header_uses_the_first_object_id_mode() -> None:
 
      このモードでは Subgroup ID フィールドを送らないため、ヘッダは Type Flags、
      Track Alias、Group ID だけになる。状態機械は最初の Object の送信で Subgroup ID を
-    確定する (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    確定する (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     # client が PUBLISH で配信し、server が購読する経路で publisher 側の状態を作る
     client, server = _setup()
@@ -3369,7 +3369,7 @@ def test_send_subgroup_header_rejects_a_subgroup_id_in_the_first_object_id_mode(
     Subgroup ID を渡しながら最初の Object ID モードを選べないことを確認する。
 
     このモードのヘッダに Subgroup ID フィールドは無いため、値の指定は wire と状態機械の
-    食い違いになる (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+    食い違いになる (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
     """
     client, server = _setup()
     events = client.send_publish([b"ns"], b"t", 1, {}, {})
@@ -3429,7 +3429,7 @@ def test_send_object_datagram_evaluates_the_object_status() -> None:
     状態機械が送信するデータグラムの Object Status を評価することを確認する。
 
     状態機械は送信するオブジェクトの status を見て、Properties を持てるのは Normal
-    status だけとする (draft-ietf-moq-transport-21 §11.1.3 (Object Properties))。
+    status だけとする (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
     Python 側は実際に送る status を渡さなければこの検査を受けられない。
     """
     # server が購読を受け、publisher としてデータグラムを送る経路を作る
@@ -3454,7 +3454,7 @@ def test_mid_object_fin_closes_the_session() -> None:
     """
     オブジェクトのシリアライズ途中で FIN されたストリームを拒否することを確認する。
 
-    draft-ietf-moq-transport-21 §11.3 (Subgroup Streams): "If a stream ends gracefully
+    draft-ietf-moq-transport-22 §11.3 (Subgroup Streams): "If a stream ends gracefully
     (i.e., the stream terminates with a FIN) in the middle of a serialized Object, the
     session SHOULD be closed with a PROTOCOL_VIOLATION." 受信側は decoder の
     `finish()` で検出し、状態機械へ報告する。
@@ -3485,7 +3485,7 @@ def test_fetch_mid_object_fin_closes_the_session() -> None:
     fetch ストリームでもオブジェクトの途中で FIN された場合にセッションを閉じることを確認する。
 
     fetch ストリームのオブジェクトも同じくシリアライズ途中の FIN を拒否する
-    (draft-ietf-moq-transport-21 §11.3 (Subgroup Streams))。
+    (draft-ietf-moq-transport-22 §11.3 (Subgroup Streams))。
     """
     client, server = _setup()
     request_id = _fetch_round_trip(client, server, 4)
@@ -3517,7 +3517,7 @@ def test_mid_object_reset_does_not_close_the_session() -> None:
     """
     RESET_STREAM による途中終了はプロトコル違反にしないことを確認する。
 
-    draft-ietf-moq-transport-21 §11.3 (Subgroup Streams) の途中終了の検査は graceful な
+    draft-ietf-moq-transport-22 §11.3 (Subgroup Streams) の途中終了の検査は graceful な
     FIN に対するものであり、RESET による破棄は別経路である
     (§11.3.2 (Closing Subgroup Streams))。
     """
@@ -3540,7 +3540,7 @@ def test_empty_subgroup_fin_is_accepted() -> None:
     ヘッダのみで FIN した空の Subgroup が正常に受理されることを確認する。
 
     配達対象のオブジェクトが 1 つも無いとき、送信側はヘッダのみを送って FIN で閉じる
-    (draft-ietf-moq-transport-21 §11.3.2 (Closing Subgroup Streams))。受信側はこれを
+    (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。受信側はこれを
     プロトコル違反にしてはならない。
     """
     client, server = _setup()

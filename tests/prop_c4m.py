@@ -123,7 +123,7 @@ def prop_moqt_scope_round_trips(
     任意の `moqt-scope` が encode と decode で往復することを確認する。
 
     認可判定が decode の前後で変わらないことも検証する
-    (draft-ietf-moq-c4m-01 §2.1 (Authorization Scope))。
+    (draft-ietf-moq-c4m-01 §2.1 (moqt claim))。
     """
     decoded = MoqtScope.decode(scope.encode())
 

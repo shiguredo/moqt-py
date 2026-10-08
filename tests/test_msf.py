@@ -50,7 +50,7 @@ def test_catalog_track_name_is_catalog() -> None:
     """
     カタログを配信する Track 名が `catalog` であることを確認する。
 
-    (draft-ietf-moq-msf-01 §4.1)
+    (draft-ietf-moq-msf-01 §5 (Catalog))
     """
     assert msf.CATALOG_TRACK_NAME == b"catalog"
 
@@ -972,7 +972,7 @@ def test_resolve_catalog_variables_substitutes_fragment_values() -> None:
     """
     カタログ中の変数参照を fragment のパラメータで置き換えることを確認する。
 
-    (draft-ietf-moq-msf-01 §5.4 (Catalog variables))
+    (draft-ietf-moq-msf-01 §5.4 (Variable Substitution))
     """
     document = (
         b'{"version":"draft-01","tracks":[{"name":"%name%","packaging":"loc","isLive":true}]}'
@@ -1039,7 +1039,7 @@ def test_parse_name_and_serialize_name_round_trip() -> None:
     Track 識別子と namespace + Track 名が相互変換できることを確認する。
 
     namespace の区切りは `-`、namespace と Track 名の境界は `--` である
-    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。
     """
     namespace, track_name = msf.parse_name("room-1--video")
 
@@ -1051,7 +1051,7 @@ def test_parse_name_and_serialize_name_round_trip() -> None:
 def test_serialize_name_escapes_a_dot() -> None:
     """リテラルでないバイトを `.` と 16 進 2 桁でエスケープすることを確認する。
 
-    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))
+    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))
     """
     assert msf.serialize_name([b"room.1"], b"video") == "room.2e1--video"
     assert msf.parse_name("room.2e1--video") == ([b"room.1"], b"video")
@@ -1061,7 +1061,7 @@ def test_parse_name_rejects_a_triple_hyphen() -> None:
     """境界が 2 連続でない入力を拒否することを確認する。
 
     エラーメッセージには失敗した規則の説明を載せる
-    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。
     """
     with pytest.raises(ValueError, match="invalid Track name: too many separators"):
         msf.parse_name("room---video")
@@ -1072,7 +1072,7 @@ def test_namespace_and_track_name_round_trip() -> None:
     namespace と Track 名を個別に正規表現へ変換し、元へ戻せることを確認する。
 
     正規表現は DPoP の Authorization Context の `tns` / `tn` が要求する形である
-    (draft-ietf-moq-transport-21 §8.8 / draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
+    (draft-ietf-moq-transport-22 §8.8 / draft-nandakumar-moq-generic-dpop-proof-00 §5.1.3)。
     リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは `.` と 16 進 2 桁になる。
     """
     assert msf.serialize_namespace([b"room-1", b"a.b"]) == "room.2d1-a.2eb"

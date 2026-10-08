@@ -37,7 +37,7 @@ from moqt.moq.transport import Transport
 
 # Subgroup Header の Subgroup ID エンコードモード。
 # `Publication.send_object` の `subgroup_id_mode` に渡す
-# (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+# (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
 SUBGROUP_ID_MODE_ZERO = "zero"
 SUBGROUP_ID_MODE_FIRST_OBJECT_ID = "first_object_id"
 SUBGROUP_ID_MODE_EXPLICIT = "explicit"

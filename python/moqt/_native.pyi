@@ -86,7 +86,7 @@ class AuthorizationContext:
     DPoP proof の Authorization Context (draft-nandakumar-moq-generic-dpop-proof-00
     §4.2 / §5.1)。
     
-    `tns` / `tn` は draft-ietf-moq-transport-21 §8.8 の正規シリアライズを使う。
+    `tns` / `tn` は draft-ietf-moq-transport-22 §8.8 の正規シリアライズを使う。
     リテラルでないバイトは `.` と 16 進 2 桁へエスケープされるため、`tns` には
     `moqt.msf.serialize_namespace`、`tn` には `moqt.msf.serialize_track_name` の結果を
     渡す。生の名前を渡すと `verify_target` などで一致しない。
@@ -2367,7 +2367,7 @@ class Event:
         受信したオブジェクトの Object Status (object イベントのみ)。
         
         ペイロード長 0 のオブジェクトだけが持ち、非 0 長では `None` になる。
-        (draft-ietf-moq-transport-21 §11.1.2 (Object Status))
+        (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
         """
     @property
     def stream_id(self, /) -> int |None:
@@ -2381,7 +2381,7 @@ class Event:
         
         ヘッダが Subgroup ID を最初の Object ID として決めるモードでも、最初の
         Object を受信した時点で確定した値が入る
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
         """
     @property
     def track_alias(self, /) -> int |None:
@@ -2398,7 +2398,7 @@ class Event:
         
         応答が Track Properties を運ぶ場合は型番号をキーにした辞書が入り、運ばない
         応答では空の辞書になる。応答以外のメッセージでは `None` になる
-        (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+        (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
         """
 
 @final
@@ -2714,7 +2714,7 @@ class LocProperties:
         プロパティブロック全体をエンコードする。
         
         空の集合は Properties Length = 0 の 1 バイトになる。
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
         """
     @property
     def timescale(self, /) -> int |None:
@@ -2954,7 +2954,7 @@ class Message:
     Python 側へ渡す制御メッセージ 1 件。
     
     メッセージ本体は種別ごとに異なる辞書であり、キーは
-    [draft-ietf-moq-transport-21 §9 (Control Messages)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/)
+    [draft-ietf-moq-transport-22 §9 (Control Messages)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/)
     の各メッセージが運ぶフィールドに対応する。
     """
     def __eq__(self, other: object, /) -> bool: ...
@@ -2974,7 +2974,7 @@ class Message:
         `publish_state_notify` / `fetch` / `fetch_ok` / `track_status` /
         `unsupported` のいずれかである。
         
-        `unsupported` は draft-ietf-moq-transport-21 §9 Table 5 に定義済みだが
+        `unsupported` は draft-ietf-moq-transport-22 §9 Table 5 に定義済みだが
         moqt-rs が実装しない制御メッセージ (relay 専用の namespace 発見・告知機構と
         その応答) であり、本体は生バイト列のまま公開する。`body` は `type_id`
         (メッセージ Type) と `request_id` (`None` の場合もある) と `body`
@@ -3001,7 +3001,7 @@ class Message:
         メッセージが運ぶ Request ID。
         
         応答メッセージはワイヤに Request ID を含まないため `None` を返す。
-        (draft-ietf-moq-transport-21 §9.4 (REQUEST_ERROR))
+        (draft-ietf-moq-transport-22 §9.4 (REQUEST_ERROR))
         
         `unsupported` では Request ID (vi64) で始まる型 (PUBLISH_NAMESPACE /
         SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS) のときだけ `Some` になり、
@@ -3016,7 +3016,7 @@ class Message:
 @final
 class MessageParameters:
     """
-    Message Parameters (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))。
+    Message Parameters (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
     
     `Event.parameters` / `Message.parameters` が返す「型番号をキーにしたエンコード済み
     バイト列の辞書」と同じ内容を、draft が定める値の型と意味で読み書きする。
@@ -3047,7 +3047,7 @@ class MessageParameters:
         `use_value` を選び、キーは種別ごとに異なる。`delete` と `use_alias` は `alias`、
         `register` は `alias` / `token_type` / `token_value`、`use_value` は
         `token_type` / `token_value` を取る
-        (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+        (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
         
         長さ付きバイト列のパラメータは、長さプレフィックスを含むエンコード済みの値を
         要求する。長さが合わない値と解釈できない値は `ValueError` になる。
@@ -3060,7 +3060,7 @@ class MessageParameters:
     def authorization_tokens(self, /) -> list[Any]:
         """
         AUTHORIZATION_TOKEN (type 0x03) の値を出現順に返す
-        (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+        (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
         
         各要素は `decode_parameter` が返すものと同じ「`kind` で種別を表す辞書」であり、
         4 種すべてで alias / token_type / token_value が復元される。AUTHORIZATION_TOKEN は
@@ -3070,7 +3070,7 @@ class MessageParameters:
     def expires(self, /) -> int |None:
         """
         EXPIRES (type 0x08) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.17 (EXPIRES Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.16 (EXPIRES Parameter))。
         
         値が 0 の場合と、パラメータが無い場合はどちらも `None` になる。0 を指定された
         ことを区別するには [`MessageParameters::has_expires`] を使う。
@@ -3079,7 +3079,7 @@ class MessageParameters:
     def fill_parameters(self, /) -> MessageParameters |None:
         """
         FILL_PARAMETERS (type 0x23) の内側のパラメータ群を返す
-        (draft-ietf-moq-transport-21 §9.20.16 (FILL PARAMETERS Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.15 (FILL PARAMETERS Parameter))。
         
         内側は外側とは別のパラメータスコープであり、パラメータが無い場合は `None` になる。
         """
@@ -3087,13 +3087,13 @@ class MessageParameters:
     def fill_timeout(self, /) -> int |None:
         """
         FILL_TIMEOUT (type 0x0A) の値をミリ秒で返す
-        (draft-ietf-moq-transport-21 §9.20.6 (FILL TIMEOUT Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.5 (FILL TIMEOUT Parameter))。
         """
     @property
     def forward(self, /) -> int |None:
         """
         FORWARD (type 0x10) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.19 (FORWARD Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.18 (FORWARD Parameter))。
         
         0 は転送しない、1 は転送するである。
         """
@@ -3101,7 +3101,7 @@ class MessageParameters:
     def group_order(self, /) -> int |None:
         """
         GROUP_ORDER (type 0x22) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.9 (GROUP ORDER Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
         """
     @property
     def has_expires(self, /) -> bool:
@@ -3114,13 +3114,13 @@ class MessageParameters:
     def has_range_filters(self, /) -> bool:
         """
         Range Filter を 1 つ以上持つかを返す
-        (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+        (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
         """
     @property
     def include_properties(self, /) -> int |None:
         """
         INCLUDE_PROPERTIES (type 0x35) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.22 (INCLUDE_PROPERTIES Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.21 (INCLUDE_PROPERTIES Parameter))。
         
         0 は Properties を送らない、1 は送るである。パラメータが無い場合の既定は 1 で
         あるため、判定する側が既定を補う。
@@ -3129,7 +3129,7 @@ class MessageParameters:
     def largest_object(self, /) -> tuple[int, int] |None:
         """
         LARGEST_OBJECT (type 0x09) の値を `(group_id, object_id)` として返す
-        (draft-ietf-moq-transport-21 §9.20.9 (LARGEST_OBJECT Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))。
         """
     @property
     def location_filter(self, /) -> bytes |None:
@@ -3162,24 +3162,24 @@ class MessageParameters:
     def new_group_request(self, /) -> int |None:
         """
         NEW_GROUP_REQUEST (type 0x32) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.20 (NEW_GROUP_REQUEST Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.19 (NEW GROUP REQUEST Parameter))。
         """
     @property
     def object_delivery_timeout(self, /) -> int |None:
         """
         OBJECT_DELIVERY_TIMEOUT (type 0x02) の値をミリ秒で返す
-        (draft-ietf-moq-transport-21 §9.20.2 (OBJECT_DELIVERY_TIMEOUT Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.4 (OBJECT_DELIVERY_TIMEOUT Parameter))。
         """
     @property
     def range_filter_count(self, /) -> int:
         """
         Range Filter の個数を返す
-        (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+        (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
         """
     def range_filters(self, /, param_type: int) -> list[bytes]:
         """
         指定した Range Filter 型 (0x25-0x29) の全インスタンスのフィルタ本体を出現順に返す
-        (draft-ietf-moq-transport-21 §3.3.2 (Range Filters))。
+        (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
         
         Range Filter は同一 Parameter Type が同一メッセージ内で複数回出現できるため、
         単一の値ではなく列として返す。長さプレフィックスは含まない。Range Filter 型以外を
@@ -3195,13 +3195,13 @@ class MessageParameters:
     def subgroup_delivery_timeout(self, /) -> int |None:
         """
         SUBGROUP_DELIVERY_TIMEOUT (type 0x06) の値をミリ秒で返す
-        (draft-ietf-moq-transport-21 §9.20.4 (SUBGROUP_DELIVERY_TIMEOUT Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.3 (SUBGROUP_DELIVERY_TIMEOUT Parameter))。
         """
     @property
     def subscriber_priority(self, /) -> int |None:
         """
         SUBSCRIBER_PRIORITY (type 0x20) の値を返す
-        (draft-ietf-moq-transport-21 §9.20.6 (SUBSCRIBER_PRIORITY Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.7 (SUBSCRIBER PRIORITY Parameter))。
         """
     def to_dict(self, /) -> dict:
         """
@@ -3214,7 +3214,7 @@ class MessageParameters:
     def track_namespace_prefix(self, /) -> list |None:
         """
         TRACK_NAMESPACE_PREFIX (type 0x34) の値を namespace のフィールド列として返す
-        (draft-ietf-moq-transport-21 §9.20.21 (TRACK_NAMESPACE_PREFIX Parameter))。
+        (draft-ietf-moq-transport-22 §9.20.20 (TRACK_NAMESPACE_PREFIX Parameter))。
         """
 
 @final
@@ -3390,7 +3390,7 @@ class ObjectProperties:
     
     ワイヤフォーマットは `Properties Length (vi64) | Key-Value-Pairs...` である。
     encode は prop_type の昇順にソートし、delta encoding で型番号を圧縮する。
-    (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)
+    (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)
     """
     def __bytes__(self, /) -> bytes:
         """
@@ -3434,7 +3434,7 @@ class ObjectProperties:
         任意の型番号の varint 値を引く。
         
         見つからない場合と、その型番号の値がバイト列である場合は `None` になる。
-        draft-ietf-moq-transport-21 §10.7 (Immutable Properties) の「MUST search both」
+        draft-ietf-moq-transport-22 §10.7 (Immutable Properties) の「MUST search both」
         に従い IMMUTABLE_PROPERTIES の内側も探索し、外側の値を優先する。
         """
     @property
@@ -3443,7 +3443,7 @@ class ObjectProperties:
         IMMUTABLE_PROPERTIES (0x0B): 途中で変化しないプロパティの入れ子リスト。
         
         内容は解釈せず生バイト列として返す。
-        (draft-ietf-moq-transport-21 §10.7 (Immutable Properties))
+        (draft-ietf-moq-transport-22 §10.7 (Immutable Properties))
         """
     def items(self, /) -> list:
         """
@@ -3457,28 +3457,28 @@ class ObjectProperties:
         """
         OBJECT_DELIVERY_TIMEOUT (0x02): Object の配送期限 (ms)。
         
-        (draft-ietf-moq-transport-21 §10.2 (OBJECT_DELIVERY_TIMEOUT))
+        (draft-ietf-moq-transport-22 §10.2 (OBJECT_DELIVERY_TIMEOUT))
         """
     @property
     def prior_group_id_gap(self, /) -> int |None:
         """
         PRIOR_GROUP_ID_GAP (0x3C): 直前の存在しない Group の個数。
         
-        (draft-ietf-moq-transport-21 §10.8 (Prior Group ID Gap))
+        (draft-ietf-moq-transport-22 §10.8 (Prior Group ID Gap))
         """
     @property
     def prior_object_id_gap(self, /) -> int |None:
         """
         PRIOR_OBJECT_ID_GAP (0x3E): 直前の存在しない Object の個数。
         
-        (draft-ietf-moq-transport-21 §10.9 (Prior Object ID Gap))
+        (draft-ietf-moq-transport-22 §10.9 (Prior Object ID Gap))
         """
     @property
     def subgroup_delivery_timeout(self, /) -> int |None:
         """
         SUBGROUP_DELIVERY_TIMEOUT (0x06): Subgroup の配送期限 (ms)。
         
-        (draft-ietf-moq-transport-21 §10.1 (SUBGROUP_DELIVERY_TIMEOUT))
+        (draft-ietf-moq-transport-22 §10.1 (SUBGROUP_DELIVERY_TIMEOUT))
         """
     def to_dict(self, /) -> dict:
         """
@@ -3554,11 +3554,11 @@ class Session:
         `setup_options` は Setup Option Type をキーにした辞書である。偶数型は `int`、
         奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
         MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
-        (draft-ietf-moq-transport-21 §16.4 (Setup Options))。
+        (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         
         `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続では AUTHORITY と
         PATH を SETUP に載せ、WebTransport では載せてはならない
-        (draft-ietf-moq-transport-21 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+        (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
         """
     def close(self, /, code: int, reason: str = "internal error") -> list[Event]:
         """
@@ -3573,7 +3573,7 @@ class Session:
         制御メッセージの応答待ちタイムアウト (ms) を返す。
         
         無効の場合は `None` を返す
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         draft 由来の値であり、将来の改訂で変更される可能性がある。
         """
     @property
@@ -3582,7 +3582,7 @@ class Session:
         データストリームの停止を検出するタイムアウト (ms) を返す。
         
         無効の場合は `None` を返す
-        (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         draft 由来の値であり、将来の改訂で変更される可能性がある。
         """
     def drain_pending_events(self, /) -> list[Event]:
@@ -3631,14 +3631,14 @@ class Session:
         応答 (TRACK_STATUS_OK / REQUEST_ERROR) を受信する前の TRACK_STATUS と、保持して
         いない Request ID では破棄しない。応答前に request stream が終端した場合は
         REQUEST_ERROR として記録されるため破棄できる
-        (draft-ietf-moq-transport-21 §9.13 (TRACK_STATUS))。
+        (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
         """
     def goaway_drain_ready(self, /) -> bool:
         """
         GOAWAY の drain が完了しているかを返す。
         
         drain を妨げる request が 1 件も無ければ `True` である
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration))。
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
         draft 由来の仕様であり、将来の改訂で変更される可能性がある。
         """
     def goaway_drain_snapshot(self, /) -> dict:
@@ -3649,7 +3649,7 @@ class Session:
         なるまで drain は完了しない。キーは
         `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
         `blocking_track_status_request_ids` であり、値は Request ID のリストである
-        (draft-ietf-moq-transport-21 §6.6.1 (Graceful Session Migration) /
+        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
         §9.2 (GOAWAY))。draft 由来の仕様であり、将来の改訂で変更される可能性がある。
         """
     @property
@@ -3668,7 +3668,7 @@ class Session:
         指定 subscription で open 中の送信 fill fetch stream 数を返す。
         
         1 つの subscription に複数本の fill fetch stream が同時に開くことがある
-        (draft-ietf-moq-transport-21 §3.4 (Fill Semantics))。draft 由来の仕様であり、
+        (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。draft 由来の仕様であり、
         将来の改訂で変更される可能性がある。
         """
     @property
@@ -3676,7 +3676,7 @@ class Session:
         """
         キャンセル済み peer publisher alias の保持期間 (ms) を返す。
         
-        draft-ietf-moq-transport-21 §3.1.2 (Track Alias) の SHOULD に対応する保持期間であり、
+        draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する保持期間であり、
         draft 由来の値であるため将来の改訂で変更される可能性がある。
         """
     @property
@@ -3686,7 +3686,7 @@ class Session:
         
         宣言が無い場合は 0 を返す。SETUP で受け取った値はキャッシュせず、状態機械から
         都度取得する
-        (draft-ietf-moq-transport-21 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+        (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
         draft 由来の値であり、将来の改訂で変更される可能性がある。
         """
     def peer_setup_options(self, /) -> dict:
@@ -3696,7 +3696,7 @@ class Session:
         キーは Setup Option Type、値は偶数型なら `int`、奇数型なら `bytes` である。
         AUTHORIZATION_TOKEN は Token の辞書のリストになる。SETUP を受信していない
         場合は空の辞書を返す。
-        (draft-ietf-moq-transport-21 §9.1 (SETUP) / §16.4 (Setup Options))
+        (draft-ietf-moq-transport-22 §9.1 (SETUP) / §16.4 (Setup Options))
         """
     def receive_control(self, /, data: bytes) -> list[Event]:
         """
@@ -3779,7 +3779,7 @@ class Session:
         送信済みのデータストリームを reset する。
         
         `reliable_size` を渡すと RESET_STREAM_AT になり、先頭 `reliable_size` バイトは
-        peer へ確実に届ける (draft-ietf-moq-transport-21 §11.3.2 (Subgroup Object))。
+        peer へ確実に届ける (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
         省略した場合は RESET_STREAM になり、未達のデータは破棄される。
         """
     def retry_pending_data_streams(self, /) -> list[Event]:
@@ -3899,7 +3899,7 @@ class Session:
         `subgroup_id_mode` は Subgroup ID のエンコードモードであり、`"zero"` /
         `"first_object_id"` / `"explicit"` のいずれかである。Subgroup ID を最初の
         Object ID として決めるモードでは `subgroup_id` を渡さない
-        (draft-ietf-moq-transport-21 §11.3.1 (Subgroup Header))。
+        (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
         """
     def send_subgroup_object(self, /, stream_id: int, object_id: int, properties_data: Sequence[int] |None = None) -> tuple[bool, list[Event]]:
         """
@@ -4541,7 +4541,7 @@ class TrackProperties:
     MOQT の Track Properties。
     
     Track 単位で決まるプロパティである。SUBSCRIBE_OK / FETCH_OK / PUBLISH が運ぶ
-    (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)。
+    (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)。
     """
     def __eq__(self, other: object, /) -> bool: ...
     def __iter__(self, /) -> TrackPropertiesIterator: ...
@@ -4571,7 +4571,7 @@ class TrackProperties:
         DEFAULT_PUBLISHER_GROUP_ORDER (0x22): 既定の Group Order。
         
         省略時は `None` になる。draft の既定値 Ascending (0x1) は適用しない
-        (draft-ietf-moq-transport-21 §10.5 (Default Publisher Group Order))。
+        (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
         """
     @property
     def default_publisher_priority(self, /) -> int |None:
@@ -4579,14 +4579,14 @@ class TrackProperties:
         DEFAULT_PUBLISHER_PRIORITY (0x0E): 既定の Publisher Priority。
         
         省略時は `None` になる。draft の既定値 128 は適用しない
-        (draft-ietf-moq-transport-21 §10.4 (Default Publisher Priority))。
+        (draft-ietf-moq-transport-22 §10.4 (DEFAULT PUBLISHER PRIORITY))。
         """
     @property
     def dynamic_groups(self, /) -> int |None:
         """
         DYNAMIC_GROUPS (0x30): Group が動的に決まるか。
         
-        (draft-ietf-moq-transport-21 §10.6 (Dynamic Groups))
+        (draft-ietf-moq-transport-22 §10.6 (DYNAMIC GROUPS))
         """
     def encode(self, /) -> bytes:
         """
@@ -4594,7 +4594,7 @@ class TrackProperties:
         
         Object Properties と異なり長さプレフィックスを付けない。カウントプレフィックスを
         持たない KVP 列そのものになり、空の集合は 0 バイトになる
-        (draft-ietf-moq-transport-21 §8.4 (Track and Object Properties))。
+        (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
         subscription を送る引数へ埋め込むバイト列がこれである。
         """
     def find_varint(self, /, prop_type: int) -> int |None:
@@ -4603,7 +4603,7 @@ class TrackProperties:
         
         見つからない場合と、その型番号の値がバイト列である場合は `None` になる。
         IMMUTABLE_PROPERTIES の内側も探索し、外側の値を優先する
-        (draft-ietf-moq-transport-21 §10.7 (Immutable Properties))。
+        (draft-ietf-moq-transport-22 §10.7 (Immutable Properties))。
         """
     @property
     def has_unknown_mandatory(self, /) -> bool:
@@ -4611,7 +4611,7 @@ class TrackProperties:
         未知の必須プロパティを含むか。
         
         必須の範囲は `MANDATORY_TRACK_PROPERTY_MIN` から `MANDATORY_TRACK_PROPERTY_MAX`
-        である (draft-ietf-moq-transport-21 §16.8 (Properties) Table 14)。未知の必須
+        である (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)。未知の必須
         プロパティを含む Track は扱えないため、アプリは購読を拒否できる。
         """
     def items(self, /) -> list:
@@ -4777,7 +4777,7 @@ def classify_data_stream_type(type_id: int) -> str |None:
     データストリームの場合は種別を表す文字列を返す。制御ストリームと未知の値は
     `None` を返す。
     
-    (draft-ietf-moq-transport-21 §6.4.1 (Unidirectional Streams) Table 3)
+    (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
     """
 
 def decode_cbor(data: bytes) -> CborValue:
@@ -4804,7 +4804,7 @@ def decode_message(data: bytes) -> tuple[Message, int]:
     途中で切れている場合と、メッセージとして不正な場合は `ValueError` を送出する。
     
     制御メッセージは Type (vi64) + Length (u16 big-endian) + Message Body で構成される
-    (draft-ietf-moq-transport-21 §9 (Control Messages))。
+    (draft-ietf-moq-transport-22 §9 (Control Messages))。
     """
 
 def decode_parameter(param_type: int, value: bytes) -> Any:
@@ -4818,7 +4818,7 @@ def decode_parameter(param_type: int, value: bytes) -> Any:
     `FILL_PARAMETERS` は入れ子の辞書になる。
     
     `AUTHORIZATION_TOKEN` の辞書は `kind` で種別を表し、キーは種別ごとに異なる
-    (draft-ietf-moq-transport-21 §8.9 (Authorization Token Compression))。
+    (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
     
     - `delete` / `use_alias`: `alias`
     - `register`: `alias` / `token_type` / `token_value`
@@ -4826,7 +4826,7 @@ def decode_parameter(param_type: int, value: bytes) -> Any:
     
     解釈できないバイト列は `ValueError` になる。この節番号・規則は draft 由来であり
     将来の改訂で変更されうる。
-    (draft-ietf-moq-transport-21 §9.20 (Control Message Parameters))
+    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
     """
 
 def decode_varint(data: bytes) -> tuple[int, int]:
@@ -4871,7 +4871,7 @@ def encode_cbor(value: CborValue) -> bytes:
 
 def encode_varint(value: int) -> bytes:
     """
-    vi64 をエンコードする (draft-ietf-moq-transport-21 §8.1 (Variable-Length Integers))。
+    vi64 をエンコードする (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers))。
     
     最小バイト数の表現を返す。
     """
@@ -4921,7 +4921,7 @@ def parse_msf_fragment(fragment: str) -> tuple[Any, bytes, list[tuple[str, str]]
 def parse_name(text: str) -> tuple[Any, bytes]:
     """
     MSF の Track 識別子 (`namespace--track` 形式) を namespace と Track 名へ分解する
-    (draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names))。
+    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。
     
     分解できない場合は `ValueError` を送出する。メッセージには moqt-rs の
     `NameParseError` の `Display` 表現 (失敗した規則の説明) をそのまま使う。
@@ -4949,7 +4949,7 @@ def parse_track_name(text: str) -> bytes:
 def resolve_catalog_variables(document: bytes, fragment: str) -> bytes:
     """
     カタログの変数参照を fragment の値で解決する
-    (draft-ietf-moq-msf-01 §5.4 (Catalog variables))。
+    (draft-ietf-moq-msf-01 §5.4 (Variable Substitution))。
     """
 
 def resolve_timeline_template(template: list, n: int) -> tuple[int, int, int, int] |None:
@@ -4969,7 +4969,7 @@ def serialize_name(namespace: Sequence[Sequence[int]], track_name: bytes) -> str
 
 def serialize_namespace(namespace: Sequence[Sequence[int]]) -> str:
     """
-    namespace を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+    namespace を draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names)
     の正規表現へ変換する。
     
     各フィールドを `-` で連結し、リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは
@@ -4980,7 +4980,7 @@ def serialize_namespace(namespace: Sequence[Sequence[int]]) -> str:
 
 def serialize_track_name(track_name: bytes) -> str:
     """
-    Track 名を draft-ietf-moq-transport-21 §8.8 (Representing Namespace and Track Names)
+    Track 名を draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names)
     の正規表現へ変換する。
     
     単体の Track 名を表す関数であり、Full Track Name の長さ制約 (§8.7) は適用しない。
