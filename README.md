@@ -17,22 +17,26 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## moqt-py について
 
-moqt-py は Media over QUIC Transport (MOQT) のクライアントライブラリです。本体は MOQT / LOC / MSF / C4M の codec と sans I/O セッション状態機械です。
+moqt-py は Media over QUIC Transport (MOQT) の codec と sans I/O セッション状態機械を提供する Python ライブラリです。I/O を一切持たず、バイト列を入れてイベントを取り出す形なので、任意のイベントループ、スレッド、テストから呼び出せます。
 
-- `moqt.moqt` / `moqt.loc` / `moqt.msf`: MOQT / LOC / MSF の codec と sans I/O セッション状態機械
-- `moqt.c4m`: C4M (CAT) の認可トークンと DPoP proof の codec
-- `moqt.moq`: QUIC、WebTransport over HTTP/2 (WT-H2)、WebTransport over HTTP/3 (WT-H3) で接続する MOQT クライアント
-- `moqt.moq.testing`: server と pytest fixture
+- `moqt.moqt`: MOQT の codec と sans I/O セッション状態機械
+- `moqt.loc`: LOC (Low Overhead Media Container) のプロパティ codec
+- `moqt.msf`: MSF (MOQT Streaming Format) のカタログとタイムラインの codec
+- `moqt.c4m`: C4M (Common Access Token for MoQ) のトークンと DPoP proof の codec
+
+`moqt.moq` はこれらの上に載る WebTransport / QUIC の client で、おまけです。E2E テスト向けの server と pytest fixture は `moqt.moq.testing` にあります。
 
 実装には次のライブラリを利用しています。
 
 - MOQT の codec とセッション状態機械、LOC / MSF / C4M の codec に [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で利用しています
 - C4M の署名と検証に [aws-lc-rs](https://github.com/aws/aws-lc-rs) を利用しています
-- QUIC / WT-H2 / WT-H3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
+- `moqt.moq` の QUIC / WT-H2 / WT-H3 の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています
+
+API 一覧と使い方の詳細は [skills/moqt-py/SKILL.md](skills/moqt-py/SKILL.md) にまとめています。
 
 ## 対応仕様
 
-- Media over QUIC Transport: [draft-ietf-moq-transport-21](https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-21)
+- Media over QUIC Transport: [draft-ietf-moq-transport-22](https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-22)
 - Low Overhead Media Container: [draft-ietf-moq-loc-04](https://datatracker.ietf.org/doc/html/draft-ietf-moq-loc-04)
 - MOQT Streaming Format: [draft-ietf-moq-msf-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-01)
 - Authorization scheme for MOQT using Common Access Tokens: [draft-ietf-moq-c4m-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-c4m-01)
@@ -62,237 +66,33 @@ wheel は配布しておらず、Rust 1.93 以降の toolchain を使ってソ�
 uv add moqt-py
 ```
 
-## 使い方 (高レベル API)
+## 使い方
 
-`moqt.moq` が提供する client API です。
-
-- `moqt.moq.Client` で MOQT セッションを張ります
-- 低レベル API は [moqt.moqt](#moqtmoqt) / [moqt.loc](#moqtloc) / [moqt.msf](#moqtmsf) を参照してください
-
-### client
-
-接続先は MOQT の URI (`moqt://host:port/path`) であり、接続方式は `transport` で選びます (draft-ietf-moq-transport-21 §6.1 (MOQT URI Scheme))。
-
-- `Transport.Quic`: QUIC 直接接続。URI の authority、path、query を SETUP の AUTHORITY と PATH で通知し、ALPN は `moqt-22` (§6.2.2 (Native QUIC))
-- `Transport.WebTransportOverHTTP3` (省略時) / `Transport.WebTransportOverHTTP2`: WebTransport。URI のスキームを `https` に置き換えて extended CONNECT を送る (§6.2.1 (WebTransport))
-
-```python
-from moqt.moq import Client, Transport
-
-# QUIC 直接接続
-client = Client(url="moqt://127.0.0.1:4433/live", transport=Transport.Quic, verify_peer=False)
-
-# WebTransport over HTTP/3 (省略時)
-client = Client(url="moqt://127.0.0.1:4433/live", verify_peer=False)
-
-# WebTransport over HTTP/2
-client = Client(
-    url="moqt://127.0.0.1:4433/live",
-    transport=Transport.WebTransportOverHTTP2,
-    verify_peer=False,
-)
-```
-
-```python
-import asyncio
-
-from moqt.moq import Client
-
-
-async def main() -> None:
-    # verify_peer=False は自己署名証明書を使う開発時の設定
-    client = Client(url="moqt://127.0.0.1:4433/webtransport", verify_peer=False)
-    await client.connect()
-    print(client.established)
-
-    # Track を購読し、届いたオブジェクトを順に処理する
-    subscription = await client.subscribe([b"moqt-py", b"test"], b"video")
-    async for obj in subscription.objects():
-        print(obj.group_id, obj.object_id, len(obj.payload), obj.status)
-
-    await client.close()
-
-
-asyncio.run(main())
-```
-
-Track を配信する場合は `Client.publish` で `Publication` を作ります。
-
-```python
-publication = await client.publish([b"moqt-py", b"test"], b"video", 1)
-await publication.send_object(0, 0, b"payload")
-await publication.close()
-```
-
-送信の詳細は [オブジェクトの送信](#オブジェクトの送信) を参照してください。
-
-### オブジェクトの送信
-
-`Client.publish` や `moqt.moq.testing` の `subscribe_ok` が返す `Publication` からオブジェクトを送ります。`Publication.send_object` は subgroup ストリームで、`Publication.send_datagram` はデータグラムで送ります。Subgroup ID のモードは Group ごとに固定されるため、モードを変えるときは Group を分けます (draft-ietf-moq-transport-21 §11.3.1)。
-
-```python
-from moqt import moqt
-from moqt.moq import SUBGROUP_ID_MODE_EXPLICIT, SUBGROUP_ID_MODE_FIRST_OBJECT_ID
-
-# subgroup ストリームで送る。subgroup_id / publisher_priority / end_of_group も指定できる
-await publication.send_object(1, 0, b"payload")
-
-# Subgroup ID を明示する
-await publication.send_object(
-    2,
-    0,
-    b"payload",
-    subgroup_id=3,
-    subgroup_id_mode=SUBGROUP_ID_MODE_EXPLICIT,
-)
-
-# Subgroup ID を最初の Object ID にする。Subgroup ID を明示するモードと比べて
-# Subgroup ID フィールドの分だけ wire が短くなる
-await publication.send_object(3, 0, b"payload", subgroup_id_mode=SUBGROUP_ID_MODE_FIRST_OBJECT_ID)
-
-# End of Group を通知する。このとき payload は空でなければならない
-await publication.send_object(4, 0, b"", status=moqt.OBJECT_STATUS_END_OF_GROUP)
-
-# データグラムで送る
-await publication.send_datagram(5, 0, b"datagram payload")
-```
-
-同じ Location のオブジェクトは subgroup とデータグラムのどちらか一方しか届きません。データグラムで送るオブジェクトには、subgroup で送ったオブジェクトと重複しない Location を選んでください。
-
-受信側では、Subgroup ID を最初の Object ID として決めるモードでも、最初のオブジェクトを受信した時点で `MOQTObject.subgroup_id` に値が入ります (draft-ietf-moq-transport-21 §11.3.1)。
-
-> [!WARNING]
->
-> - データグラムは経路 MTU を超えると通知なく破棄され、送信側からは検知できません (draft-ietf-moq-transport-21 §11.2.1)。`moqt.moqt.MAX_DATAGRAM_SIZE` を超えるデータグラムを送ると警告を記録します。大きいオブジェクトは subgroup ストリームで送ってください
-
-### moqt.moq.testing
-
-pytest の rootdir に置いた `conftest.py` で宣言すると、client と server の組を用意する fixture が使えます。
-
-```python
-pytest_plugins = ["moqt.moq.testing"]
-```
-
-接続方式は `moq_transport` fixture で選べます (既定は WebTransport over HTTP/3)。上書きすると suite 全体を別の接続方式で実行できます。
-
-```python
-from moqt.moq import Publication
-from moqt.moq.testing import MOQTPair, SubscriptionRequest, collect_objects, wait_until
-
-
-async def test_objects_are_delivered(moq_pair: MOQTPair) -> None:
-    """server が送ったオブジェクトを client が受け取れることを確認する。"""
-    published: list[Publication] = []
-
-    async def on_subscribe(request: SubscriptionRequest) -> None:
-        published.append(await request.subscribe_ok(1))
-
-    moq_pair.server.on_subscribe(on_subscribe)
-
-    subscription = await moq_pair.client.subscribe([b"ns"], b"video")
-    await wait_until(lambda: bool(published))
-    await published[0].send_object(1, 0, b"hello")
-
-    received = await collect_objects(subscription.objects(), 1, 5.0)
-    assert received[0].payload == b"hello"
-```
-
-fixture を使わずに `Server` を直接起動することもできます。
-
-```python
-import asyncio
-
-from moqt.moq.testing import Server, SubscriptionRequest
-
-
-async def main() -> None:
-    server = Server(
-        host="127.0.0.1",
-        port=4433,
-        certfile="cert.pem",
-        keyfile="key.pem",
-    )
-
-    async def on_subscribe(request: SubscriptionRequest) -> None:
-        # SUBSCRIBE_OK を返して配信を開始する
-        publication = await request.subscribe_ok(1)
-        await publication.send_object(0, 0, b"hello")
-        await publication.close()
-
-    server.on_subscribe(on_subscribe)
-    await server.start()
-    await server.run()
-
-
-asyncio.run(main())
-```
-
-`certfile` と `keyfile` には WebTransport のサーバー証明書を指定します。開発用の自己署名証明書は `generate_certificates` が `cert.pem` と `key.pem` を書き出します。
-
-`moqt.moq.testing` は `pytest` / `pytest-asyncio` / `cryptography` を使います。非同期のテストを実行するため、`pyproject.toml` で `asyncio_mode = "auto"` を設定するか、テストに `@pytest.mark.asyncio` を付けます。
-
-```bash
-uv add "moqt-py[testing]"
-```
-
-## 使い方 (低レベル API)
-
-テストから実装の細部 (ストリームの断片化、到着順、エラー、タイムアウト、状態遷移など) を扱えるよう、`moqt.moq` の `Client` / `Server` も低レベル API を隠しません。
-
-### moqt.moq (低レベル API)
-
-`Client.runtime` と `Client.session` で、接続が駆動しているランタイムと native の状態機械 (moqt-rs の `Session`) に直接アクセスできます。`Client.on_event` は種類ごとのコールバックと違い、`send_request` や `reset_request_stream` のような送信系も含めたすべてのイベントを順序どおりに渡します。server 側は `Server.on_event` で、イベントをランタイムと組にして受け取ります。
-
-```python
-from moqt import moqt
-from moqt.moq import Client, NativeEvent, Runtime
-
-
-async def main() -> None:
-    client = Client(url="moqt://127.0.0.1:4433/live", verify_peer=False)
-    await client.connect()
-
-    # すべてのイベントを到着順に記録する
-    events: list[str] = []
-
-    async def on_event(event: NativeEvent) -> None:
-        events.append(event.kind)
-
-    client.on_event(on_event)
-
-    # 接続が駆動しているランタイムと native の状態機械を直接観測する
-    runtime: Runtime = client.runtime
-    print(runtime.session.established, runtime.subscriptions())
-
-    # 生のストリーム操作とデータグラム送信 (状態機械を介さない)
-    stream_id = await client.open_stream()
-    await client.send_stream_data(stream_id, b"\x00" + bytes(8), fin=True)
-    await client.stop_sending_stream(stream_id, moqt.STREAM_CANCELLED)
-    await client.reset_stream(stream_id, moqt.STREAM_CANCELLED)
-    await client.send_datagram(b"\x00" + bytes(8))
-```
+低レベル API はバイト列を入出力するだけで、ソケットにもイベントループにも依存しません。
 
 ### moqt.moqt
 
-MOQT の codec と sans I/O セッション状態機械です。ストリームの実体には触れず、呼び出し側がバイト列をやり取りします。
+MOQT の codec と sans I/O セッション状態機械です。ストリームの実体には触れず、呼び出し側が peer とのバイト列の受け渡しを行います。
 
 ```python
-from moqt.moqt import Session, decode_message
+from moqt.moqt import Session, decode_message, decode_varint
 
 # 自側の制御ストリームの先頭バイト列を作る
-client = Session.client("my-implementation")
-data = client.start()
-# 先頭 2 バイトは制御ストリームの stream type (0x2F00)
-print(data[:2])
+session = Session.client("my-implementation")
+data = session.start()
+# 先頭は制御ストリームの stream type (0x2F00) の varint 表現
+print(decode_varint(data))
 
 # 制御メッセージを 1 件デコードする
 message, consumed = decode_message(data[2:])
 print(message.kind, hex(message.type_id), message.body)
 ```
 
+peer から受け取ったバイト列は `Session.receive_control` / `receive_request_stream` / `receive_data_stream` / `receive_datagram` へ渡し、戻り値の `Event` に従って `Session.send_*` が返すバイト列を送出します。
+
 ### moqt.loc
 
-LOC (Low Overhead Media Container) のプロパティ codec です。
+LOC のプロパティ codec です。
 
 ```python
 from moqt import loc
@@ -309,7 +109,7 @@ print(decoded.timestamp, decoded.timescale, decoded.video_frame_marking)
 
 ### moqt.msf
 
-MSF (MOQT Streaming Format) のカタログとタイムラインの codec です。カタログは draft の MUST に照らして検証されます。
+MSF のカタログとタイムラインの codec です。カタログは draft の MUST に照らして検証されます。
 
 ```python
 from moqt import msf
@@ -322,37 +122,22 @@ print(catalog.tracks)
 # delta 更新を適用する
 catalog.apply_delta('{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}]}')
 print(catalog.encode())
-
-# JSON 文字列を経由せずにカタログと delta 更新を組み立てる
-built = msf.Catalog()
-built.add_track(msf.Track("video", "loc", True))
-delta = msf.DeltaUpdate()
-delta.add_tracks([msf.Track("audio", "loc", True)])
-delta.clone_tracks([msf.CloneTrack("video-low", "video")])
-built.apply_delta_update(delta)
-print(built.encode())
-
-# タイムラインは gzip 圧縮にも対応する
-timeline = msf.MediaTimeline()
-timeline.add(1000, 1, 2, 0)
-print(msf.MediaTimeline.decode(timeline.encode(gzip=True)).entries)
 ```
 
 ### moqt.c4m
 
-C4M (Common Access Token for MoQ) のトークンと DPoP proof の codec です。署名と検証には aws-lc-rs を使います。Track Namespace は `tuple[bytes, ...]`、Track Name は `bytes` で扱います。
+C4M のトークンと DPoP proof の codec です。署名と検証には aws-lc-rs を使います。
 
 ```python
 from moqt import c4m
 
-# `example.com` の `video-` prefix を PUBLISH できるスコープを組み立てる
+# CAT トークンを compact 形式で発行する
+claim = c4m.MoqtClaim()
 scope = c4m.MoqtScope([c4m.MoqtAction.PUBLISH])
 scope.namespace_match(c4m.NamespaceMatch.match(c4m.Match.exact(b"example.com")))
 scope.track = c4m.Match.prefix(b"video-")
-claim = c4m.MoqtClaim()
 claim.scope(scope)
 
-# CAT トークンを compact 形式で発行する
 builder = c4m.CatTokenBuilder()
 builder.issuer("https://auth.example.com")
 builder.audience("https://relay.example.com")
@@ -364,12 +149,41 @@ token_text = builder.build_compact(key)
 # 検証と認可
 token = c4m.CatToken.decode(token_text)
 token.verify(key)
-token.claims.validate(c4m.ClaimValidationOptions(reference_time_seconds=1_700_000_000.0))
 assert token.claims.authorize(c4m.MoqtAction.PUBLISH, (b"example.com",), b"video-hd")
-print(token.format, token.claims.issuer)
 ```
 
-CBOR / COSE / JWK / JWS compact の低レベル API も公開しています。付録 A のテストベクタは `tests/test_c4m.py` で固定しています。
+### おまけ: moqt.moq
+
+WebTransport (WT-H3 / WT-H2) と QUIC 直接接続で MOQT セッションを張る client です。接続方式は `Transport` で選びます。
+
+```python
+import asyncio
+
+from moqt.moq import Client
+
+
+async def main() -> None:
+    # verify_peer=False は自己署名証明書を使う開発時の設定
+    client = Client(url="moqt://127.0.0.1:4433/webtransport", verify_peer=False)
+    await client.connect()
+
+    subscription = await client.subscribe([b"moqt-py", b"test"], b"video")
+    async for obj in subscription.objects():
+        print(obj.group_id, obj.object_id, len(obj.payload), obj.status)
+
+    await client.close()
+
+
+asyncio.run(main())
+```
+
+Track を配信する場合は `Client.publish` が返す `Publication` からオブジェクトを送ります。E2E テストで client の相手役が要る場合は `moqt.moq.testing` の `Server` と pytest fixture を使います。
+
+`moqt.moq` は低レベル API も隠しません。`Client.runtime` と `Client.session` で接続が駆動しているランタイムと状態機械を直接扱え、`Client.on_event` ですべてのイベントを到着順に観測できます。
+
+## 開発
+
+開発手順は [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 
 ## ライセンス
 
