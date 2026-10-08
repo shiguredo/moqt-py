@@ -3585,6 +3585,14 @@ class Session:
         (draft-ietf-moq-transport-21 §12.2 (Session Termination Codes))。
         draft 由来の値であり、将来の改訂で変更される可能性がある。
         """
+    def drain_pending_events(self, /) -> list[Event]:
+        """
+        状態機械が積んだイベントを取り出す。
+        
+        受信系の API がエラーを返した場合でも、購読単位の cancel (Malformed Track) の
+        イベントは状態機械に積まれている。I/O 層はエラーを受け取ったあとに本 API を呼び、
+        取り残しを回収する。イベントが無ければ空のリストを返す。
+        """
     @property
     def established(self, /) -> bool:
         """

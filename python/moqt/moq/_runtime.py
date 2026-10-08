@@ -712,7 +712,14 @@ class Runtime:
                     # varint が途中の場合は次の断片で判定する
                     return
                 self._data_stream_types[stream_id] = stream_type
-            _objects, events = self._core.receive_data_stream(stream_id, data, stream_type)
+            try:
+                _objects, events = self._core.receive_data_stream(stream_id, data, stream_type)
+            except Exception as error:
+                # Malformed Track の検出は購読単位の cancel であり、セッションは閉じない。
+                # cancel のイベントを取り残さないよう、エラーでも積まれたイベントを処理する
+                if not await self._apply_events_or_cancel(error):
+                    raise
+                return
             await self._apply_events(events)
 
     async def receive_stream_closed(
@@ -755,6 +762,9 @@ class Runtime:
                     self._core.receive_data_stream_closed(stream_id, reset, error_code)
                 )
         except Exception as error:
+            # 購読単位の cancel のイベントが積まれている場合があるため、先に処理する
+            if await self._apply_events_or_cancel(error):
+                return
             logger.debug("MOQT stream close was rejected: stream=%s error=%s", stream_id, error)
             await self._finish_session(0, str(error))
 
@@ -773,7 +783,14 @@ class Runtime:
         生バイト列を保持する。データグラムには購読の登録に相当する明示的な契機が
         無いため、再試行は定期処理から行う。
         """
-        events = self._core.receive_datagram(data)
+        try:
+            events = self._core.receive_datagram(data)
+        except Exception as error:
+            # Malformed Track の検出は購読単位の cancel であり、セッションは閉じない。
+            # cancel のイベントを取り残さないよう、エラーでも積まれたイベントを処理する
+            if not await self._apply_events_or_cancel(error):
+                raise
+            return
         if any(event.kind == "unknown_track_alias" for event in events):
             self._hold_datagram(data)
             return
@@ -1779,6 +1796,23 @@ class Runtime:
                 pending.future.set_exception(SessionClosedError(code, reason))
         self._pending_requests.clear()
         await self._notify(self._events.on_close, code, reason)
+
+    async def _apply_events_or_cancel(self, error: Exception) -> bool:
+        """受信 API がエラーを返したときに、積まれた cancel のイベントを処理する。
+
+        Malformed Track (draft-ietf-moq-transport-22 §12.1 (Malformed Tracks)) の検出は
+        購読単位の cancel であり、状態機械は該当の request を終端してからエラーを返す。
+        セッションは閉じないため、I/O 層がエラーだけを見て接続の失敗として扱うと、
+        終端 (RESET_STREAM / STOP_SENDING / 購読終了) のイベントが取り残される。
+
+        積まれたイベントを処理し、セッションが `Established` のままなら `True` を返す。
+        セッションが閉じた場合は `False` を返すので、呼び出し元が失敗をアプリへ伝える。
+        """
+        await self._apply_events(self._core.drain_pending_events())
+        if self._core.established:
+            logger.debug("MOQT receive was rejected while the session stays established: %s", error)
+            return True
+        return False
 
     async def _notify(self, callback: Callable[..., Awaitable[None]] | None, *args: object) -> None:
         """コールバックを 1 回呼ぶ。例外はタスクエラーとして通知する。"""

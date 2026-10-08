@@ -2805,6 +2805,15 @@ impl CoreSession {
         retry_held_data_streams(self, py)
     }
 
+    /// 状態機械が積んだイベントを取り出す。
+    ///
+    /// 受信系の API がエラーを返した場合でも、購読単位の cancel (Malformed Track) の
+    /// イベントは状態機械に積まれている。I/O 層はエラーを受け取ったあとに本 API を呼び、
+    /// 取り残しを回収する。イベントが無ければ空のリストを返す。
+    fn drain_pending_events(&mut self, py: Python<'_>) -> PyResult<Vec<CoreEvent>> {
+        self.drain_events(py)
+    }
+
     /// peer のデータグラムを投入し、発生したイベントを返す。
     ///
     /// オブジェクトを受理した場合は、その内容を `object` イベントとして返す。
