@@ -1,7 +1,7 @@
 # パッケージの description を実態に合わせる
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/change-package-description
 - Polished:
 
@@ -46,3 +46,22 @@ Python client and server library for Media over QUIC over WebTransport
 - `pyproject.toml` / `Cargo.toml` / GitHub の description が同じ新しい文字列になっていること
 - `prek run --all-files` (pre-commit ステージ) が通ること
 - `uv lock --check` が通ること (description の変更がロックに影響しないことの確認)
+
+## 解決方法
+
+`pyproject.toml` / `Cargo.toml` / GitHub の repository description を次の 1 文に統一した。
+
+```
+moqt-py is a Sans-IO MOQT/LOC/MSF/C4M library with a WebTransport/QUIC client, using moqt-rs.
+```
+
+- webtransport-py の書きぶり (`{name} is a Sans-IO {扱う層} library using {依存}.`) に合わせ、
+  扱う層に MOQT/LOC/MSF/C4M、依存に moqt-rs を書いた
+- client を文の要素として明記し、実態と合わない `server` と `over WebTransport` を外した
+
+### 確認
+
+- `pyproject.toml` / `Cargo.toml` と `gh repo view` が同じ文字列であること
+- `uv lock --check` が通り、`uv.lock` に差分が出ないこと
+- `uv sync` 後の `importlib.metadata` の Summary が新しい文になること
+- `prek run --all-files` (pre-commit ステージ) が通ること
