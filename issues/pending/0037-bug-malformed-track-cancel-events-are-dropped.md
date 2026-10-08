@@ -82,3 +82,23 @@ reopened にする。現時点で moqt-py 側から観測できる範囲では�
 cancel のイベントが取り残される事象は起きない。`CoreSession.receive_datagram` /
 `receive_data_stream` がエラー時に `drain_events` を呼ばない点は残っており、購読単位の
 cancel を返す経路が入った時点で改めて対応が必要になる。
+
+## reopened にする理由
+
+pending の理由に書いた「moqt-rs の datagram 経路が購読単位の cancel を扱わず、セッションを
+`PROTOCOL_VIOLATION` で閉じる」という前提が、現行の moqt-rs と一致しない。
+
+現行の `Session::recv_object_datagram` と `Session::recv_subgroup_header` /
+`Session::recv_subgroup_object` は、Malformed Track の検出時に `Session::fail` ではなく
+`Session::terminate_malformed_track` を呼び、該当の request を終端して
+`RequestTerminated` (`TerminationReason::MalformedTrack`) を積んだうえでエラーを返す。
+セッションは `Established` のままである。これは更新前の `6c3ab63` でも同じである。
+
+したがって残っているのは moqt-py 側の扱いであり、次の 2 つを直せばよい。
+
+- `CoreSession.receive_datagram` / `receive_data_stream` がエラーを返したときに、状態機械に
+  積まれた cancel のイベントを取り出せるようにする
+- `Runtime` がそのエラーを接続の失敗として扱わず、購読単位の cancel として処理する
+
+issue 0052 で `Client.runtime` / `Runtime.receive_datagram` / `Runtime.receive_stream` を
+公開したため、tick に頼らずテストから直接検証できるようにもなった。
