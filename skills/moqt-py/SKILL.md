@@ -7,6 +7,8 @@ description: Python の MOQT ライブラリ moqt-py (import 名 moqt) の利用
 
 MOQT (Media over QUIC Transport) の codec と sans I/O セッション状態機械を提供する Python ライブラリ。本体は I/O を持たない低レベル API で、WebTransport / QUIC の I/O は `moqt.moq` が [webtransport-py](https://pypi.org/project/webtransport-py/) に委ねる。
 
+人間向けの使い方は `docs/USAGE.md` にある。このファイルは API の一覧と注意点をまとめたリファレンスである。
+
 ## インストールと動作環境
 
 ```bash
