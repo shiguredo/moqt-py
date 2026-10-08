@@ -50,12 +50,14 @@ webtransport-py ではこの不足が 0220 (層間に欠けている公開 API �
 0258 (quic 層でサーバーがストリームを中断し接続を終了コードと理由付きで閉じられるように
 する) として起票されている。0220 は `shutdown_stream` と `close` を、0258 は
 `stop_sending` / `reset_stream` / `on_stream_reset` を対象にしており、両方の実装を待つ。
+どちらも 2026-10-08 時点では open である。
 
 - 低レベル `webtransport_ext.quic.Connection` には `close_stream` / `stop_sending` /
   `reset_stream` / `close(error_code, reason)` が既にあり、高レベル `quic.Server` に
   露出していないのが原因である
 - `quic.Client` には `shutdown_stream` と `wait_for_stream_reset` があるため、client 側の
   不足は `close()` が終了コードと理由を受け取らない点だけである
-- 0220 は 2026-09-23 時点で実装コミットが無く、対象も `quic.Server` の 2 API に限られる
+- 統一 API (`webtransport.Server` / `Session`) は QUIC 直接接続を扱わないため、
+  QUIC 対応は `quic.Server` の API 追加を待つ必要がある
 
 webtransport-py の 0220 / 0258 がリリースされた時点で reopened にして対応する。
