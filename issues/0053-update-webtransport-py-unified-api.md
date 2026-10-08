@@ -1,7 +1,7 @@
 # webtransport-py の統一 Client / Server へ追従する
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/update-webtransport-py-unified-api
 - Polished:
 
@@ -95,3 +95,36 @@ testing server (`python/moqt/moq/testing/server.py`):
 - `prek run --all-files` (pre-commit ステージ) が通ること
 - WT-H2 と WT-H3 の両方で E2E テストが通ること
 - `tests/test_client.py` が統一 API の型と `HTTPVersion` で接続方式を確認していること
+
+## 解決方法
+
+webtransport-py を 2026.1.0.dev24 へ上げ、統一 API へ追従した。
+
+- `pyproject.toml` の依存を `webtransport-py>=2026.1.0.dev24,<2026.2` にし、
+  `uv lock --upgrade-package webtransport-py` で `uv.lock` を更新した
+- `moqt.moq.Client` は `webtransport.Client` に `HTTPVersion` を渡して作るようにした。
+  プロトコル固有の操作は選択したハンドルから呼び、WT-H2 の STOP_SENDING は
+  `client.h2.stop_sending`、WT-H3 は API が無いため従来どおり `reset_stream` で
+  代替する。QUIC 直接接続は `webtransport.quic.Client` のままである
+- `moqt.moq.testing.Server` は `webtransport.Server` を `HTTPVersion` で選び、
+  コールバックを `Session` ハンドルを受け取る形へ統一した。接続の識別は
+  `(peer address, session ID)` に統一し、`on_session_request` で address を控える
+  必要を無くした
+- WT-H2 だけが持つ `stop_sending` / `close_session` は `Session.http_version` で
+  判定し、moqt-py 側で定義した Protocol へ `typing.cast` で絞って呼ぶ
+- WT-H3 のセッション終了 API がまだ無いため、server の close は CONNECT ストリームの
+  `reset_stream` のままにした
+- 統一 API にもピアの FIN を通知するコールバックは無いため、`_runtime.py` の FIN に
+  関するコメントを現状の API に合わせて書き換えた
+- pending の 0030 / 0036 の参照を統一 API の名前へ更新した。待っている webtransport-py
+  の 0257 (h3 のセッション終了 API) / 0258 (quic のストリーム中断と接続 close) /
+  0220 (層間に欠けている公開 API) は 2026-10-08 時点でも open であり、pending のまま
+  残している
+
+### 確認
+
+- `uv run pytest` は 541 件通過、7 件 skip (TEST_MOQT_URI が必要な relay / connect)
+- `prek run --all-files` (pre-commit ステージ) が通る
+- E2E テストは conftest の `moq_transport` が WT-H2 と WT-H3 の両方を回り、どちらも通る
+- テストは WT-H2 (STOP_SENDING と `close_session`) と WT-H3 (`reset_stream` による代替)
+  の両方の `TransportOps` を通る
