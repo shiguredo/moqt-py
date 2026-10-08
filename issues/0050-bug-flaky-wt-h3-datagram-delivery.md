@@ -1,7 +1,7 @@
 # wt-h3 のデータグラム配送がまれに失われ、E2E テストが時々失敗する
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/fix-flaky-wt-h3-datagram-delivery
 - Polished:
 
@@ -73,3 +73,28 @@ DATAGRAM フレームが捨てられている。moqt-py のフィルタ・購読
 - `uv run pytest tests/test_e2e.py -k datagram` を 25 回以上繰り返して 1 回も失敗しないこと
 - データグラムが失われる原因 (moqt-py / webtransport-py / テストの前提のいずれか) と、
   実施した修正または報告を issue に記録すること
+
+## 解決方法
+
+原因は moqt-py ではなく、moqt-py が固定していた webtransport-py 2026.1.0.dev18 の受信実装で
+あった。dev18 は 0209 (macOS の kqueue セレクタで受信パケットの読み取り可能通知が失われる)
+の修正前の版であり、DATAGRAM を含むパケットがアプリに読まれないという本 issue の観測
+(受信側の QUIC 層から DATAGRAM イベントが生成されない) をその機序で説明できる。
+
+webtransport-py 側でも同じ報告が 0272 として調査されており、現行版では再現しないこと、
+報告症状が 0209 の機序と区別できないことが確認されている。0209 の修正は `0a5d1e8`
+(2026-09-15) で、dev18 の bump `9b77d03` (2026-09-14) より後である。修正前の受信実装を
+注入して検出力を測る回帰は webtransport-py の `tests/test_common.py` が担う。
+
+moqt-py 側の対応は依存の更新である。webtransport-py 2026.1.0.dev24 へ上げる作業を 0053 で
+行い、`0a5d1e8` を含む版を取り込んだ。moqt-py のフィルタ・購読状態・状態機械に原因が
+無いことは、調査時点の観測 (送信側は `allowed=True` で送出し、受信側の
+`Runtime.receive_datagram` が呼ばれていない) で確認済みである。
+
+### 確認
+
+- `uv run pytest tests/test_e2e.py -k datagram` を 25 回連続で実行し、失敗 0 件
+  (macOS 26 arm64 / CPython 3.14)
+- CPU 負荷 (ビジーループ 4 プロセス) をかけた状態で同じテストを 15 回実行し、失敗 0 件
+  (調査時は負荷下で数回に 1 回再現していた)
+- `uv run pytest` の全件 (541 passed / 7 skipped) が通ること
