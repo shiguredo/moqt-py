@@ -5,9 +5,10 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
-from webtransport import h2, h3
+from webtransport import HTTPVersion, Session
+from webtransport import Server as WebTransportServer
 
 from moqt import moqt
 from moqt.moq._runtime import (
@@ -29,9 +30,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # 接続を識別する context。`RuntimeEvents.bind` がコールバックの第 1 引数に渡す。
-# - WT-H3: (address, session_id)
-# - WT-H2: SessionWriter (session ID は接続ごとに振られるため writer で引く)
-ConnectionContext = tuple[tuple[str, int], int] | h2.SessionWriter
+#
+# 接続方式によらず (peer address, session ID) の組で識別する。統一 API の
+# `webtransport.Session` はコールバックのたびに作られるため同一性では識別できない。
+# session ID は接続ごとに振られるため、address と組にして初めて一意になる。
+ConnectionContext = tuple[tuple[str, int], int]
+
+
+class _HTTP2Session(Protocol):
+    """WT-H2 のセッションハンドルだけが持つ操作。
+
+    統一 API の `webtransport.Session` はプロトコル非依存の操作だけを持つ。
+    WT-H2 固有の操作は `Session.http_version` で WT-H2 と判定したうえで
+    この形として扱う。
+    """
+
+    async def stop_sending(self, stream_id: int, error_code: int = 0) -> None:
+        """WT_STOP_SENDING を送出する。"""
+        ...
+
+    async def close_session(self, error_code: int = 0, error_message: str = "") -> None:
+        """WT_CLOSE_SESSION を送出してセッションを閉じる。"""
+        ...
+
+
+def _session_context(session: Session) -> ConnectionContext:
+    """セッションハンドルから接続の識別子を作る。
+
+    address を取得できない場合は `("", 0)` にする。
+    """
+    address = session.addr
+    return (address if address is not None else ("", 0), session.session_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,8 +424,6 @@ class _Connection:
     runtime: Runtime
     address: tuple[str, int]
     session_id: int
-    writer: h2.SessionWriter | None = None
-    """WT-H2 の送信に使う writer。他の transport では `None`。"""
 
 
 class Server:
@@ -437,33 +464,26 @@ class Server:
             # 接続の close を送る API が無く、MOQT の server 役を完全には実装できない
             raise ValueError("Transport.Quic is not supported by the testing server")
         self.transport = transport
-        if transport is Transport.WebTransportOverHTTP2:
-            self._transport: h2.Server | h3.Server = h2.Server(
-                host=host,
-                port=port,
-                certfile=certfile,
-                keyfile=keyfile,
-                allowed_origins=allowed_origins,
-            )
-        else:
-            self._transport = h3.Server(
-                host=host,
-                port=port,
-                certfile=certfile,
-                keyfile=keyfile,
-                allowed_origins=allowed_origins,
-            )
+        # 統一 API の Server を HTTPVersion で選ぶ。コールバックは接続方式に
+        # よらず Session ハンドルを受け取る
+        self._transport: WebTransportServer = WebTransportServer(
+            host=host,
+            port=port,
+            http_version=(
+                HTTPVersion.HTTP2
+                if transport is Transport.WebTransportOverHTTP2
+                else HTTPVersion.HTTP3
+            ),
+            certfile=certfile,
+            keyfile=keyfile,
+            allowed_origins=allowed_origins,
+        )
         self._implementation = implementation
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
         self._setup_options = dict(setup_options) if setup_options is not None else None
-        # 接続を識別する context をキーにした接続。
-        # - WT-H3: (address, session_id)
-        # - WT-H2: SessionWriter
+        # 接続を識別する context をキーにした接続
         self._connections: dict[ConnectionContext, _Connection] = {}
-        # WT-H2 の session ID ごとの peer アドレス。コールバックが SessionWriter
-        # しか渡さないため、CONNECT 要求の受信時に控える
-        self._h2_addresses: dict[int, tuple[str, int]] = {}
         self._on_session_established: Callable[[ServerSession], Awaitable[None]] | None = None
         self._on_subscribe: Callable[[SubscriptionRequest], Awaitable[None]] | None = None
         self._on_fetch: Callable[[FetchRequest], Awaitable[None]] | None = None
@@ -476,19 +496,11 @@ class Server:
         self._event_callback: Callable[[Runtime, NativeEvent], Awaitable[None]] | None = None
         self._tick_task: asyncio.Task[None] | None = None
 
-        if isinstance(self._transport, h2.Server):
-            self._transport.on_session_request(self._on_h2_session_request)
-            self._transport.on_session_ready(self._on_h2_session_ready)
-            self._transport.on_session_closed(self._on_h2_session_closed)
-            self._transport.on_stream_data(self._on_h2_stream_data)
-            self._transport.on_stream_reset(self._on_h2_stream_reset)
-            self._transport.on_datagram(self._on_h2_datagram)
-        else:
-            self._transport.on_session_ready(self._on_h3_session_ready)
-            self._transport.on_session_closed(self._on_h3_session_closed)
-            self._transport.on_stream_data(self._on_h3_stream_data)
-            self._transport.on_stream_reset(self._on_h3_stream_reset)
-            self._transport.on_datagram(self._on_h3_datagram)
+        self._transport.on_session_ready(self._on_session_ready)
+        self._transport.on_session_closed(self._on_session_closed)
+        self._transport.on_stream_data(self._on_stream_data)
+        self._transport.on_stream_reset(self._on_stream_reset)
+        self._transport.on_datagram(self._on_datagram)
 
     # ─── 公開 API ───────────────────────────────────────────
 
@@ -608,12 +620,7 @@ class Server:
 
     # ─── 内部 ───────────────────────────────────────────────
 
-    def _transport_ops(
-        self,
-        address: tuple[str, int],
-        session_id: int,
-        writer: h2.SessionWriter | None,
-    ) -> TransportOps:
+    def _transport_ops(self, session: Session) -> TransportOps:
         """1 本の session に対応するトランスポート操作を組み立てる。"""
 
         async def open_bidi_stream() -> int:
@@ -623,37 +630,31 @@ class Server:
                 "server-initiated requests are not available over WebTransport"
             )
 
-        if writer is not None:
+        if session.http_version is HTTPVersion.HTTP2:
+            # WT-H2 は STOP_SENDING とセッションの終了を送出できる
+            h2_session = cast(_HTTP2Session, session)
             return TransportOps(
-                open_uni_stream=lambda: writer.open_stream(unidirectional=True),
+                open_uni_stream=lambda: session.open_stream(unidirectional=True),
                 open_bidi_stream=open_bidi_stream,
-                send_stream_data=writer.send_stream_data,
-                reset_stream=writer.reset_stream,
-                stop_sending=writer.stop_sending,
-                send_datagram=writer.send_datagram,
-                close=lambda code, reason: writer.close_session(code, reason),
+                send_stream_data=session.send_stream_data,
+                reset_stream=session.reset_stream,
+                stop_sending=h2_session.stop_sending,
+                send_datagram=session.send_datagram,
+                close=lambda code, reason: h2_session.close_session(code, reason),
             )
-
-        transport = self._transport
-        if isinstance(transport, h3.Server):
-            return TransportOps(
-                open_uni_stream=lambda: transport.open_stream(address, session_id, True),
-                open_bidi_stream=open_bidi_stream,
-                send_stream_data=lambda stream_id, data, fin: transport.send_stream_data(
-                    address, stream_id, data, fin
-                ),
-                reset_stream=lambda stream_id, error_code: transport.reset_stream(
-                    address, stream_id, error_code
-                ),
-                # webtransport-py の h3 server は STOP_SENDING を公開していないため、
-                # ストリームを reset して受信を終わらせる
-                stop_sending=lambda stream_id, error_code: transport.reset_stream(
-                    address, stream_id, error_code
-                ),
-                send_datagram=lambda data: transport.send_datagram(address, session_id, data),
-                close=lambda _code, _reason: transport.close_stream(address, session_id, 0),
-            )
-        raise RuntimeError(f"unsupported transport: {self.transport}")
+        return TransportOps(
+            open_uni_stream=lambda: session.open_stream(unidirectional=True),
+            open_bidi_stream=open_bidi_stream,
+            send_stream_data=session.send_stream_data,
+            reset_stream=session.reset_stream,
+            # WT-H3 の session は STOP_SENDING を送出できないため、
+            # ストリームを reset して受信を終わらせる
+            stop_sending=lambda stream_id, error_code: session.reset_stream(stream_id, error_code),
+            send_datagram=session.send_datagram,
+            # WT-H3 にはセッションを終了コードと理由付きで閉じる API が無いため、
+            # CONNECT ストリームを reset して終了を伝える
+            close=lambda _code, _reason: session.reset_stream(session.session_id, 0),
+        )
 
     def _runtime_events(self, context: ConnectionContext) -> RuntimeEvents:
         """ランタイムのコールバックを組み立てる。
@@ -822,21 +823,17 @@ class Server:
         )
         await self._on_subscribe(request)
 
-    async def _open_connection(
-        self,
-        context: ConnectionContext,
-        address: tuple[str, int],
-        session_id: int,
-        writer: h2.SessionWriter | None = None,
-    ) -> None:
+    async def _open_connection(self, session: Session) -> None:
         """1 本の接続で server role の MOQT Session を開始する。"""
+        context = _session_context(session)
+        address, session_id = context
         if context in self._connections:
             raise RuntimeError(f"duplicate WebTransport session: {session_id} from {address}")
 
         runtime = Runtime(
             client=False,
             implementation=self._implementation,
-            ops=self._transport_ops(address, session_id, writer),
+            ops=self._transport_ops(session),
             events=self._runtime_events(context),
             transport=self.transport,
             control_message_timeout=self._control_message_timeout,
@@ -844,116 +841,47 @@ class Server:
             setup_options=self._setup_options,
         )
         self._connections[context] = _Connection(
-            runtime=runtime, address=address, session_id=session_id, writer=writer
+            runtime=runtime, address=address, session_id=session_id
         )
         await runtime.start()
 
-    async def _on_h3_session_ready(self, session_id: int, address: tuple[str, int]) -> None:
-        """WebTransport over HTTP/3 の session 確立で MOQT Session を開始する。"""
-        await self._open_connection((address, session_id), address, session_id)
+    async def _on_session_ready(self, session: Session) -> None:
+        """WebTransport session の確立で MOQT Session を開始する。"""
+        await self._open_connection(session)
 
-    async def _on_h3_session_closed(self, session_id: int, address: tuple[str, int]) -> None:
+    async def _on_session_closed(self, session: Session) -> None:
         """閉じた session の MOQT 状態を破棄する。"""
-        self._connections.pop((address, session_id), None)
+        self._connections.pop(_session_context(session), None)
 
-    async def _on_h3_stream_data(
-        self,
-        session_id: int,
-        stream_id: int,
-        data: bytes,
-        address: tuple[str, int],
+    async def _on_stream_data(self, session: Session, stream_id: int, data: bytes) -> None:
+        """受信データを状態機械へ渡す。"""
+        await self._receive_stream(_session_context(session), stream_id, data)
+
+    async def _on_stream_reset(
+        self, session: Session, stream_id: int, error_code: int | None
     ) -> None:
-        """WebTransport over HTTP/3 の受信データを状態機械へ渡す。"""
-        await self._receive_stream((address, session_id), address, session_id, stream_id, data)
+        """ストリームリセットを状態機械へ通知する。
 
-    async def _on_h3_stream_reset(
-        self,
-        session_id: int,
-        stream_id: int,
-        error_code: int | None,
-        address: tuple[str, int],
-    ) -> None:
-        """WebTransport over HTTP/3 のストリームリセットを状態機械へ通知する。
-
-        `error_code` が `None` の場合は「アプリケーションエラーコード無しのリセット」
-        である (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
+        WT-H3 で `error_code` が `None` の場合は「アプリケーションエラーコード無しの
+        リセット」である (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
+        WT-H2 では WT_RESET_STREAM が MOQT のエラーコードをそのまま運ぶため常に
+        コードがある (draft-ietf-moq-transport-21 §12.5 (Stream Reset Error Codes))。
         """
-        connection = self._connections.get((address, session_id))
+        connection = self._connections.get(_session_context(session))
         if connection is not None:
             await connection.runtime.receive_stream_closed(
                 stream_id, reset=True, error_code=error_code
             )
 
-    async def _on_h3_datagram(
-        self,
-        session_id: int,
-        data: bytes,
-        address: tuple[str, int],
-    ) -> None:
-        """WebTransport over HTTP/3 のデータグラムを状態機械へ渡す。"""
-        connection = self._connections.get((address, session_id))
-        if connection is not None:
-            await connection.runtime.receive_datagram(data)
-
-    async def _on_h2_session_request(
-        self,
-        session_id: int,
-        headers: list[tuple[str, str]],
-        addr: tuple[object, ...],
-    ) -> int | None:
-        """WebTransport over HTTP/2 の CONNECT 要求を受け入れる。
-
-        後続のコールバックは `SessionWriter` しか渡さないため、peer の address を
-        session ID ごとに控える。CONNECT の受け入れと `on_session_ready` の間には
-        中断点が無いため、session ID が接続間で重複しても取り違えない。
-        """
-        self._h2_addresses[session_id] = _normalize_address(addr)
-        return None
-
-    async def _on_h2_session_ready(self, writer: h2.SessionWriter) -> None:
-        """WebTransport over HTTP/2 の session 確立で MOQT Session を開始する。"""
-        address = self._h2_addresses.pop(writer.session_id, ("", 0))
-        await self._open_connection(writer, address, writer.session_id, writer)
-
-    async def _on_h2_session_closed(self, writer: h2.SessionWriter) -> None:
-        """閉じた session の MOQT 状態を破棄する。"""
-        self._connections.pop(writer, None)
-
-    async def _on_h2_stream_data(
-        self, stream_id: int, data: bytes, writer: h2.SessionWriter
-    ) -> None:
-        """WebTransport over HTTP/2 の受信データを状態機械へ渡す。"""
-        connection = self._connections.get(writer)
-        address = ("", 0) if connection is None else connection.address
-        session_id = writer.session_id
-        await self._receive_stream(writer, address, session_id, stream_id, data)
-
-    async def _on_h2_stream_reset(
-        self, stream_id: int, error_code: int, writer: h2.SessionWriter
-    ) -> None:
-        """WebTransport over HTTP/2 のストリームリセットを状態機械へ通知する。
-
-        over HTTP/2 の WT_RESET_STREAM は MOQT のエラーコードをそのまま運ぶため、
-        常にコードがある (draft-ietf-moq-transport-21 §12.5 (Stream Reset Error
-        Codes))。
-        """
-        connection = self._connections.get(writer)
-        if connection is not None:
-            await connection.runtime.receive_stream_closed(
-                stream_id, reset=True, error_code=error_code
-            )
-
-    async def _on_h2_datagram(self, data: bytes, writer: h2.SessionWriter) -> None:
-        """WebTransport over HTTP/2 のデータグラムを状態機械へ渡す。"""
-        connection = self._connections.get(writer)
+    async def _on_datagram(self, session: Session, data: bytes) -> None:
+        """データグラムを状態機械へ渡す。"""
+        connection = self._connections.get(_session_context(session))
         if connection is not None:
             await connection.runtime.receive_datagram(data)
 
     async def _receive_stream(
         self,
         context: ConnectionContext,
-        address: tuple[str, int],
-        session_id: int,
         stream_id: int,
         data: bytes,
     ) -> None:
@@ -965,14 +893,14 @@ class Server:
         """
         connection = self._connections.get(context)
         if connection is None:
-            raise RuntimeError(f"unknown WebTransport session: {session_id} from {address}")
+            raise RuntimeError(f"unknown WebTransport session: {context[1]} from {context[0]}")
         try:
             await connection.runtime.receive_stream(stream_id, data)
         except Exception as error:
             logger.warning(
                 "MOQT stream from %s was rejected: session=%s stream=%s error=%s",
-                address,
-                session_id,
+                connection.address,
+                connection.session_id,
                 stream_id,
                 error,
             )
@@ -998,15 +926,6 @@ class Server:
         traceback: TracebackType | None,
     ) -> None:
         await self.stop()
-
-
-def _normalize_address(addr: tuple[object, ...]) -> tuple[str, int]:
-    """WT-H2 のコールバックが渡す peer アドレスを (host, port) にそろえる。"""
-    if len(addr) >= 2:
-        host, port = addr[0], addr[1]
-        if isinstance(host, str) and isinstance(port, int):
-            return (host, port)
-    return ("", 0)
 
 
 def _body_namespace(body: MessageBody | None, key: str) -> tuple[bytes, ...]:

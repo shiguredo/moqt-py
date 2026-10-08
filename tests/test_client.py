@@ -3,7 +3,8 @@
 import pytest
 from moqt import moqt
 from moqt.moq import Client, Transport
-from webtransport import h2, h3, quic
+from webtransport import Client as WebTransportClient
+from webtransport import HTTPVersion, quic
 
 
 def test_url_scheme_must_be_moqt() -> None:
@@ -23,11 +24,15 @@ def test_default_transport_is_webtransport_over_http3() -> None:
 
     WebTransport では moqt URI のスキームを https に置き換えた URI へ
     extended CONNECT を送る (draft-ietf-moq-transport-21 §6.2.1 (WebTransport))。
+    接続方式は統一 API の `HTTPVersion` で選ぶ。
     """
     client = Client(url="moqt://127.0.0.1:4433/webtransport")
     assert client.transport is Transport.WebTransportOverHTTP3
     transport = client._transport
-    assert isinstance(transport, h3.Client)
+    assert isinstance(transport, WebTransportClient)
+    assert transport.http_version is HTTPVersion.HTTP3
+    assert transport.h3 is not None
+    assert transport.h2 is None
     assert transport.url == "https://127.0.0.1:4433/webtransport"
 
 
@@ -41,7 +46,10 @@ def test_webtransport_over_http2_uses_the_https_uri() -> None:
     )
     assert client.transport is Transport.WebTransportOverHTTP2
     transport = client._transport
-    assert isinstance(transport, h2.Client)
+    assert isinstance(transport, WebTransportClient)
+    assert transport.http_version is HTTPVersion.HTTP2
+    assert transport.h2 is not None
+    assert transport.h3 is None
     assert transport.url == "https://127.0.0.1:4433/webtransport"
 
 
@@ -49,7 +57,7 @@ def test_webtransport_over_http2_rejects_ca_file() -> None:
     """
     WT-H2 では `ca_file` を指定できないことを確認する。
 
-    webtransport-py の h2 client は `ca_file` を受け取らない。
+    webtransport-py の WT-H2 client は `ca_file` を受け取らない。
     """
     with pytest.raises(ValueError, match="ca_file is not supported"):
         Client(

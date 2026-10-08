@@ -1,6 +1,7 @@
 """WebTransport 接続上で MOQT セッションを扱う client。
 
-`webtransport-py` の asyncio API が WebTransport over HTTP/3 の I/O を担当し、
+`webtransport-py` の統一 API (`Client` / `Server` と `HTTPVersion`) が
+WebTransport over HTTP/3 / HTTP/2 と QUIC の I/O を担当し、
 `moqt._native` の MOQT 状態機械と接続する。下位層である `moqt.moqt` の codec や
 sans I/O 状態機械を直接扱う必要はない。
 

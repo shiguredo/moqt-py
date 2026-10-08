@@ -8,7 +8,8 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from webtransport import h2, h3, quic
+from webtransport import Client as WebTransportClient
+from webtransport import HTTPVersion, quic
 
 from moqt import moqt
 from moqt.moq._runtime import (
@@ -80,8 +81,13 @@ def _create_transport(
     verify_peer: bool,
     origin: str,
     ca_file: str | None,
-) -> h2.Client | h3.Client | quic.Client:
-    """接続方式に応じた webtransport-py のクライアントを作る。"""
+) -> WebTransportClient | quic.Client:
+    """接続方式に応じた webtransport-py のクライアントを作る。
+
+    WebTransport は統一 API の `webtransport.Client` を `HTTPVersion` で
+    選ぶ。プロトコル固有の操作は選択した側のハンドル (`client.h3` /
+    `client.h2`) から呼ぶ。
+    """
     if transport is Transport.Quic:
         # 直接 QUIC 接続では MOQT の ALPN を提示する
         # (draft-ietf-moq-transport-21 §6.2 (Session establishment))。
@@ -96,11 +102,22 @@ def _create_transport(
     # extended CONNECT を送る (draft-ietf-moq-transport-21 §6.2.1 (WebTransport))。
     https_url = f"https://{target.authority}{target.path}"
     if transport is Transport.WebTransportOverHTTP2:
-        # webtransport-py の h2 client は ca_file を受け取らない
+        # WT-H2 は ca_file を受け取らない
         if ca_file is not None:
             raise ValueError("ca_file is not supported for WebTransport over HTTP/2")
-        return h2.Client(url=https_url, verify_peer=verify_peer, origin=origin)
-    return h3.Client(url=https_url, verify_peer=verify_peer, origin=origin, ca_file=ca_file)
+        return WebTransportClient(
+            url=https_url,
+            http_version=HTTPVersion.HTTP2,
+            verify_peer=verify_peer,
+            origin=origin,
+        )
+    return WebTransportClient(
+        url=https_url,
+        http_version=HTTPVersion.HTTP3,
+        verify_peer=verify_peer,
+        origin=origin,
+        ca_file=ca_file,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,8 +847,8 @@ class Client:
         """トランスポート操作を組み立てる。"""
         transport = self._transport
         if isinstance(transport, quic.Client):
-            # webtransport-py の QUIC には STOP_SENDING を送る API が無いため、
-            # ストリームを reset して受信を終わらせる
+            # webtransport-py の QUIC client には STOP_SENDING だけを送る API が
+            # 無いため、ストリームを reset して受信を終わらせる
             return TransportOps(
                 open_uni_stream=lambda: transport.open_stream(bidirectional=False),
                 open_bidi_stream=lambda: transport.open_stream(bidirectional=True),
@@ -843,13 +860,18 @@ class Client:
                 send_datagram=transport.send_datagram,
                 close=self._close_transport,
             )
-        if isinstance(transport, h2.Client):
+        if transport.http_version is HTTPVersion.HTTP2:
+            # WT-H2 は STOP_SENDING を送出できる。統一 API の Client は
+            # プロトコル固有の操作を持たないため、ハンドルから呼ぶ
+            h2_client = transport.h2
+            if h2_client is None:
+                raise RuntimeError("the WebTransport over HTTP/2 client is missing")
             return TransportOps(
                 open_uni_stream=lambda: transport.open_stream(unidirectional=True),
                 open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
                 send_stream_data=transport.send_stream_data,
                 reset_stream=transport.reset_stream,
-                stop_sending=transport.stop_sending,
+                stop_sending=h2_client.stop_sending,
                 send_datagram=transport.send_datagram,
                 close=self._close_transport,
             )
@@ -858,7 +880,7 @@ class Client:
             open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
             send_stream_data=transport.send_stream_data,
             reset_stream=transport.reset_stream,
-            # webtransport-py の h3 には STOP_SENDING を送る API が無いため、
+            # WT-H3 には STOP_SENDING だけを送る API が無いため、
             # ストリームを reset して受信を終わらせる
             stop_sending=lambda stream_id, error_code: transport.reset_stream(
                 stream_id, error_code

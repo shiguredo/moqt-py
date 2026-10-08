@@ -18,8 +18,10 @@ classifiers = [
   "Programming Language :: Rust",
 ]
 dependencies = [
-  # WebTransport over HTTP/3 の asyncio I/O
-  "webtransport-py>=2026.1.0.dev18,<2026.2",
+  # WebTransport (HTTP/3 / HTTP/2) と QUIC の asyncio I/O。
+  # 統一 API (webtransport.Client / webtransport.Server + HTTPVersion) が必要なため
+  # dev24 以上を要求する
+  "webtransport-py>=2026.1.0.dev24,<2026.2",
 ]
 
 [project.optional-dependencies]

@@ -5,7 +5,7 @@
 
 役割分担は次のとおりである。
 
-- `webtransport.h3` がストリームとデータグラムの I/O を担当する
+- `webtransport-py` の `Client` / `Server` がストリームとデータグラムの I/O を担当する
 - `moqt._native` が MOQT のプロトコル状態機械とメッセージのデコードを担当する
 - このランタイムが両者を接続し、ストリーム ID と Request ID の対応を保持する
 
@@ -1599,10 +1599,10 @@ class Runtime:
         何もせずに戻る。アプリが独自に FIN した後に本イベントが届く場合があり、
         I/O 層で無視することが状態機械からも要求されている。
 
-        現状の webtransport-py はピアの FIN を上位層へ通知しないため、通常の FIN 受信では
-        本イベントは届かない。`on_stream_end` が追加された時点でこの経路が有効になる。
-        現時点で届くのは、アプリコードとして解釈できない RESET_STREAM を受信して
-        I/O 層が FIN とみなした場合だけである。
+        現状の webtransport-py の WebTransport 層はピアの FIN を上位層へ通知しないため、
+        通常の FIN 受信では本イベントは届かない。ピアの FIN を通知するコールバックが
+        追加された時点でこの経路が有効になる。現時点で届くのは、アプリコードとして
+        解釈できない RESET_STREAM を受信して I/O 層が FIN とみなした場合だけである。
         """
         request_id = event.request_id
         stream_id = self._request_streams.pop(request_id, None) if request_id is not None else None
