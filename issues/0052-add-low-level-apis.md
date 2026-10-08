@@ -1,7 +1,7 @@
 # テスト向けの低レベル API を公開する
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/add-low-level-apis
 - Polished:
 
@@ -45,3 +45,29 @@ moqt-py は他プロジェクトの E2E テストから使われるため、高�
 - 低レベル API のテストが追加され、`uv run pytest` が全件通ること
 - `ruff` / `ty` / `cargo fmt` / `cargo clippy` が通ること
 - README の低レベル API の節に使い方が記載されていること
+
+## 解決方法
+
+`moqt.moq` に低レベル API を追加した。
+
+- `Runtime.session` と `Client.runtime` / `Client.session` で、ランタイムと native の
+  状態機械を直接扱えるようにした。`Client.runtime` は接続前は `MOQTError` になる
+- `RuntimeEvents.on_event` と `Client.on_event` / `Server.on_event` を追加し、送信系も
+  含むすべてのイベントを組み込みの処理より先に渡すようにした。server は 1 つの
+  コールバックで複数接続を扱うため、イベントをランタイムと組にして渡す
+- `Runtime.open_stream` / `send_stream_data` / `reset_stream` / `stop_sending_stream` /
+  `send_datagram` と、同じ名前の `Client` のメソッドを追加した。ストリーム単位の
+  STOP_SENDING は既存の `Runtime.stop_sending(request_id)` と衝突するため
+  `stop_sending_stream` とした
+- `MOQTError` / `NativeEvent` / `Runtime` を `moqt.moq` から公開した
+
+テストは `tests/test_low_level.py` に追加した。ランタイムと状態機械の公開、接続前の
+エラー、client / server の `on_event` (送信系イベントの観測)、生のストリーム操作と
+データグラム送信 (PADDING ストリームと PADDING データグラム) を確認している。
+README の低レベル API の節にも使い方を追記した。
+
+### 確認
+
+`uv run pytest` は 537 件すべて通る (relay が要る 7 件は skip)。`cargo fmt` /
+`cargo clippy` / `ruff` / `ty` と `prek run --all-files` (pre-commit ステージ) も通ることを
+確認した。
