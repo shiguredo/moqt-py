@@ -395,6 +395,7 @@ class Client:
             Callable[[int, dict[int, object]], Awaitable[None]] | None
         ) = None
         self._goaway_callback: Callable[[PeerGoaway], Awaitable[None]] | None = None
+        self._event_callback: Callable[[NativeEvent], Awaitable[None]] | None = None
         self._peer_goaway: PeerGoaway | None = None
 
         # 受信データはすべてランタイムへ渡す
@@ -432,6 +433,27 @@ class Client:
     def peer_goaway(self) -> PeerGoaway | None:
         """peer から受信した GOAWAY。未受信の場合は `None`。"""
         return self._peer_goaway
+
+    @property
+    def runtime(self) -> Runtime:
+        """この接続を駆動している `Runtime` を返す。
+
+        テストから実装の細部を操作・観測するための低レベル API である。接続前は
+        `MOQTError` を送出する。
+        """
+        runtime = self._runtime
+        if runtime is None:
+            raise MOQTError("client is not connected")
+        return runtime
+
+    @property
+    def session(self) -> moqt.Session:
+        """この接続が駆動している native の状態機械を返す。
+
+        `Client.runtime` の `Runtime.session` と同じものである。`Runtime` を経由せず
+        状態機械を進めると簿記と食い違うため、`Runtime` の API と併用して観測に使うこと。
+        """
+        return self.runtime.session
 
     @property
     def peer_max_auth_token_cache_size(self) -> int:
@@ -541,6 +563,16 @@ class Client:
         通知された場合は、アプリが新しいセッションへ接続し直す。
         """
         self._goaway_callback = callback
+
+    def on_event(self, callback: Callable[[NativeEvent], Awaitable[None]]) -> None:
+        """状態機械が生成したすべてのイベントを順序どおりに受け取るコールバックを登録する。
+
+        種類ごとのコールバックと違い、送信系 (`send_control` / `send_request` /
+        `send_on_stream` / `reset_request_stream` / `stop_sending_request_stream` /
+        `finish_request_stream` / `send_padding_*`) も含めて、`Runtime` の組み込み処理より
+        先に渡される。到着順やイベント列そのものを検証するテストで使う。
+        """
+        self._event_callback = callback
 
     async def connect(self, timeout: float = 10.0) -> None:
         """接続し、MOQT SETUP 交換の完了を待つ。"""
@@ -751,6 +783,40 @@ class Client:
         runtime = self._require_runtime()
         await runtime.send_goaway(timeout, new_session_uri)
 
+    # ─── 低レベル操作 ───────────────────────────────────────
+
+    async def open_stream(self, *, bidirectional: bool = False) -> int:
+        """ストリームを開設し、その stream ID を返す。
+
+        用途を登録しないまま送るバイト列をテストから組み立てるための低レベル API で
+        ある。返したストリームは `send_stream_data` で書き込み、`reset_stream` /
+        `stop_sending` で終端する。接続前は `MOQTError` を送出する。
+        """
+        return await self.runtime.open_stream(bidirectional=bidirectional)
+
+    async def send_stream_data(self, stream_id: int, data: bytes, fin: bool = False) -> None:
+        """ストリームへバイト列をそのまま書き込む。"""
+        await self.runtime.send_stream_data(stream_id, data, fin)
+
+    async def reset_stream(self, stream_id: int, error_code: int = 0) -> None:
+        """ストリームを reset する。"""
+        await self.runtime.reset_stream(stream_id, error_code)
+
+    async def stop_sending_stream(self, stream_id: int, error_code: int = 0) -> None:
+        """ストリームへ STOP_SENDING を送る。
+
+        request の終端として STOP_SENDING を送る場合は `Subscription` の API を使うこと。
+        """
+        await self.runtime.stop_sending_stream(stream_id, error_code)
+
+    async def send_datagram(self, data: bytes) -> None:
+        """データグラムをそのまま送る。
+
+        状態機械を介さないため、フィルタ評価とオブジェクト構造の検証は行われない。
+        オブジェクトデータグラムを送る場合は `Publication.send_datagram` を使うこと。
+        """
+        await self.runtime.send_datagram(data)
+
     # ─── 内部 ───────────────────────────────────────────────
 
     def _require_runtime(self) -> Runtime:
@@ -811,6 +877,7 @@ class Client:
     def _runtime_events(self) -> RuntimeEvents:
         """ランタイムのコールバックを組み立てる。"""
         return RuntimeEvents(
+            on_event=self._on_event,
             on_established=self._on_established,
             on_close=self._on_close,
             on_object=self._on_object,
@@ -942,6 +1009,12 @@ class Client:
         callback = self._publish_state_notify_callback
         if callback is not None:
             await callback(event.parameters or {})
+
+    async def _on_event(self, event: NativeEvent) -> None:
+        """状態機械が生成したすべてのイベントをアプリへ通知する。"""
+        callback = self._event_callback
+        if callback is not None:
+            await callback(event)
 
     async def _on_request_update(self, event: NativeEvent) -> None:
         """peer からの REQUEST_UPDATE をアプリへ通知する。

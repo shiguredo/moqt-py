@@ -245,6 +245,7 @@ class TransportOps:
 class RuntimeEvents:
     """アプリケーションへ通知するイベントの受け口。"""
 
+    on_event: Callable[[NativeEvent], Awaitable[None]] | None = None
     on_established: Callable[[], Awaitable[None]] | None = None
     on_close: Callable[[int, str], Awaitable[None]] | None = None
     on_request: Callable[[NativeEvent], Awaitable[None]] | None = None
@@ -283,6 +284,7 @@ class RuntimeEvents:
         # イベント種別に紐付くため、実行時の引数は正しい。
 
         return RuntimeEvents(
+            on_event=wrap(self.on_event),
             on_established=wrap(self.on_established),
             on_close=wrap(self.on_close),
             on_request=wrap(self.on_request),
@@ -422,6 +424,16 @@ class Runtime:
         self._closed = False
 
     # ─── 状態 ───────────────────────────────────────────────
+
+    @property
+    def session(self) -> _native.Session:
+        """この接続が駆動している native の状態機械 (moqt-rs の `Session`) を返す。
+
+        テストから実装の細部を直接操作・観測するための低レベル API である。
+        `Runtime` を経由せず状態機械を進めると、`Runtime` が保持するストリームや
+        request の簿記と食い違い、以降のイベント処理が壊れうる。
+        """
+        return self._core
 
     def subscription_track_alias(self, request_id: int) -> int:
         """subscription の Track Alias を返す。未確定の場合は 0 を返す。"""
@@ -628,6 +640,51 @@ class Runtime:
         with contextlib.suppress(Exception):
             await self._apply_events(self._core.close(code, reason))
         await self._ops.close(code, reason)
+
+    # ─── 低レベル操作 ───────────────────────────────────────
+
+    async def open_stream(self, *, bidirectional: bool = False) -> int:
+        """ストリームを開設し、その stream ID を返す。
+
+        自側が開いたストリームとして記録するだけで、用途 (制御 / request / data) の
+        登録は行わない。送るバイト列をテストから組み立てるための低レベル API である。
+        用途を登録しないまま request stream として使うと、`Runtime` が
+        `register_local_request_stream` で持つ対応と食い違うため注意すること。
+
+        Returns:
+            ストリーム ID
+        """
+        open_stream = self._ops.open_bidi_stream if bidirectional else self._ops.open_uni_stream
+        stream_id = await open_stream()
+        if stream_id < 0:
+            raise ConnectionError("failed to open a stream")
+        self._local_streams.add(stream_id)
+        return stream_id
+
+    async def send_stream_data(self, stream_id: int, data: bytes, fin: bool = False) -> None:
+        """ストリームへバイト列をそのまま書き込む。
+
+        状態機械を介さないため、フレーミングの検証は行われない。
+        """
+        await self._ops.send_stream_data(stream_id, data, fin)
+
+    async def reset_stream(self, stream_id: int, error_code: int = 0) -> None:
+        """ストリームを reset する。"""
+        await self._ops.reset_stream(stream_id, error_code)
+
+    async def stop_sending_stream(self, stream_id: int, error_code: int = 0) -> None:
+        """ストリームへ STOP_SENDING を送る。
+
+        request の終端として STOP_SENDING を送る場合は `stop_sending` を使うこと。
+        """
+        await self._ops.stop_sending(stream_id, error_code)
+
+    async def send_datagram(self, data: bytes) -> None:
+        """データグラムをそのまま送る。
+
+        状態機械を介さないため、フィルタ評価とオブジェクト構造の検証は行われない。
+        """
+        await self._ops.send_datagram(data)
 
     # ─── 受信 ───────────────────────────────────────────────
 
@@ -1392,6 +1449,9 @@ class Runtime:
     ) -> None:
         """native のイベントを I/O とアプリケーションへ振り分ける。"""
         for event in events:
+            # すべてのイベントを購読者へ渡す。状態機械が生成した順序のまま観測できる
+            # よう、組み込みの処理より先に呼ぶ
+            await self._notify(self._events.on_event, event)
             kind = event.kind
             if kind == "send_control":
                 await self._send_control(event)

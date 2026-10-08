@@ -237,6 +237,41 @@ uv add "moqt-py[testing]"
 
 ## 使い方 (低レベル API)
 
+テストから実装の細部 (ストリームの断片化、到着順、エラー、タイムアウト、状態遷移など) を扱えるよう、`moqt.moq` の `Client` / `Server` も低レベル API を隠しません。
+
+### moqt.moq (低レベル API)
+
+`Client.runtime` と `Client.session` で、接続が駆動しているランタイムと native の状態機械 (moqt-rs の `Session`) に直接アクセスできます。`Client.on_event` は種類ごとのコールバックと違い、`send_request` や `reset_request_stream` のような送信系も含めたすべてのイベントを順序どおりに渡します。server 側は `Server.on_event` で、イベントをランタイムと組にして受け取ります。
+
+```python
+from moqt import moqt
+from moqt.moq import Client, NativeEvent, Runtime
+
+
+async def main() -> None:
+    client = Client(url="moqt://127.0.0.1:4433/live", verify_peer=False)
+    await client.connect()
+
+    # すべてのイベントを到着順に記録する
+    events: list[str] = []
+
+    async def on_event(event: NativeEvent) -> None:
+        events.append(event.kind)
+
+    client.on_event(on_event)
+
+    # 接続が駆動しているランタイムと native の状態機械を直接観測する
+    runtime: Runtime = client.runtime
+    print(runtime.session.established, runtime.subscriptions())
+
+    # 生のストリーム操作とデータグラム送信 (状態機械を介さない)
+    stream_id = await client.open_stream()
+    await client.send_stream_data(stream_id, b"\x00" + bytes(8), fin=True)
+    await client.stop_sending_stream(stream_id, moqt.STREAM_CANCELLED)
+    await client.reset_stream(stream_id, moqt.STREAM_CANCELLED)
+    await client.send_datagram(b"\x00" + bytes(8))
+```
+
 ### moqt.moqt
 
 MOQT の codec と sans I/O セッション状態機械です。ストリームの実体には触れず、呼び出し側がバイト列をやり取りします。

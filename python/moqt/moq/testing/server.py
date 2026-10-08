@@ -473,6 +473,7 @@ class Server:
         ) = None
         self._fill_fetch_callback: Callable[[Runtime, int, int], Awaitable[None]] | None = None
         self._goaway_callback: Callable[[ServerSession, PeerGoaway], Awaitable[None]] | None = None
+        self._event_callback: Callable[[Runtime, NativeEvent], Awaitable[None]] | None = None
         self._tick_task: asyncio.Task[None] | None = None
 
         if isinstance(self._transport, h2.Server):
@@ -555,6 +556,19 @@ class Server:
         (draft-ietf-moq-transport-21 §9.2 (GOAWAY))。
         """
         self._goaway_callback = callback
+
+    def on_event(
+        self,
+        callback: Callable[[Runtime, NativeEvent], Awaitable[None]],
+    ) -> None:
+        """状態機械が生成したすべてのイベントを順序どおりに受け取るコールバックを設定する。
+
+        引数はランタイムとイベントである。種類ごとのコールバックと違い、送信系
+        (`send_control` / `send_on_stream` / `reset_request_stream` など) も含めて、
+        ランタイムの組み込み処理より先に渡される。到着順やイベント列そのものを
+        検証するテストで使う。
+        """
+        self._event_callback = callback
 
     def on_fill_fetch_stream(
         self,
@@ -648,12 +662,23 @@ class Server:
         識別する context を閉じ込めた形で渡す。
         """
         return RuntimeEvents(
+            on_event=lambda event: self._on_event(context, event),
             on_established=lambda: self._on_established(context),
             on_request=lambda event: self._on_request(context, event),
             on_request_update=lambda event: self._on_request_update(context, event),
             on_fill_fetch_stream=lambda request_id: self._on_fill_fetch_stream(context, request_id),
             on_goaway=lambda event: self._on_goaway(context, event),
         )
+
+    async def _on_event(self, context: ConnectionContext, event: NativeEvent) -> None:
+        """状態機械が生成したすべてのイベントをアプリへ通知する。"""
+        callback = self._event_callback
+        if callback is None:
+            return
+        connection = self._connection(context)
+        if connection is None:
+            return
+        await callback(connection.runtime, event)
 
     async def _on_fill_fetch_stream(self, context: ConnectionContext, request_id: int) -> None:
         """peer が FILL_PARAMETERS 付きで購読したときに fill fetch stream を開く。

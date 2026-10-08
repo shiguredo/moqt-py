@@ -19,6 +19,11 @@ fixture は `moqt.moq.testing` が提供する。
 relay は含まない。MOQT は draft 由来であり、将来の改訂で変更される可能性がある。
 """
 
+# 低レベル API が返す型。
+#
+# テストは状態機械のイベント列やタイムアウトを直接扱うため、`Client.runtime` /
+# `Client.session` / `Client.on_event` が使う型を公開する。
+from moqt.moq._runtime import MOQTError, NativeEvent, Runtime
 from moqt.moq.client import (
     Client,
     Fetch,
@@ -42,9 +47,12 @@ __all__ = [
     "SUBGROUP_ID_MODE_ZERO",
     "Client",
     "Fetch",
+    "MOQTError",
     "MOQTObject",
+    "NativeEvent",
     "PeerGoaway",
     "Publication",
+    "Runtime",
     "Subscription",
     "Transport",
 ]
