@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "moqt-py"
 version = "2026.0.0"
-description = "Python client and server library for Media over QUIC over WebTransport"
+description = "moqt-py is a Sans-IO MOQT/LOC/MSF/C4M library with a WebTransport/QUIC client, using moqt-rs."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
