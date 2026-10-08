@@ -1,7 +1,7 @@
 # Malformed Track の cancel が接続エラーとして扱われる
 
 - Created: 2026-09-22
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/fix-malformed-track-cancel-events
 - Polished:
 
@@ -102,3 +102,25 @@ pending の理由に書いた「moqt-rs の datagram 経路が購読単位の ca
 
 issue 0052 で `Client.runtime` / `Runtime.receive_datagram` / `Runtime.receive_stream` を
 公開したため、tick に頼らずテストから直接検証できるようにもなった。
+
+## 解決方法
+
+`src/core.rs` に `CoreSession.drain_pending_events` を追加し、エラーを返した受信 API でも
+状態機械に積まれたイベントを取り出せるようにした。
+
+`python/moqt/moq/_runtime.py` の `Runtime` に `_apply_events_or_cancel` を追加し、
+`receive_datagram` / `receive_stream` (データストリーム) / `receive_stream_closed` が
+エラーを受け取ったときに、積まれたイベントを処理してから判断するようにした。
+
+- セッションが `Established` のままなら購読単位の cancel として扱い、エラーを伝播しない
+- セッションが閉じた場合は従来どおり接続の失敗としてアプリへ伝える
+
+`tests/test_low_level.py` に、Malformed Track を datagram 経路と subgroup 経路のそれぞれで
+検証するテストを追加した。どちらも低レベル API で状態機械へ直接投入するため、tick に頼らず
+「同じ受信で終端が処理されること」「セッションが閉じないこと」「購読し直せること」を確認できる。
+
+### 確認
+
+`uv run pytest` は 541 件すべて通る (relay が要る 7 件は skip)。追加したテストは
+`_apply_events_or_cancel` を外すと失敗することを確認した。`cargo fmt` / `cargo clippy` /
+`ruff` / `ty` と `prek run --all-files` (pre-commit ステージ) も通ることを確認した。
