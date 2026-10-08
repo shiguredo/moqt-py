@@ -1,7 +1,7 @@
 # MOQT の仕様参照を draft-ietf-moq-transport-22 の節番号に揃える
 
 - Created: 2026-10-08
-- Completed:
+- Completed: 2026-10-08
 - Branch: feature/doc-moqt-draft-22-references
 - Polished:
 
@@ -61,3 +61,56 @@ draft-22 と一致している引用もあるため、一括置換はできな�
 - 各引用の節番号と節名が一次資料の本文と一致すること
 - `cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` / `uv run pytest` が通ること
 - `python/moqt/_native.pyi` がビルドから再生成した内容と一致すること
+
+## 解決方法
+
+`python/` / `src/` / `tests/` の MOQT の引用を draft-ietf-moq-transport-22 の節番号と節名に
+揃えた (514 件 → 全 542 件が draft-22)。正規表現による一括置換ではなく、一次資料
+(`moqt-rs` の `refs/moq/draft-ietf-moq-transport-22.txt` ほか) の節見出しと突き合わせて
+1 件ずつ対応を決めた。
+
+節番号が変わったもの:
+
+- Subscriptions の配下: Track Alias §3.1.2 → §3.1.3、Subscription State Management
+  §3.1.1 → §3.1.2、Fetch State Management §3.2.1 → §3.2.4、
+  Mandatory Track Properties §3.6 → §3.7 (Mandatory to Understand Track Properties)
+- 構造と符号化: Varint Encoding §1.4 → §8.1 (Variable-Length Integers)、Modularity §1.5 → §1.6、
+  Object Status §11.1.2 → §11.1.1、Object Properties §11.1.3 → §11.1.2
+- ストリームとデータグラム: Subgroup Object §11.3.2 → §11.3.2 (Closing Subgroup Streams)、
+  Control Streams §6.4.1 → §6.4.1 (Unidirectional Streams)
+- §9.20 のパラメータ: SUBGROUP_DELIVERY_TIMEOUT §9.20.4 → §9.20.3、OBJECT_DELIVERY_TIMEOUT
+  §9.20.2 → §9.20.4、FILL TIMEOUT §9.20.6 → §9.20.5、SUBSCRIBER_PRIORITY §9.20.6 → §9.20.7、
+  GROUP ORDER §9.20.9 → §9.20.8、FILL PARAMETERS §9.20.16 → §9.20.15、EXPIRES §9.20.17 →
+  §9.20.16、LARGEST OBJECT §9.20.18 / §9.20.9 / §9.20.5 → §9.20.17、FORWARD §9.20.19 / §9.20.7 →
+  §9.20.18、NEW GROUP REQUEST §9.20.20 → §9.20.19、TRACK_NAMESPACE_PREFIX §9.20.21 → §9.20.20、
+  INCLUDE_PROPERTIES §9.20.22 → §9.20.21
+- PUBLISHER_PRIORITY は draft-22 でパラメータではなく Track Property になったため
+  §9.20.5 → §10.4 (DEFAULT PUBLISHER PRIORITY) とした
+
+節名が変わったもの: Session Termination Error Codes (§16.11.1)、Stream Reset Error Codes
+(§16.11.4)、MOQT IMPLEMENTATION (§9.1.5)。
+
+表番号: §6.4.1 Table 3 → Table 2、§11.4.1 Table 7 → Table 8、§16.8 Table 14 → Table 15。
+
+MOQT 以外の draft: MSF のカタログ Track 名 §4.1 → §5 (Catalog)、MSF §5.4 (Catalog variables) →
+§5.4 (Variable Substitution)、C4M §2.1 (Authorization Scope) → §2.1 (moqt claim)。
+
+あわせて直したもの:
+
+- 複数行にまたがっていた引用を 1 行にまとめ、ruff の行長制限に合わせて折り返した
+- 構造の一覧コメントで Subgroup Object が §11.3.2 を指していたため、draft-22 で
+  Subgroup Object のフィールドが定義される §11.3.1 (Subgroup Header) にまとめた
+- `python/moqt/_native.pyi` は `uv run maturin develop --generate-stubs` で再生成した
+
+### 確認
+
+- 一次資料と突き合わせる確認スクリプトで、節番号・節名の食い違い 0 件、
+  存在しない節への引用 0 件 (MOQT / LOC / MSF / C4M / DPoP / WebTransport)
+- `draft-ietf-moq-transport-21` の引用は `python/` / `src/` / `tests/` に 0 件
+  (draft-21 との差を説明する `issues/` の記述を除く)
+- `cargo fmt --check` / `cargo clippy --all-targets --all-features -- -D warnings` /
+  `cargo test` / `ruff check` / `ruff format --check` / `ty` が通る
+- `uv run pytest` は 541 件通過、7 件 skip (TEST_MOQT_URI が必要な relay / connect)
+- `prek run --all-files` (pre-commit ステージ) が通る
+- `python/moqt/_native.pyi` を 2 回再生成して同一の内容になること
+- 変更はコメントと docstring だけで、実装の挙動は変えていない
