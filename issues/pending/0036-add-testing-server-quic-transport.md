@@ -61,3 +61,16 @@ webtransport-py ではこの不足が 0220 (層間に欠けている公開 API �
   QUIC 対応は `quic.Server` の API 追加を待つ必要がある
 
 webtransport-py の 0220 / 0258 がリリースされた時点で reopened にして対応する。
+
+## reopened にする理由
+
+webtransport-py 2026.1.0.dev25 で 0258 がリリースされ、`quic.Server` に必要な API が揃った。
+
+- `shutdown_stream` / `reset_stream` / `stop_sending` / `close(error_code, reason)` が
+  追加され、MOQT の server 役に必要な送信操作が揃った
+- `on_stream_reset` が追加され、ピアの RESET_STREAM を状態機械へ通知できるようになった
+- 0220 は引き続き open であるが、この issue が必要としていた `quic.Server` の
+  `shutdown_stream` と `close` は 0258 に含まれている
+
+実測では、`Transport.Quic` を `Server` へ渡すと `ValueError` になり、E2E テストで
+QUIC 直接接続を検証できない状態だった。
