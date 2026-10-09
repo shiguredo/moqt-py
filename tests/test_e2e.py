@@ -2039,8 +2039,10 @@ async def test_state_machine_session_close_reaches_the_peer(
     assert info.value.error_code == moqt.SESSION_PROTOCOL_VIOLATION
     assert info.value.reason
     if moq_transport is not Transport.WebTransportOverHTTP3:
-        # WT-H2 と QUIC は終了コードと理由をそのまま保持する。WT-H3 の理由は
-        # webtransport-py が CONNECT ストリームの終了として生成する説明文になる
+        # WT-H2 と QUIC はピアが送った終了コードと理由をそのまま保持する。WT-H3 は
+        # webtransport-py の h3 層が CONNECT ストリーム終了時の SESSION_CLOSED に理由を
+        # 空で渡すため、MOQT の状態機械がコントロールストリームのリセットに当てる文言
+        # (`peer control stream reset`) になる
         assert info.value.reason == closed[0][1]
 
 
