@@ -301,10 +301,15 @@ await publication.send_object(4, 0, b"", status=moqt.OBJECT_STATUS_END_OF_GROUP)
 
 # データグラムで送る
 await publication.send_datagram(5, 0, b"datagram payload")
+
+# データグラムで Group の終端を宣言する
+# (同じ Group ID でこれより大きい Object ID の Object は存在しない)
+await publication.send_datagram(6, 0, b"last in group", end_of_group=True)
 ```
 
 - Subgroup ID のモードは Group ごとに固定されるため、モードを変えるときは Group を分ける
 - 同じ Location のオブジェクトは subgroup とデータグラムのどちらか一方しか届かない。データグラムには subgroup と重複しない Location を選ぶ
+- データグラムの `end_of_group` は Group の終端を宣言する。受信側は宣言位置を終端として記録し、それより大きい Object ID の Object を Malformed Track として拒否する。`status` との同時指定は無効である (§11.2.1 (Object Datagram) / §12.1 (Malformed Tracks))
 - データグラムは経路 MTU を超えると通知なく破棄され、送信側からは検知できない。`moqt.moqt.MAX_DATAGRAM_SIZE` (1100) を超えると警告を記録する。大きいオブジェクトは subgroup ストリームで送る
 - 受信側では、Subgroup ID を最初の Object ID として決めるモードでも、最初のオブジェクトを受信した時点で `MOQTObject.subgroup_id` に値が入る
 

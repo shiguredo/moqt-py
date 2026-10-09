@@ -1392,8 +1392,15 @@ class Runtime:
         publisher_priority: int | None = None,
         properties_data: bytes | None = None,
         status: int | None = None,
+        end_of_group: bool = False,
     ) -> None:
-        """オブジェクトデータグラムを送信する。"""
+        """オブジェクトデータグラムを送信する。
+
+        `end_of_group` を真にすると END_OF_GROUP bit を立て、同じ Group ID で
+        `object_id` より大きい Object ID の Object が存在しないことを宣言する
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。STATUS との同時指定は
+        無効な Type 値であり、状態機械がプロトコル違反として拒否する。
+        """
         track_alias = self._core.subscription_track_alias(request_id)
         if track_alias is None:
             raise MOQTError(f"subscription {request_id} has no track alias")
@@ -1409,6 +1416,7 @@ class Runtime:
             payload,
             publisher_priority,
             properties_bytes=properties_bytes,
+            end_of_group=end_of_group,
             status=status,
         )
         if len(datagram) > moqt.MAX_DATAGRAM_SIZE:
@@ -1423,7 +1431,7 @@ class Runtime:
                 moqt.MAX_DATAGRAM_SIZE,
             )
         allowed, events = self._core.send_object_datagram(
-            request_id, group_id, object_id, properties_bytes, status
+            request_id, group_id, object_id, properties_bytes, status, end_of_group
         )
         await self._apply_events(events)
         if not allowed:

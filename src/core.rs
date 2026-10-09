@@ -3644,7 +3644,20 @@ impl CoreSession {
     ///
     /// フィルタで破棄される場合は `False` を返す。その場合 Python 側は
     /// データグラムを送信してはならない。
-    #[pyo3(signature = (request_id, group_id, object_id, properties_data=None, status=None))]
+    ///
+    /// `end_of_group` は END_OF_GROUP bit を立てるかどうかを示す。同じ Group ID で
+    /// この Object ID より大きい Object ID の Object が存在しないことを宣言する。
+    /// STATUS との同時指定は状態機械がプロトコル違反として拒否する
+    /// (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    #[pyo3(signature = (
+        request_id,
+        group_id,
+        object_id,
+        properties_data=None,
+        status=None,
+        end_of_group=false
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn send_object_datagram(
         &mut self,
         py: Python<'_>,
@@ -3653,6 +3666,7 @@ impl CoreSession {
         object_id: u64,
         properties_data: Option<Vec<u8>>,
         status: Option<u64>,
+        end_of_group: bool,
     ) -> PyResult<(bool, Vec<CoreEvent>)> {
         match self.session.send_object_datagram(
             request_id,
@@ -3660,6 +3674,7 @@ impl CoreSession {
             object_id,
             properties_data,
             status,
+            end_of_group,
         ) {
             Ok(()) => Ok((true, self.drain_events(py)?)),
             Err(shiguredo_moqt::session::types::SendRequestError::LocalFilterMismatch) => {

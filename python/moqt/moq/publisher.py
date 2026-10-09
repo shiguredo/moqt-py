@@ -112,6 +112,7 @@ class Publication:
         publisher_priority: int | None = None,
         properties_data: bytes | None = None,
         status: int | None = None,
+        end_of_group: bool = False,
     ) -> None:
         """オブジェクトデータグラムを送信する。
 
@@ -122,11 +123,18 @@ class Publication:
 
         `status` の扱いは `send_object` と同じである。
 
+        `end_of_group` を真にすると END_OF_GROUP bit を立て、同じ Group ID で
+        `object_id` より大きい Object ID の Object が存在しないことを宣言する。subgroup
+        ストリームを開かずに Group の終端を伝えられる。受信側では Group の終端が記録され、
+        宣言位置より大きい Object ID の Object は Malformed Track として拒否される
+        (§12.1 (Malformed Tracks))。`status` との同時指定は無効な Type 値であり拒否される
+        (§11.2.1 (Object Datagram))。
+
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない場合は
         `MOQTError` になる。データグラムは Properties Length = 0 を持てず、非 Normal の
         `status` に Properties を付けることもできない
-        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram) / §11.1.3 (Object Properties))。
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram) / §11.1.2 (Object Properties))。
 
         データグラムの合計サイズが `moqt.moqt.MAX_DATAGRAM_SIZE` を超える場合は警告を
         記録する。上限は経路 MTU に依存し、超えたデータグラムは通知なく破棄される
@@ -141,6 +149,7 @@ class Publication:
             publisher_priority,
             properties_data,
             status,
+            end_of_group,
         )
 
     async def send_publish_state_notify(

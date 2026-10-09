@@ -3843,12 +3843,17 @@ class Session:
         """
         request stream 上に GOAWAY を送信する。
         """
-    def send_object_datagram(self, /, request_id: int, group_id: int, object_id: int, properties_data: Sequence[int] |None = None, status: int |None = None) -> tuple[bool, list[Event]]:
+    def send_object_datagram(self, /, request_id: int, group_id: int, object_id: int, properties_data: Sequence[int] |None = None, status: int |None = None, end_of_group: bool = False) -> tuple[bool, list[Event]]:
         """
         オブジェクトデータグラムを送信することを通知する。
         
         フィルタで破棄される場合は `False` を返す。その場合 Python 側は
         データグラムを送信してはならない。
+        
+        `end_of_group` は END_OF_GROUP bit を立てるかどうかを示す。同じ Group ID で
+        この Object ID より大きい Object ID の Object が存在しないことを宣言する。
+        STATUS との同時指定は状態機械がプロトコル違反として拒否する
+        (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
         """
     def send_padding_datagram(self, /, length: int) -> list[Event]:
         """

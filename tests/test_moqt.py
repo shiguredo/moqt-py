@@ -138,6 +138,8 @@ def _object_datagram(
     object_id: int,
     payload: bytes,
     publisher_priority: int | None,
+    *,
+    end_of_group: bool = False,
 ) -> bytes:
     """OBJECT_DATAGRAM のバイト列を組み立てる。
 
@@ -146,12 +148,17 @@ def _object_datagram(
     Object ID が 0 の場合は ZERO_OBJECT_ID bit を立てて Object ID を省略し、
     Publisher Priority が `None` の場合は DEFAULT_PRIORITY bit を立てて省略する
     (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+
+    `end_of_group` を真にすると END_OF_GROUP bit を立て、同じ Group ID でこの Object ID
+    より大きい Object ID の Object が存在しないことを宣言する (§11.2.1)。
     """
     type_byte = 0x00
     if object_id == 0:
         type_byte |= 0x04
     if publisher_priority is None:
         type_byte |= 0x08
+    if end_of_group:
+        type_byte |= 0x02
     data = bytearray()
     data += encode_varint(type_byte)
     data += encode_varint(track_alias)
@@ -3448,6 +3455,50 @@ def test_send_object_datagram_evaluates_the_object_status() -> None:
     allowed, events = server.send_object_datagram(request_id, 1, 0, blob, None)
     assert allowed is True
     assert [event.kind for event in events] == []
+
+
+def test_send_object_datagram_declares_end_of_group() -> None:
+    """
+    状態機械へ END_OF_GROUP を渡せることを確認する。
+
+    END_OF_GROUP bit は「同じ Group ID で、この Object ID より大きい Object ID の
+    Object は存在しない」ことを宣言する (draft-ietf-moq-transport-22 §11.2.1
+    (Object Datagram))。STATUS との同時指定は無効な Type 値であり、状態機械が
+    プロトコル違反として拒否する。
+    """
+    client, server = _setup()
+    request_id = _subscribe_round_trip(client, server, 4)
+
+    # END_OF_GROUP を宣言したデータグラムは送信できる
+    allowed, events = server.send_object_datagram(request_id, 1, 0, None, None, True)
+    assert allowed is True
+    assert [event.kind for event in events] == []
+
+    # STATUS と END_OF_GROUP の同時指定は拒否される
+    with pytest.raises(RuntimeError, match="STATUS and END_OF_GROUP cannot both be set"):
+        server.send_object_datagram(request_id, 1, 1, None, moqt.OBJECT_STATUS_END_OF_GROUP, True)
+
+
+def test_received_end_of_group_datagram_ends_the_group() -> None:
+    """
+    END_OF_GROUP を宣言した Group の後続 Object が Malformed Track になることを確認する。
+
+    受信側は宣言位置を Group の終端として記録し、それより大きい Object ID の Object を
+    Malformed Track として拒否する
+    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram) / §12.1 (Malformed Tracks))。
+    """
+    client, server = _setup()
+    _subscribe_round_trip(client, server, 4)
+
+    # Group 1 の Object ID 0 が Group の最後であることを宣言する
+    events = client.receive_datagram(_object_datagram(1, 1, 0, b"last", None, end_of_group=True))
+    objects = [event for event in events if event.kind == "object"]
+    assert len(objects) == 1
+    assert (objects[0].group_id, objects[0].object_id) == (1, 0)
+
+    # 宣言位置より大きい Object ID は Malformed Track として拒否される
+    with pytest.raises(RuntimeError, match="object received after End of Group"):
+        client.receive_datagram(_object_datagram(1, 1, 1, b"after the end", None))
 
 
 def test_mid_object_fin_closes_the_session() -> None:

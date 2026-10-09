@@ -1675,6 +1675,54 @@ async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: MOQ
     assert moq_pair.client.established is True
 
 
+async def test_datagram_end_of_group_ends_the_group(moq_pair: MOQTPair) -> None:
+    """
+    END_OF_GROUP を宣言したデータグラムで Group の終端が伝わることを確認する。
+
+    END_OF_GROUP bit は「同じ Group ID で、この Object ID より大きい Object ID の Object は
+    存在しない」ことを宣言する (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    受信側は宣言位置を Group の終端として記録し、それより後ろの Object を Malformed Track
+    として扱う (§12.1 (Malformed Tracks))。セッションは閉じず、購読が取り消される。
+
+    同じデータグラムに STATUS と END_OF_GROUP を同時に指定すると無効な Type 値になり、
+    送信前に拒否される (§11.2.1)。
+    """
+    published: list[Publication] = []
+
+    async def on_subscribe(request: SubscriptionRequest) -> None:
+        published.append(await request.subscribe_ok(TRACK_ALIAS))
+
+    moq_pair.server.on_subscribe(on_subscribe)
+
+    subscription = await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
+    await wait_until(lambda: bool(published))
+
+    # STATUS と END_OF_GROUP の同時指定は送信前に拒否される
+    with pytest.raises(MOQTError, match="STATUS and END_OF_GROUP cannot both be set"):
+        await published[0].send_datagram(
+            3,
+            0,
+            b"",
+            status=moqt.OBJECT_STATUS_END_OF_GROUP,
+            end_of_group=True,
+        )
+
+    # Group 3 の Object ID 0 が Group の最後であることを宣言する
+    await published[0].send_datagram(3, 0, b"last in group", end_of_group=True)
+    received = await _take_objects(subscription, 1)
+    assert (received[0].group_id, received[0].object_id) == (3, 0)
+    assert received[0].payload == b"last in group"
+
+    # 宣言位置より大きい Object ID を送ると、購読側で Malformed Track として検出される
+    await published[0].send_datagram(3, 1, b"after the end")
+
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(subscription.objects()), timeout=OBJECT_TIMEOUT)
+
+    # §12.1 が求めるのは購読の取り消しであり、セッションの終了ではない
+    assert moq_pair.client.established is True
+
+
 async def test_subscribe_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
     """
     SUBSCRIBE_OK が運んだパラメータと Track Properties を購読から参照できることを確認する。
