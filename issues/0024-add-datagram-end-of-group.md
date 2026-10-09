@@ -1,7 +1,7 @@
 # Datagram で END_OF_GROUP を送れるようにする
 
 - Created: 2026-09-16
-- Completed:
+- Completed: 2026-10-09
 - Branch: feature/add-datagram-end-of-group
 - Polished:
 
@@ -62,3 +62,35 @@ END_OF_GROUP の同時指定を拒否する検証も moqt-rs 側に入ってい�
 - STATUS と END_OF_GROUP の同時指定が拒否されること
 - END_OF_GROUP を宣言した Group で、宣言位置より大きい Object ID の Object が受信側で
   Malformed Track として拒否されること
+
+## 解決方法
+
+moqt-rs の develop を `e8f9eb4` から `e195973` (0211) へ上げて `Cargo.lock` を更新し、
+`Session::send_object_datagram` の追加引数を moqt-py の native から Python 層まで通した。
+
+- `src/core.rs` の `send_object_datagram` に `end_of_group: bool = false` を追加し、
+  状態機械へ渡すようにした
+- `moqt.moq._runtime.Runtime.send_object_datagram` に `end_of_group: bool = False` を追加し、
+  wire を組み立てる `_encode_object_datagram` と状態機械の両方へ渡すようにした
+- `moqt.moq.publisher.Publication.send_datagram` に `end_of_group: bool = False` を追加した
+- `python/moqt/_native.pyi` は `uv run maturin develop --generate-stubs` で再生成した
+- `skills/moqt-py/SKILL.md` のオブジェクト送信の節に `end_of_group` の説明を追加した
+
+### テスト
+
+- `tests/test_moqt.py`: 状態機械の `send_object_datagram` で END_OF_GROUP を指定できること、
+  STATUS との同時指定が拒否されること、受信した END_OF_GROUP の宣言位置より大きい
+  Object ID が Malformed Track (`object received after End of Group`) として拒否されること
+- `tests/test_e2e.py`: `Publication.send_datagram(..., end_of_group=True)` で送った
+  データグラムが届くこと、STATUS との同時指定が `MOQTError` になること、宣言位置より
+  後ろの Object を送ると購読が取り消されて `objects()` が終了し、セッションは閉じないこと
+  (WT-H2 / WT-H3 の両方で実行)
+- データグラムを組み立てるテストヘルパ `_object_datagram` に END_OF_GROUP bit の指定を足した
+
+### 確認
+
+- `uv run pytest` は 545 件通過、7 件 skip (TEST_MOQT_URI が必要な relay / connect)
+- `cargo fmt --check` / `cargo clippy --all-targets --all-features -- -D warnings` /
+  `cargo test` / `ruff check` / `ruff format --check` / `ty` が通る
+- `prek run --all-files` (pre-commit ステージ) が通る
+- `python/moqt/_native.pyi` を再生成して同一の内容になること
