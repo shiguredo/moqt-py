@@ -116,22 +116,31 @@ webtransport-py 2026.1.0.dev25 で 0257 と 0258 がリリースされ、実装�
 ### テスト
 
 `tests/test_e2e.py` に `test_state_machine_session_close_reaches_the_peer` を追加した
-(WT-H2 / WT-H3 の両方で実行)。
+(WT-H2 / WT-H3 / QUIC で実行)。
 
 - クライアントが解釈できない stream type を送り、サーバーの状態機械をプロトコル違反で
   終了させる
 - サーバー側が終了コード (`SESSION_PROTOCOL_VIOLATION`) と理由を観測すること
 - peer が MOQT セッションの終了として観測し (`established` が偽)、トランスポートの
   終端例外が同じ終了コードを保持すること
-- WT-H2 では終端例外の理由が状態機械の理由と一致すること。WT-H3 の理由は
-  webtransport-py が CONNECT ストリームの終了として生成する説明文になる
+- WT-H2 と QUIC では終端例外の理由が状態機械の理由と一致すること
 
 ### 残る制約
 
-統一 API の `Client` はピアの WT_CLOSE_SESSION の終了コードと理由を公開していないため、
-WT-H2 で peer 起点の終了を観測した場合だけ理由を moqt-py から伝えられない
-(`_on_session_closed` の経路で 0 と空文字になる)。WT-H3 は状態機械が CONNECT ストリームの
-終了から終了コードを受け取るため、状態機械の終了通知がそのまま使われる。
+peer 起点の終了で、ピアが送った終了コードと理由を MOQT の状態機械へ伝える経路が無い。
+
+- moqt-rs の入力 API は `recv_control_stream_closed(RequestStreamEnd)` だけで、終了コードと
+  理由を受け取らない。コントロールストリームの終了は常に `SESSION_PROTOCOL_VIOLATION` と
+  固定文言 (`peer control stream reset` / `peer control stream closed with FIN`) になる
+  (`src/session/core.rs`)。draft-ietf-moq-transport-22 §6.3 (Session initialization) の
+  「コントロールストリームは session の lifetime 中に閉じてはならない」に対する扱いとしては
+  正しいが、transport のセッション終了でコントロールストリームが閉じた場合も同じ経路になる
+- そのため WT-H3 では、ピアが `SESSION_CONTROL_MESSAGE_TIMEOUT` と理由付きで終了しても、
+  受信側は `SESSION_PROTOCOL_VIOLATION` と moqt-rs の固定文言を観測する。§6.6 (Termination)
+  が定めるとおり終了コードと理由は transport 層 (CONNECTION_CLOSE / CLOSE_WEBTRANSPORT_SESSION)
+  が運ぶ値であり、状態機械へ渡す経路が要る
+- WT-H2 と QUIC では webtransport-py の統一 API がピアの終了コードと理由を公開していない
+  ため、`_on_session_closed` / `_on_connection_closed` の経路で 0 と空文字になる
 
 ### 確認
 
