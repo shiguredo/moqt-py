@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from webtransport import HTTPVersion, Session
+from webtransport import HTTPVersion, Session, quic
 from webtransport import Server as WebTransportServer
 
 from moqt import moqt
@@ -22,7 +22,7 @@ from moqt.moq._runtime import (
 )
 from moqt.moq.client import PeerGoaway
 from moqt.moq.publisher import Publication
-from moqt.moq.transport import Transport
+from moqt.moq.transport import MOQT_PROTOCOL, Transport
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -34,7 +34,18 @@ logger = logging.getLogger(__name__)
 # 接続方式によらず (peer address, session ID) の組で識別する。統一 API の
 # `webtransport.Session` はコールバックのたびに作られるため同一性では識別できない。
 # session ID は接続ごとに振られるため、address と組にして初めて一意になる。
+#
+# QUIC 直接接続には WebTransport session が無いため、session ID は常に
+# `QUIC_SESSION_ID` を使い、address だけで接続を識別する。
 ConnectionContext = tuple[tuple[str, int], int]
+
+# QUIC 直接接続に WebTransport session が無いことを示す session ID。
+QUIC_SESSION_ID = 0
+
+
+def _quic_context(address: tuple[str, int]) -> ConnectionContext:
+    """QUIC 接続の address から接続の識別子を作る。"""
+    return (address, QUIC_SESSION_ID)
 
 
 def _session_context(session: Session) -> ConnectionContext:
@@ -51,7 +62,7 @@ class ServerSession:
     """確立した MOQT server session。"""
 
     session_id: int
-    """WebTransport session の ID。"""
+    """WebTransport session の ID。QUIC 直接接続では `QUIC_SESSION_ID` (0)。"""
 
     address: tuple[str, int]
     """peer のアドレス。"""
@@ -428,8 +439,10 @@ class Server:
     ) -> None:
         """server を作成する。
 
-        `transport` は接続方式である。`Transport.Quic` には未対応であり、
-        指定すると `ValueError` になる。
+        `transport` は接続方式である。`Transport.Quic` では WebTransport session が無いため、
+        接続は address 単位になり、`ServerSession.session_id` は `QUIC_SESSION_ID` (0) に
+        なる。`allowed_origins` は WebTransport の Origin 検査で使うため、`Transport.Quic`
+        では指定できない。
 
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
@@ -442,25 +455,46 @@ class Server:
         担うため指定できない
         (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         """
-        if transport is Transport.Quic:
-            # webtransport-py の QUIC server にはストリームの reset / STOP_SENDING と
-            # 接続の close を送る API が無く、MOQT の server 役を完全には実装できない
-            raise ValueError("Transport.Quic is not supported by the testing server")
+        if transport is Transport.Quic and allowed_origins is not None:
+            raise ValueError("allowed_origins is not supported for QUIC")
         self.transport = transport
-        # 統一 API の Server を HTTPVersion で選ぶ。コールバックは接続方式に
-        # よらず Session ハンドルを受け取る
-        self._transport: WebTransportServer = WebTransportServer(
-            host=host,
-            port=port,
-            http_version=(
-                HTTPVersion.HTTP2
-                if transport is Transport.WebTransportOverHTTP2
-                else HTTPVersion.HTTP3
-            ),
-            certfile=certfile,
-            keyfile=keyfile,
-            allowed_origins=allowed_origins,
-        )
+        self._transport: WebTransportServer | quic.Server
+        if transport is Transport.Quic:
+            # QUIC 直接接続では MOQT の ALPN を提示する
+            # (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
+            self._transport = quic.Server(
+                host=host,
+                port=port,
+                certfile=certfile,
+                keyfile=keyfile,
+                alpn_protocols=[MOQT_PROTOCOL],
+            )
+            # QUIC には WebTransport session が無いため、接続の確立と終了は
+            # address 単位のコールバックで扱う
+            self._transport.on_stream_data(self._on_quic_stream_data)
+            self._transport.on_datagram(self._on_quic_datagram)
+            self._transport.on_stream_reset(self._on_quic_stream_reset)
+            self._transport.on_connection_closed(self._on_quic_connection_closed)
+        else:
+            # 統一 API の Server を HTTPVersion で選ぶ。コールバックは接続方式に
+            # よらず Session ハンドルを受け取る
+            self._transport = WebTransportServer(
+                host=host,
+                port=port,
+                http_version=(
+                    HTTPVersion.HTTP2
+                    if transport is Transport.WebTransportOverHTTP2
+                    else HTTPVersion.HTTP3
+                ),
+                certfile=certfile,
+                keyfile=keyfile,
+                allowed_origins=allowed_origins,
+            )
+            self._transport.on_session_ready(self._on_session_ready)
+            self._transport.on_session_closed(self._on_session_closed)
+            self._transport.on_stream_data(self._on_stream_data)
+            self._transport.on_stream_reset(self._on_stream_reset)
+            self._transport.on_datagram(self._on_datagram)
         self._implementation = implementation
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
@@ -478,12 +512,6 @@ class Server:
         self._goaway_callback: Callable[[ServerSession, PeerGoaway], Awaitable[None]] | None = None
         self._event_callback: Callable[[Runtime, NativeEvent], Awaitable[None]] | None = None
         self._tick_task: asyncio.Task[None] | None = None
-
-        self._transport.on_session_ready(self._on_session_ready)
-        self._transport.on_session_closed(self._on_session_closed)
-        self._transport.on_stream_data(self._on_stream_data)
-        self._transport.on_stream_reset(self._on_stream_reset)
-        self._transport.on_datagram(self._on_datagram)
 
     # ─── 公開 API ───────────────────────────────────────────
 
@@ -793,35 +821,126 @@ class Server:
         )
         await self._on_subscribe(request)
 
-    async def _open_connection(self, session: Session) -> None:
+    async def _open_connection(
+        self,
+        context: ConnectionContext,
+        *,
+        address: tuple[str, int],
+        session_id: int,
+        ops: TransportOps,
+    ) -> _Connection:
         """1 本の接続で server role の MOQT Session を開始する。"""
-        context = _session_context(session)
-        address, session_id = context
         if context in self._connections:
-            raise RuntimeError(f"duplicate WebTransport session: {session_id} from {address}")
+            raise RuntimeError(f"duplicate connection: session={session_id} from {address}")
 
         runtime = Runtime(
             client=False,
             implementation=self._implementation,
-            ops=self._transport_ops(session),
+            ops=ops,
             events=self._runtime_events(context),
             transport=self.transport,
             control_message_timeout=self._control_message_timeout,
             data_stream_timeout=self._data_stream_timeout,
             setup_options=self._setup_options,
         )
-        self._connections[context] = _Connection(
-            runtime=runtime, address=address, session_id=session_id
-        )
+        connection = _Connection(runtime=runtime, address=address, session_id=session_id)
+        self._connections[context] = connection
         await runtime.start()
+        return connection
 
     async def _on_session_ready(self, session: Session) -> None:
         """WebTransport session の確立で MOQT Session を開始する。"""
-        await self._open_connection(session)
+        address, session_id = _session_context(session)
+        await self._open_connection(
+            (address, session_id),
+            address=address,
+            session_id=session_id,
+            ops=self._transport_ops(session),
+        )
 
     async def _on_session_closed(self, session: Session) -> None:
         """閉じた session の MOQT 状態を破棄する。"""
         self._connections.pop(_session_context(session), None)
+
+    async def _quic_connection(self, address: tuple[str, int]) -> _Connection:
+        """QUIC 接続の address から接続を引く。無ければ MOQT Session を開始する。
+
+        QUIC 直接接続には WebTransport session が無く、確立を通知するコールバックも
+        無いため、最初のデータ受信で MOQT Session を開始する。
+        """
+        connection = self._connections.get(_quic_context(address))
+        if connection is not None:
+            return connection
+        return await self._open_connection(
+            _quic_context(address),
+            address=address,
+            session_id=QUIC_SESSION_ID,
+            ops=self._quic_transport_ops(address),
+        )
+
+    def _quic_transport_ops(self, address: tuple[str, int]) -> TransportOps:
+        """QUIC 直接接続のトランスポート操作を組み立てる。
+
+        QUIC には WebTransport session が無いため、すべての操作が address を伴う。
+        server 起点の双方向ストリームも開ける
+        (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
+        """
+        transport = self._transport
+        if not isinstance(transport, quic.Server):
+            raise RuntimeError("the QUIC server is missing")
+        return TransportOps(
+            open_uni_stream=lambda: transport.open_stream(address, bidirectional=False),
+            open_bidi_stream=lambda: transport.open_stream(address, bidirectional=True),
+            send_stream_data=lambda stream_id, data, fin: transport.send_stream_data(
+                address, stream_id, data, fin
+            ),
+            reset_stream=lambda stream_id, error_code: transport.reset_stream(
+                address, stream_id, error_code
+            ),
+            stop_sending=lambda stream_id, error_code: transport.stop_sending(
+                address, stream_id, error_code
+            ),
+            send_datagram=lambda data: transport.send_datagram(address, data),
+            # MOQT の終了コードと理由をそのまま渡し、peer が失敗を検知できるようにする
+            # (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+            close=lambda code, reason: transport.close(address, code, reason),
+        )
+
+    async def _on_quic_stream_data(
+        self, stream_id: int, data: bytes, fin: bool, address: tuple[str, int]
+    ) -> None:
+        """QUIC のストリームデータを受信する。
+
+        QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
+        QUIC の FIN はリセットではないため `reset=False` で通知する。
+        """
+        connection = await self._quic_connection(address)
+        await self._receive_stream(_quic_context(address), stream_id, data)
+        if fin:
+            await connection.runtime.receive_stream_closed(stream_id, reset=False, error_code=None)
+
+    async def _on_quic_stream_reset(
+        self, stream_id: int, error_code: int, address: tuple[str, int]
+    ) -> None:
+        """QUIC のストリームリセットを状態機械へ通知する。
+
+        QUIC の RESET_STREAM は MOQT のエラーコードをそのまま運ぶ
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        """
+        connection = self._connections.get(_quic_context(address))
+        if connection is not None:
+            await connection.runtime.receive_stream_closed(
+                stream_id, reset=True, error_code=error_code
+            )
+
+    async def _on_quic_datagram(self, data: bytes, address: tuple[str, int]) -> None:
+        """QUIC のデータグラムを状態機械へ渡す。"""
+        connection = await self._quic_connection(address)
+        await connection.runtime.receive_datagram(data)
+
+    async def _on_quic_connection_closed(self, address: tuple[str, int]) -> None:
+        """QUIC 接続の終了で MOQT 状態を破棄する。"""
+        self._connections.pop(_quic_context(address), None)
 
     async def _on_stream_data(self, session: Session, stream_id: int, data: bytes) -> None:
         """受信データを状態機械へ渡す。"""

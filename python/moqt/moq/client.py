@@ -1167,11 +1167,22 @@ class Client:
             await runtime.receive_session_closed()
 
     async def _on_connection_closed(self) -> None:
-        """SETUP 完了前の QUIC 接続の終了を接続失敗として扱う。"""
+        """QUIC 接続の終了を MOQT セッションの終了として扱う。
+
+        SETUP 完了前の終了は接続失敗として `connect()` へ伝える。SETUP 完了後の終了は
+        MOQT セッションの終了としてアプリへ通知する。終了コードと理由は接続方式によっては
+        トランスポート層にしか無いため、状態機械が終了コードを持たない場合は 0 と空文字で
+        通知する。
+        """
         if not self.established:
+            # 接続前、または MOQT セッションが状態機械の終了通知で既に終了している場合
             self._fail_connect(
                 ConnectionError("QUIC connection closed before MOQT SETUP completed")
             )
+            return
+        runtime = self._runtime
+        if runtime is not None:
+            await runtime.receive_session_closed()
 
     def _fail_connect(self, error: BaseException) -> None:
         """最初の接続エラーを保存して待機中の connect を起こす。"""

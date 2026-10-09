@@ -384,6 +384,12 @@ pytest_plugins = ["moqt.moq.testing"]
 | `moq_client_factory` | `moq_server` へ接続済みの `Client` を作る factory |
 | `moq_pair` | 接続済みの client / server と、確立した `ServerSession` |
 
+`Server` は `Transport.WebTransportOverHTTP3` / `Transport.WebTransportOverHTTP2` /
+`Transport.Quic` のすべてで使える。`moq_transport` を `Transport.Quic` に上書きすると、
+同じテストを QUIC 直接接続で実行できる。QUIC には WebTransport session が無いため、
+接続は address 単位になり `ServerSession.session_id` は `QUIC_SESSION_ID` (0) になる。
+`allowed_origins` は WebTransport の Origin 検査で使うため、QUIC では指定できない。
+
 ```python
 from moqt.moq import Publication
 from moqt.moq.testing import MOQTPair, SubscriptionRequest, collect_objects, wait_until
@@ -431,7 +437,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` は未対応で `ValueError` になる
+- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` では ALPN に `MOQT_PROTOCOL` を提示し、`allowed_origins` を指定すると `ValueError` になる
 - コールバックは `on_session_established` / `on_subscribe` / `on_fetch` / `on_publish` / `on_request_update` / `on_goaway` / `on_event` / `on_fill_fetch_stream`
 - `ServerSession` は `goaway()` と状態照会、`SubscriptionRequest` は `subscribe_ok()` / `reject()`、`FetchRequest` は `respond()` / `reject()`、`PublisherRequest` は `accept()` / `reject()` を持つ
 - 補助 API: `generate_certificates()` / `wait_until()` / `collect_objects()`

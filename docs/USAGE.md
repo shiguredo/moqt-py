@@ -166,6 +166,9 @@ pytest_plugins = ["moqt.moq.testing"]
 
 fixture は `moq_certificates` / `moq_transport` / `moq_server` / `moq_client_factory` /
 `moq_pair` の 5 つである。`moq_transport` を上書きすると suite 全体の接続方式を変えられる。
+`Server` は WT-H3 / WT-H2 / QUIC 直接接続のすべてに対応しており、`Transport.Quic` を選ぶと
+同じテストを QUIC で実行できる。QUIC では接続が address 単位になるため、
+`ServerSession.session_id` は `QUIC_SESSION_ID` (0) になる。
 
 ```python
 from moqt.moq import Publication

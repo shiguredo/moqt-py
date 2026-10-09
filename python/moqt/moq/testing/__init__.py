@@ -21,8 +21,9 @@
 - ``moq_client_factory``: ``moq_server`` へ接続済みの ``Client`` を作る factory
 - ``moq_pair``: 接続済みの client / server と、確立した ``ServerSession``
 
-``moq_transport`` を上書きすると接続方式を変えられる。``Transport.Quic`` は
-``Server`` が未対応である。
+``moq_transport`` を上書きすると接続方式を変えられる。``Transport.Quic`` では
+WebTransport session が無いため、接続は address 単位になり ``ServerSession.session_id``
+は :data:`QUIC_SESSION_ID` (0) になる。
 
 証明書生成だけを単体で使いたい場合は :func:`generate_certificates` を、
 述語の待ち合わせだけを単体で使いたい場合は :func:`wait_until` を使う。
@@ -44,6 +45,7 @@ from cryptography.x509.oid import NameOID
 
 from moqt.moq.client import Client
 from moqt.moq.testing.server import (
+    QUIC_SESSION_ID,
     FetchRequest,
     FetchResponse,
     PublisherRequest,
@@ -301,6 +303,7 @@ async def moq_pair(
 
 __all__ = [
     "DEFAULT_TIMEOUT",
+    "QUIC_SESSION_ID",
     "ClientFactory",
     "FetchRequest",
     "FetchResponse",

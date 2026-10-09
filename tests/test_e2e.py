@@ -27,6 +27,7 @@ from moqt.moq._runtime import (
     Runtime,
 )
 from moqt.moq.testing import (
+    QUIC_SESSION_ID,
     ClientFactory,
     FetchRequest,
     FetchResponse,
@@ -44,6 +45,7 @@ from webtransport.h2.exceptions import (
 from webtransport.h3.exceptions import (
     WebTransportSessionClosedError as H3SessionClosedError,
 )
+from webtransport.quic.exceptions import QuicApplicationError
 
 # テストで使う Track
 NAMESPACE = [b"moqt-py", b"test"]
@@ -162,14 +164,20 @@ def _object_properties(timestamp: int) -> bytes:
     return properties.encode()
 
 
-async def test_client_and_server_exchange_setup_over_webtransport(moq_pair: MOQTPair) -> None:
+async def test_client_and_server_exchange_setup(
+    moq_pair: MOQTPair, moq_transport: Transport
+) -> None:
     """
-    localhost の実 WebTransport 接続上で MOQT SETUP が成立することを確認する。
+    localhost の実接続上で MOQT SETUP が成立することを確認する。
 
     SETUP 交換の完了、確立した session の識別情報、接続元アドレスを検証する。
     """
     assert moq_pair.client.established
-    assert moq_pair.session.session_id >= 0
+    if moq_transport is Transport.Quic:
+        # QUIC 直接接続には WebTransport session が無い
+        assert moq_pair.session.session_id == QUIC_SESSION_ID
+    else:
+        assert moq_pair.session.session_id >= 0
     assert moq_pair.session.address[0] == "127.0.0.1"
     # peer が SETUP で宣言した Setup Option が client と server の両方から見える
     # (draft-ietf-moq-transport-22 §16.4 (Setup Options))
@@ -2026,10 +2034,30 @@ async def test_state_machine_session_close_reaches_the_peer(
 
     # peer のトランスポートは終了コードと理由を保持している。受信ループは終端で
     # これを送出するため、close() でも観測できる
-    with pytest.raises((H2SessionClosedError, H3SessionClosedError)) as info:
+    with pytest.raises((H2SessionClosedError, H3SessionClosedError, QuicApplicationError)) as info:
         await moq_pair.client.close()
     assert info.value.error_code == moqt.SESSION_PROTOCOL_VIOLATION
     assert info.value.reason
-    if moq_transport is Transport.WebTransportOverHTTP2:
-        # WT-H2 は WT_CLOSE_SESSION の理由をそのまま保持する
+    if moq_transport is not Transport.WebTransportOverHTTP3:
+        # WT-H2 と QUIC は終了コードと理由をそのまま保持する。WT-H3 の理由は
+        # webtransport-py が CONNECT ストリームの終了として生成する説明文になる
         assert info.value.reason == closed[0][1]
+
+
+def test_quic_server_rejects_allowed_origins(moq_certificates: tuple[str, str]) -> None:
+    """
+    QUIC 直接接続では Origin 検査を使えないため、指定を拒否することを確認する。
+
+    Origin は WebTransport の CONNECT 要求で運ばれる値であり、QUIC 直接接続には
+    対応する仕組みが無い。
+    """
+    certfile, keyfile = moq_certificates
+    with pytest.raises(ValueError, match="allowed_origins is not supported for QUIC"):
+        Server(
+            host="127.0.0.1",
+            port=0,
+            certfile=certfile,
+            keyfile=keyfile,
+            transport=Transport.Quic,
+            allowed_origins=["https://example.com"],
+        )
