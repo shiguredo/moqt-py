@@ -60,3 +60,32 @@ webtransport-py ではこの不足が 0257 (h3 層で WebTransport セッショ�
   非対称である
 
 webtransport-py の 0257 / 0258 がリリースされた時点で reopened にして対応する。
+
+## reopened にする理由
+
+webtransport-py 2026.1.0.dev25 で 0257 と 0258 がリリースされ、実装できるようになった。
+
+- 0257: 統一 API の `Session` に `close_session(error_code, error_message)` と
+  `stop_sending(stream_id, error_code)` が入り、WT-H3 でも終了コードと理由付きで
+  WebTransport session を閉じられるようになった。`Client.close(error_code, error_message)` も
+  引数を受け取る
+- 0258: `quic.Server` に `shutdown_stream` / `reset_stream` / `stop_sending` / `close` と
+  `on_stream_reset` が入り、QUIC 直接接続の server でも同じ経路を作れるようになった
+
+あわせて、実測で次の 2 点を確認した。
+
+- `moq.moq._runtime.Runtime._handle_close` はアプリへの通知だけで終わり、トランスポートを
+  閉じていない。`Runtime.close` の経路だけが `TransportOps.close` を呼んでいる。このため、
+  状態機械がプロトコル違反でセッションを閉じても peer は WebTransport session の終了を
+  観測できない。実測では、WT-H3 / WT-H2 のどちらでもサーバーの状態機械が閉じた後も
+  クライアントの `established` が真のままだった
+- peer のトランスポート層は終了コードと理由を保持するが、統一 API の `Client` は
+  ピアの WT_CLOSE_SESSION の終了コードと理由を公開していない。WT-H2 の client は
+  受信ループの終端例外としてのみ観測できる
+
+完了条件に状態機械起点の経路を明記する。
+
+## 完了条件 (reopened 時点)
+
+- 状態機械がセッションを閉じたとき、peer が WebTransport session の終了として検知できること
+- 終了コードと理由が peer へ伝わること
