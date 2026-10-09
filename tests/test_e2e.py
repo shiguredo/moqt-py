@@ -15,9 +15,11 @@ from moqt.moq import (
     Client,
     Fetch,
     MOQTObject,
+    NativeEvent,
     PeerGoaway,
     Publication,
     Subscription,
+    Transport,
 )
 from moqt.moq._runtime import (
     GROUP_ORDER_DESCENDING,
@@ -35,6 +37,12 @@ from moqt.moq.testing import (
     SubscriptionRequest,
     collect_objects,
     wait_until,
+)
+from webtransport.h2.exceptions import (
+    WebTransportSessionClosedError as H2SessionClosedError,
+)
+from webtransport.h3.exceptions import (
+    WebTransportSessionClosedError as H3SessionClosedError,
 )
 
 # テストで使う Track
@@ -1982,3 +1990,46 @@ async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MOQT
     received = await _take_objects(subscription, 1)
     assert received[0].payload == b"explicit"
     assert received[0].subgroup_id == 3
+
+
+async def test_state_machine_session_close_reaches_the_peer(
+    moq_pair: MOQTPair, moq_transport: Transport
+) -> None:
+    """
+    状態機械が閉じたセッションが peer でも終了として観測できることを確認する。
+
+    プロトコル違反で状態機械がセッションを閉じても WebTransport session が開いたままだと、
+    peer は失敗に気づかず期限まで待ち続ける。MOQT の終了コードと理由をそのまま
+    WebTransport session の終了として伝える
+    (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    """
+    closed: list[tuple[int, str]] = []
+
+    async def on_event(runtime: Runtime, event: NativeEvent) -> None:
+        if event.kind == "close":
+            closed.append((int(event.code or 0), str(event.reason or "")))
+
+    moq_pair.server.on_event(on_event)
+
+    # クライアントが解釈できない stream type を送り、サーバーの状態機械を
+    # プロトコル違反で終了させる
+    stream_id = await moq_pair.client.open_stream()
+    await moq_pair.client.send_stream_data(stream_id, b"\x00" + bytes(8), fin=True)
+
+    # サーバー側の状態機械はプロトコル違反と理由を伴って終了する
+    await wait_until(lambda: bool(closed))
+    assert closed[0][0] == moqt.SESSION_PROTOCOL_VIOLATION
+    assert closed[0][1]
+
+    # peer は MOQT セッションの終了として観測する
+    await wait_until(lambda: not moq_pair.client.established)
+
+    # peer のトランスポートは終了コードと理由を保持している。受信ループは終端で
+    # これを送出するため、close() でも観測できる
+    with pytest.raises((H2SessionClosedError, H3SessionClosedError)) as info:
+        await moq_pair.client.close()
+    assert info.value.error_code == moqt.SESSION_PROTOCOL_VIOLATION
+    assert info.value.reason
+    if moq_transport is Transport.WebTransportOverHTTP2:
+        # WT-H2 は WT_CLOSE_SESSION の理由をそのまま保持する
+        assert info.value.reason == closed[0][1]

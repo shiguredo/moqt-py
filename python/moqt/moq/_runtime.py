@@ -441,8 +441,8 @@ class Runtime:
 
     @property
     def established(self) -> bool:
-        """SETUP 交換が完了しているかを返す。"""
-        return self._core.established
+        """SETUP 交換が完了し、セッションが閉じられていないかを返す。"""
+        return self._core.established and not self._closed
 
     @property
     def peer_setup_options(self) -> dict[int, object]:
@@ -640,6 +640,16 @@ class Runtime:
         with contextlib.suppress(Exception):
             await self._apply_events(self._core.close(code, reason))
         await self._ops.close(code, reason)
+
+    async def receive_session_closed(self) -> None:
+        """peer が WebTransport session を閉じたことをセッション終了として反映する。
+
+        終了コードと理由は接続方式によってはトランスポート層にしか無いため、ここでは
+        0 と空文字で通知する。MOQT の状態機械が終了コードを持っている場合は
+        `_handle_close` が先にセッションを終了させるため、この経路は使われない。
+        トランスポートは既に閉じているため、ここから close は送らない。
+        """
+        await self._finish_session(0, "")
 
     # ─── 低レベル操作 ───────────────────────────────────────
 
@@ -1788,9 +1798,21 @@ class Runtime:
         )
 
     async def _handle_close(self, event: NativeEvent) -> None:
-        """セッション終了を処理する。"""
-        logger.debug("MOQT session closed: code=%s reason=%s", event.code, event.reason)
-        await self._finish_session(int(event.code or 0), str(event.reason or ""))
+        """セッション終了を処理する。
+
+        状態機械がセッションを閉じた場合 (プロトコル違反など) は、peer が失敗に気づけるよう
+        WebTransport session も終了コードと理由付きで閉じる。既に閉じている場合
+        (`Runtime.close` からの経路) は何もしない。
+        """
+        code = int(event.code or 0)
+        reason = str(event.reason or "")
+        logger.debug("MOQT session closed: code=%s reason=%s", code, reason)
+        if self._closed:
+            return
+        await self._finish_session(code, reason)
+        # 状態機械が閉じたセッションは、peer が終了コードと理由を観測できるよう
+        # トランスポートでも閉じる。peer 起点の終了ではトランスポート側が no-op になる
+        await self._ops.close(code, reason)
 
     async def _finish_session(self, code: int, reason: str) -> None:
         """セッションを終了状態にし、待ち合わせとアプリケーションへ通知する。"""

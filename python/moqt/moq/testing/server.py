@@ -5,7 +5,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 from webtransport import HTTPVersion, Session
 from webtransport import Server as WebTransportServer
@@ -35,23 +35,6 @@ logger = logging.getLogger(__name__)
 # `webtransport.Session` はコールバックのたびに作られるため同一性では識別できない。
 # session ID は接続ごとに振られるため、address と組にして初めて一意になる。
 ConnectionContext = tuple[tuple[str, int], int]
-
-
-class _HTTP2Session(Protocol):
-    """WT-H2 のセッションハンドルだけが持つ操作。
-
-    統一 API の `webtransport.Session` はプロトコル非依存の操作だけを持つ。
-    WT-H2 固有の操作は `Session.http_version` で WT-H2 と判定したうえで
-    この形として扱う。
-    """
-
-    async def stop_sending(self, stream_id: int, error_code: int = 0) -> None:
-        """WT_STOP_SENDING を送出する。"""
-        ...
-
-    async def close_session(self, error_code: int = 0, error_message: str = "") -> None:
-        """WT_CLOSE_SESSION を送出してセッションを閉じる。"""
-        ...
 
 
 def _session_context(session: Session) -> ConnectionContext:
@@ -630,30 +613,17 @@ class Server:
                 "server-initiated requests are not available over WebTransport"
             )
 
-        if session.http_version is HTTPVersion.HTTP2:
-            # WT-H2 は STOP_SENDING とセッションの終了を送出できる
-            h2_session = cast(_HTTP2Session, session)
-            return TransportOps(
-                open_uni_stream=lambda: session.open_stream(unidirectional=True),
-                open_bidi_stream=open_bidi_stream,
-                send_stream_data=session.send_stream_data,
-                reset_stream=session.reset_stream,
-                stop_sending=h2_session.stop_sending,
-                send_datagram=session.send_datagram,
-                close=lambda code, reason: h2_session.close_session(code, reason),
-            )
+        # STOP_SENDING とセッションの終了は接続方式によらず統一 API の Session が持つ。
+        # 終了は MOQT の終了コードと理由をそのまま渡し、peer が失敗を検知できるようにする
+        # (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         return TransportOps(
             open_uni_stream=lambda: session.open_stream(unidirectional=True),
             open_bidi_stream=open_bidi_stream,
             send_stream_data=session.send_stream_data,
             reset_stream=session.reset_stream,
-            # WT-H3 の session は STOP_SENDING を送出できないため、
-            # ストリームを reset して受信を終わらせる
-            stop_sending=lambda stream_id, error_code: session.reset_stream(stream_id, error_code),
+            stop_sending=session.stop_sending,
             send_datagram=session.send_datagram,
-            # WT-H3 にはセッションを終了コードと理由付きで閉じる API が無いため、
-            # CONNECT ストリームを reset して終了を伝える
-            close=lambda _code, _reason: session.reset_stream(session.session_id, 0),
+            close=lambda code, reason: session.close_session(code, reason),
         )
 
     def _runtime_events(self, context: ConnectionContext) -> RuntimeEvents:

@@ -21,7 +21,7 @@ dependencies = [
   # WebTransport (HTTP/3 / HTTP/2) と QUIC の asyncio I/O。
   # 統一 API (webtransport.Client / webtransport.Server + HTTPVersion) が必要なため
   # dev24 以上を要求する
-  "webtransport-py>=2026.1.0.dev24,<2026.2",
+  "webtransport-py>=2026.1.0.dev25,<2026.2",
 ]
 
 [project.optional-dependencies]

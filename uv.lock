@@ -219,7 +219,7 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'testing'", specifier = ">=50.0,<51" },
     { name = "pytest", marker = "extra == 'testing'", specifier = ">=9.0,<10" },
     { name = "pytest-asyncio", marker = "extra == 'testing'", specifier = ">=1.4,<2" },
-    { name = "webtransport-py", specifier = ">=2026.1.0.dev24,<2026.2" },
+    { name = "webtransport-py", specifier = ">=2026.1.0.dev25,<2026.2" },
 ]
 provides-extras = ["testing"]
 
@@ -320,13 +320,13 @@ wheels = [
 
 [[package]]
 name = "webtransport-py"
-version = "2026.1.0.dev24"
+version = "2026.1.0.dev25"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/7c/06a4bafb6e0cf4ea21e75866bb4b672a79a88b57b0a7622b7bd9fb1c4dda/webtransport_py-2026.1.0.dev24-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:d7b632a529ffba34ef0e964b37f49d403e123769c4ac0c362fd765756b722635", size = 1987021, upload-time = "2026-10-08T12:08:47.9Z" },
-    { url = "https://files.pythonhosted.org/packages/51/cf/0e650a73bf92f7238d22a48c8e89b41854a359dfbc4a50c280f538c15fe0/webtransport_py-2026.1.0.dev24-cp314-cp314-manylinux_2_39_aarch64.whl", hash = "sha256:8f538e2305e0034e6949a812098e298b07bd09c01b380fd13861816570b70517", size = 2197793, upload-time = "2026-10-08T12:08:14.164Z" },
-    { url = "https://files.pythonhosted.org/packages/48/5c/3328c9f8a1a4a5798fd5e233272b046265b334f9815df89913b99d728f0c/webtransport_py-2026.1.0.dev24-cp314-cp314-manylinux_2_39_x86_64.whl", hash = "sha256:8f3d22624eef885e1797aa6dc7929da4c2b903128af4804af713eb15f182bde8", size = 2380343, upload-time = "2026-10-08T12:08:14.017Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/f9/2a7bc14d252b0bbeba46e8bc2840e087ab077567d2095c6f94c18a3808ac/webtransport_py-2026.1.0.dev24-cp314-cp314t-macosx_26_0_arm64.whl", hash = "sha256:478d6862e45ab83c4e2f7f19bbfb3f9804feb57f79307d3528890d18fcce0c8d", size = 1991885, upload-time = "2026-10-08T12:08:11.048Z" },
-    { url = "https://files.pythonhosted.org/packages/96/0e/bb8e568d1c1180b9761f7ca4fae235cb2a34ec7a81e8b544a1422cc8e0de/webtransport_py-2026.1.0.dev24-cp314-cp314t-manylinux_2_39_aarch64.whl", hash = "sha256:25ef99f34a6a9b11e3ba7fcde2bcd0c0684d8b8b63f99ae3369e26c03067272d", size = 2206440, upload-time = "2026-10-08T12:08:16.748Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/67/fe2d6fb6ff6098423d899bd203b70f1895a907ffaeb370a587884babedb0/webtransport_py-2026.1.0.dev24-cp314-cp314t-manylinux_2_39_x86_64.whl", hash = "sha256:55ae8a92e029c040e39ab5ad30f7e32ec5e84b5353d3068f12ad366980f2b110", size = 2385837, upload-time = "2026-10-08T12:08:13.592Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/ab/caa3cc9f4120f03f18b097bf6b2c80293b9fbea2f6f7121ad8c9102e6c6f/webtransport_py-2026.1.0.dev25-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:d49ecba6f6b0914774060fe5a1fa9b412f1ee047a6097575cc5b570b727c1c32", size = 2002275, upload-time = "2026-10-09T00:06:19.776Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/e6/646daffd08b0b5968d0550e4d935809603bcee4106d070d1324afb1c36e3/webtransport_py-2026.1.0.dev25-cp314-cp314-manylinux_2_39_aarch64.whl", hash = "sha256:98a5d51f7e52f81615b789e09c86d5b318e55ec5eaad47107f51d0d2b2e678fc", size = 2213041, upload-time = "2026-10-09T00:06:20.392Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/4f/3d36412d9ea470c481cee9a74ee1d425d319d73ca72e85486659a95ded4a/webtransport_py-2026.1.0.dev25-cp314-cp314-manylinux_2_39_x86_64.whl", hash = "sha256:def9d538a4fc4b607b57de3ce4a0688c0ab3771315a5a9773dd265b45af69be8", size = 2395591, upload-time = "2026-10-09T00:06:18.283Z" },
+    { url = "https://files.pythonhosted.org/packages/13/c8/17105ebc6ac6baa9e61adc97f0540a8c7b3800426b09d97008cf541cc81b/webtransport_py-2026.1.0.dev25-cp314-cp314t-macosx_26_0_arm64.whl", hash = "sha256:eeee2580df1d9efd407b305a9eeeabc1a5af9b869e7b90d28fe5219ac028756f", size = 2007136, upload-time = "2026-10-09T00:06:14.509Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/8f/ea31baaf44698650347d5d7f44ad51cdeb50f05dd0807aad6165251a368e/webtransport_py-2026.1.0.dev25-cp314-cp314t-manylinux_2_39_aarch64.whl", hash = "sha256:81c51c9951d252c3a8abe2db739f8dbbd4fae4aee6a48cff36364a0a0cbb02ff", size = 2221690, upload-time = "2026-10-09T00:06:16.167Z" },
+    { url = "https://files.pythonhosted.org/packages/05/40/75e55e786448a576619e71848f42ce3759847f3c3ee154bae802d6cd9064/webtransport_py-2026.1.0.dev25-cp314-cp314t-manylinux_2_39_x86_64.whl", hash = "sha256:62e637a62496ea2a4c10aba2d524ea0b8c23c677df38090572883fe5789e5dba", size = 2401087, upload-time = "2026-10-09T00:06:15.952Z" },
 ]

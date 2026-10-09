@@ -890,11 +890,17 @@ class Client:
         )
 
     async def _close_transport(self, code: int, reason: str) -> None:
-        """トランスポートを閉じる。
+        """MOQT の終了コードと理由を WebTransport session の終了として伝える。
 
-        MOQT の終了コードと理由はトランスポートへ渡せないため破棄する。
+        状態機械がセッションを閉じた場合も peer が終了コードと理由を観測できる
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
         """
-        await self._transport.close()
+        transport = self._transport
+        if isinstance(transport, quic.Client):
+            # QUIC 直接接続では接続の終了として伝える
+            await transport.close(error_code=code, reason=reason)
+        else:
+            await transport.close(error_code=code, error_message=reason)
 
     def _runtime_events(self) -> RuntimeEvents:
         """ランタイムのコールバックを組み立てる。"""
@@ -1141,13 +1147,24 @@ class Client:
         logger.debug("WebTransport session ready: %s", session_id)
 
     async def _on_session_closed(self, session_id: int) -> None:
-        """SETUP 完了前の WebTransport session close を接続失敗として扱う。"""
+        """WebTransport session の終了を MOQT セッションの終了として扱う。
+
+        SETUP 完了前の終了は接続失敗として `connect()` へ伝える。SETUP 完了後の終了は
+        MOQT セッションの終了としてアプリへ通知する。終了コードと理由は接続方式によっては
+        トランスポート層にしか無いため、状態機械が終了コードを持たない場合は 0 と空文字で
+        通知する。
+        """
         if not self.established:
+            # 接続前、または MOQT セッションが状態機械の終了通知で既に終了している場合
             self._fail_connect(
                 ConnectionError(
                     f"WebTransport session {session_id} closed before MOQT SETUP completed"
                 )
             )
+            return
+        runtime = self._runtime
+        if runtime is not None:
+            await runtime.receive_session_closed()
 
     async def _on_connection_closed(self) -> None:
         """SETUP 完了前の QUIC 接続の終了を接続失敗として扱う。"""
