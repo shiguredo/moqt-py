@@ -1,7 +1,7 @@
 # Server が MOQT セッション終了時に WebTransport session を閉じられない
 
 - Created: 2026-09-16
-- Completed:
+- Completed: 2026-10-09
 - Branch: feature/fix-server-session-close
 - Polished:
 
@@ -89,3 +89,53 @@ webtransport-py 2026.1.0.dev25 で 0257 と 0258 がリリースされ、実装�
 
 - 状態機械がセッションを閉じたとき、peer が WebTransport session の終了として検知できること
 - 終了コードと理由が peer へ伝わること
+
+## 解決方法
+
+`pyproject.toml` と `uv.lock` の webtransport-py を 2026.1.0.dev25 へ上げ、0257 / 0258 で
+入った API に接続した。
+
+### 状態機械が閉じたセッションをトランスポートへ伝える
+
+- `moq.moq._runtime.Runtime._handle_close` で、状態機械の終了通知をアプリへ流したあとに
+  `TransportOps.close(code, reason)` を呼ぶようにした。プロトコル違反などで状態機械が
+  セッションを閉じた場合も peer が終了コードと理由を観測できる
+  (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。`Runtime.close` からの
+  経路は `_closed` で先に閉じるため二重に送出しない
+- `moq.moq.testing.server.Server._transport_ops` の WT-H3 分岐を無くし、接続方式によらず
+  統一 API の `Session.stop_sending` と `Session.close_session(code, reason)` を使うように
+  した。WT-H3 でも CONNECT ストリームの reset ではなく WT_CLOSE_SESSION で終了する
+- `moq.moq.Client._close_transport` が MOQT の終了コードと理由をトランスポートへ渡すように
+  した。QUIC 直接接続は `close(error_code, reason)`、WebTransport は
+  `close(error_code, error_message)` である
+- `moq.moq.Client._on_session_closed` は SETUP 完了後の終了を
+  `Runtime.receive_session_closed()` で MOQT セッションの終了として反映するようにした。
+  終了コードと理由は接続方式によってはトランスポート層にしか無いため、この経路では
+  0 と空文字で通知する。`Runtime.established` はセッション終了後は偽になる
+
+### テスト
+
+`tests/test_e2e.py` に `test_state_machine_session_close_reaches_the_peer` を追加した
+(WT-H2 / WT-H3 の両方で実行)。
+
+- クライアントが解釈できない stream type を送り、サーバーの状態機械をプロトコル違反で
+  終了させる
+- サーバー側が終了コード (`SESSION_PROTOCOL_VIOLATION`) と理由を観測すること
+- peer が MOQT セッションの終了として観測し (`established` が偽)、トランスポートの
+  終端例外が同じ終了コードを保持すること
+- WT-H2 では終端例外の理由が状態機械の理由と一致すること。WT-H3 の理由は
+  webtransport-py が CONNECT ストリームの終了として生成する説明文になる
+
+### 残る制約
+
+統一 API の `Client` はピアの WT_CLOSE_SESSION の終了コードと理由を公開していないため、
+WT-H2 で peer 起点の終了を観測した場合だけ理由を moqt-py から伝えられない
+(`_on_session_closed` の経路で 0 と空文字になる)。WT-H3 は状態機械が CONNECT ストリームの
+終了から終了コードを受け取るため、状態機械の終了通知がそのまま使われる。
+
+### 確認
+
+- `uv run pytest` は 547 件通過、7 件 skip
+- `prek run --all-files` (pre-commit ステージ) が通る
+- `cargo clippy --all-targets --all-features -- -D warnings` / `cargo fmt --check` /
+  `cargo test` / `ruff check` / `ruff format --check` / `ty` が通る
