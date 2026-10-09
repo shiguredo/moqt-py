@@ -1,7 +1,7 @@
 # testing Server を QUIC 直接接続に対応させる
 
 - Created: 2026-09-21
-- Completed:
+- Completed: 2026-10-09
 - Branch: feature/add-testing-server-quic-transport
 - Polished:
 
@@ -74,3 +74,50 @@ webtransport-py 2026.1.0.dev25 で 0258 がリリースされ、`quic.Server` �
 
 実測では、`Transport.Quic` を `Server` へ渡すと `ValueError` になり、E2E テストで
 QUIC 直接接続を検証できない状態だった。
+
+## 解決方法
+
+`moq.moq.testing.server.Server` を `Transport.Quic` に対応させた。
+
+### server
+
+- `Server.__init__` で `Transport.Quic` のときは `webtransport.quic.Server` を作り、
+  ALPN に `MOQT_PROTOCOL` (`moqt-22`) を提示する
+  (draft-ietf-moq-transport-22 §6.2 (Session establishment))。`allowed_origins` は
+  WebTransport の Origin 検査で使う値であり、QUIC では指定すると `ValueError` になる
+- QUIC には WebTransport session が無く確立を通知するコールバックも無いため、
+  接続は address 単位で扱い、最初のデータ受信で MOQT Session を開始する
+  (`Server._quic_connection`)。`ConnectionContext` の session ID は `QUIC_SESSION_ID` (0)
+- コールバックは `on_stream_data` / `on_datagram` / `on_stream_reset` /
+  `on_connection_closed` を登録する。QUIC の受信コールバックは FIN を運ぶため、
+  ストリームの終端も同じ経路で状態機械へ通知する
+- `Server._quic_transport_ops` が address を閉じ込めた `TransportOps` を組み立てる。
+  `reset_stream` / `stop_sending` / `send_datagram` / `close(code, reason)` は
+  `quic.Server` の同名 API へ繋ぐ。QUIC では server 起点の双方向ストリームも開けるため、
+  `open_bidi_stream` は `open_stream(bidirectional=True)` に繋ぐ
+- `Server._open_connection` は context / address / session ID / `TransportOps` を
+  受け取る形に変え、WebTransport と QUIC の両方から使う
+
+### client
+
+`moq.moq.Client._on_connection_closed` は SETUP 完了後の QUIC 接続終了を
+`Runtime.receive_session_closed()` で MOQT セッションの終了として反映するようにした。
+従来は SETUP 完了前の接続失敗としてだけ扱っていたため、server が接続を閉じても
+client はセッションの終了を観測できなかった。
+
+### テスト
+
+- `conftest.py` の `moq_transport` に `Transport.Quic` を足し、E2E テスト全体
+  (SETUP / SUBSCRIBE / オブジェクト送受信 / データグラム / FETCH / GOAWAY など) を
+  WT-H2 / WT-H3 / QUIC の 3 通りで実行するようにした
+- `test_client_and_server_exchange_setup` は QUIC で `ServerSession.session_id` が
+  `QUIC_SESSION_ID` になることも検証する
+- `test_quic_server_rejects_allowed_origins` で QUIC と `allowed_origins` の組み合わせが
+  `ValueError` になることを検証する
+
+### 確認
+
+- `uv run pytest` は 620 件通過、7 件 skip (うち E2E は 3 接続方式 × 68 件)
+- `prek run --all-files` (pre-commit ステージ) が通る
+- `cargo clippy --all-targets --all-features -- -D warnings` / `cargo fmt --check` /
+  `cargo test` / `ruff check` / `ruff format --check` / `ty` が通る
