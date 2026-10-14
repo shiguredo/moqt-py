@@ -3000,6 +3000,33 @@ impl CoreSession {
         self.session.open_outgoing_fill_stream_count(request_id) as u64
     }
 
+    /// STOP_SENDING を受けて再オープン禁止になった outgoing Subgroup を照会する。
+    ///
+    /// 戻り値は `(再オープン禁止かどうか, peer が載せたアプリケーションエラーコード)` の
+    /// 組である。エラーコードが `None` の場合はコードを解釈できなかったことを表す
+    /// (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams) /
+    /// §12.5 (Stream Reset Error Codes))。`subgroup_id` を省略した場合は FirstObjectId
+    /// モードの未解決 subgroup を表す。draft 由来の仕様であり、将来の改訂で変更される
+    /// 可能性がある。
+    #[pyo3(signature = (request_id, track_alias, group_id, subgroup_id=None))]
+    fn stopped_outgoing_subgroup_error_code(
+        &self,
+        request_id: u64,
+        track_alias: u64,
+        group_id: u64,
+        subgroup_id: Option<u64>,
+    ) -> (bool, Option<u64>) {
+        match self.session.stopped_outgoing_subgroup_error_code(
+            request_id,
+            track_alias,
+            group_id,
+            subgroup_id,
+        ) {
+            Some(error_code) => (true, error_code),
+            None => (false, None),
+        }
+    }
+
     /// 指定 Request ID の subscription の状態を返す。
     ///
     /// 保持していない Request ID の場合は `None` を返す。

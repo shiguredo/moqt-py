@@ -781,6 +781,159 @@ async def test_data_stream_timeout_sends_stop_sending(
     assert received.payload == b"second"
 
 
+async def test_received_stop_sending_marks_the_subgroup_stopped(
+    moq_certificates: tuple[str, str],
+) -> None:
+    """
+    購読者がデータストリームの送信停止を要求すると、publisher がその Subgroup を
+    再オープン禁止として記録することを確認する。
+
+    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 の経路だけである
+    (webtransport-py の統一 API は WT-H3 と QUIC 直接接続の受信 STOP_SENDING を
+    公開していない)。subgroup stream への STOP_SENDING は再オープン禁止として記録され、
+    Forward State が 0 から 1 へ変わる REQUEST_UPDATE が受理されるまで解除されない
+    (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.WebTransportOverHTTP2,
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client: Client | None = None
+    try:
+        sessions: list[ServerSession] = []
+        established = asyncio.Event()
+        published: list[Publication] = []
+
+        async def on_session_established(session: ServerSession) -> None:
+            sessions.append(session)
+            established.set()
+
+        async def on_subscribe(request: SubscriptionRequest) -> None:
+            published.append(await request.subscribe_ok(TRACK_ALIAS))
+
+        server.on_session_established(on_session_established)
+        server.on_subscribe(on_subscribe)
+
+        client = Client(
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+            transport=Transport.WebTransportOverHTTP2,
+            verify_peer=False,
+        )
+        await client.connect()
+        await asyncio.wait_for(established.wait(), timeout=OBJECT_TIMEOUT)
+
+        subscription = await client.subscribe(NAMESPACE, TRACK_NAME)
+        await wait_until(lambda: bool(published))
+        await published[0].send_object(1, 0, b"first")
+        received = await subscription.objects().__anext__()
+        assert received.stream_id is not None
+
+        # 購読者が受信中のストリームへ送信停止を要求する
+        runtime = sessions[0].runtime
+        await client.stop_sending_stream(received.stream_id, moqt.STREAM_CANCELLED)
+
+        # publisher 側の状態機械が cancel を記録するまで待つ
+        await wait_until(
+            lambda: (
+                runtime.stopped_outgoing_subgroup_error_code(
+                    subscription.request_id, TRACK_ALIAS, received.group_id, 0
+                )
+                != (False, None)
+            )
+        )
+        assert runtime.stopped_outgoing_subgroup_error_code(
+            subscription.request_id, TRACK_ALIAS, received.group_id, 0
+        ) == (True, moqt.STREAM_CANCELLED)
+        # 購読は生きたままである
+        assert client.established
+    finally:
+        if client is not None:
+            await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
+
+
+async def test_received_stop_sending_terminates_the_fetch(
+    moq_certificates: tuple[str, str],
+) -> None:
+    """
+    購読者が fetch stream の送信停止を要求すると、publisher の fetch が終端することを
+    確認する。
+
+    fetch stream への STOP_SENDING は、仕様が bidi request stream と uni data stream の
+    reset を MUST と定める経路である。状態機械は受信した cancel を fetch の終端として
+    扱い、request stream の reset を指示する
+    (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.WebTransportOverHTTP2,
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client: Client | None = None
+    try:
+        sessions: list[ServerSession] = []
+        established = asyncio.Event()
+
+        async def on_session_established(session: ServerSession) -> None:
+            sessions.append(session)
+            established.set()
+
+        async def on_fetch(request: FetchRequest) -> None:
+            # 応答は閉じない。購読者の送信停止要求で終端させる
+            response = await request.respond((9, 9), end_of_track=False)
+            await response.send_object(5, 0, b"fetched")
+
+        server.on_session_established(on_session_established)
+        server.on_fetch(on_fetch)
+
+        client = Client(
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+            transport=Transport.WebTransportOverHTTP2,
+            verify_peer=False,
+        )
+        await client.connect()
+        await asyncio.wait_for(established.wait(), timeout=OBJECT_TIMEOUT)
+
+        fetch = await client.fetch(NAMESPACE, TRACK_NAME)
+        received = await _take_fetch_objects(fetch, 1)
+        stream_id = received[0].stream_id
+        assert stream_id is not None
+
+        # 購読者が fetch stream へ送信停止を要求する
+        runtime = sessions[0].runtime
+        await client.stop_sending_stream(stream_id, moqt.STREAM_CANCELLED)
+
+        # publisher 側の状態機械が fetch を終端するまで待つ
+        await wait_until(
+            lambda: (runtime.fetch_state(fetch.request_id) or {}).get("state") == "terminated"
+        )
+        entry = runtime.fetch_state(fetch.request_id)
+        assert entry is not None
+        assert entry["state"] == "terminated"
+        assert entry["my_role"] == "publisher"
+    finally:
+        if client is not None:
+            await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
+
+
 async def test_session_state_accessors_report_the_live_session(
     moq_certificates: tuple[str, str],
 ) -> None:

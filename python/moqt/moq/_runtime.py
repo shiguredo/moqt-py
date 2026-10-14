@@ -336,6 +336,19 @@ class FetchWriter:
     """
 
     stream_id: int
+    request_id: int
+    """FETCH_HEADER に載せた Request ID。
+
+    peer が STOP_SENDING を送ってきたときに、状態機械へ fetch の終端として通知するために
+    使う (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    """
+    is_fill_fetch: bool = False
+    """fill fetch stream かどうか。
+
+    fill fetch stream への STOP_SENDING は subscription に影響しない独立 cancel として
+    状態機械が吸収するため、fetch の終端として通知してはならない
+    (draft-ietf-moq-transport-22 §3.4.1 (Fill Semantics))。
+    """
     group_order: int = GROUP_ORDER_ASCENDING
     """要求された GROUP_ORDER。
 
@@ -531,6 +544,29 @@ class Runtime:
         (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
         """
         return self._core.open_outgoing_fill_stream_count(request_id)
+
+    def stopped_outgoing_subgroup_error_code(
+        self,
+        request_id: int,
+        track_alias: int,
+        group_id: int,
+        subgroup_id: int | None = None,
+    ) -> tuple[bool, int | None]:
+        """STOP_SENDING を受けて再オープン禁止になった Subgroup を照会する。
+
+        戻り値は `(再オープン禁止かどうか, peer が載せたアプリケーションエラーコード)` の
+        組である。エラーコードが `None` の場合はコードを解釈できなかったことを表す
+        (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams) /
+        §12.5 (Stream Reset Error Codes))。`subgroup_id` を省略した場合は FirstObjectId
+        モードの未解決 subgroup を表す。
+
+        記録時のキーと完全一致するエントリだけを返す。再オープン禁止の判定は alias を
+        共有する別 request のエントリも照合するため、`False` でも再オープンが禁止されて
+        いる場合がある。
+        """
+        return self._core.stopped_outgoing_subgroup_error_code(
+            request_id, track_alias, group_id, subgroup_id
+        )
 
     def subscription_state(self, request_id: int) -> dict[str, object] | None:
         """指定 Request ID の subscription の状態を返す。
@@ -782,6 +818,34 @@ class Runtime:
             logger.debug("MOQT stream close was rejected: stream=%s error=%s", stream_id, error)
             await self._finish_session(0, str(error))
 
+    async def receive_stop_sending(self, stream_id: int, error_code: int | None) -> None:
+        """peer が自側の送信ストリームへ STOP_SENDING を送ったことを状態機械へ通知する。
+
+        自側が開いたストリームは fetch stream と subgroup stream / fill fetch stream で
+        あり、通知先が異なる。fetch stream への STOP_SENDING は fetch そのものを終端し、
+        bidi request stream と uni data stream の reset を指示する
+        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。subgroup stream は
+        再オープン禁止として記録される (§11.3.2 (Closing Subgroup Streams))。fill fetch
+        stream への STOP_SENDING は subscription に影響しない独立 cancel として状態機械が
+        吸収する (§3.4.1 (Fill Semantics))。
+
+        終端済みのストリームへ遅れて届いた STOP_SENDING は状態機械が拒否する。自側の FIN と
+        競合しうるため、例外を送出せずログに記録して継続する
+        (I/O 層は STOP_SENDING の受信を終端通知より先に渡す契約である)。
+        """
+        if self._closed:
+            return
+        fetch_writer = self._fetch_streams.get(stream_id)
+        try:
+            if fetch_writer is not None and not fetch_writer.is_fill_fetch:
+                events = self._core.fetch_stop_sending_received(fetch_writer.request_id, error_code)
+            else:
+                events = self._core.recv_data_stream_stop_sending(stream_id, error_code)
+        except Exception as error:
+            logger.debug("MOQT STOP_SENDING was rejected: stream=%s error=%s", stream_id, error)
+            return
+        await self._apply_events(events)
+
     async def retry_pending_data_streams(self) -> None:
         """購読が確定する前に届いたデータストリームを再試行する。
 
@@ -966,6 +1030,7 @@ class Runtime:
         self._streams[stream_id] = StreamInfo(kind=_STREAM_DATA)
         self._fetch_streams[stream_id] = FetchWriter(
             stream_id=stream_id,
+            request_id=request_id,
             group_order=self._resolve_group_order(request_id),
         )
         return stream_id
@@ -989,6 +1054,8 @@ class Runtime:
         self._streams[stream_id] = StreamInfo(kind=_STREAM_DATA)
         self._fetch_streams[stream_id] = FetchWriter(
             stream_id=stream_id,
+            request_id=request_id,
+            is_fill_fetch=True,
             group_order=self._resolve_group_order(request_id),
         )
         return stream_id

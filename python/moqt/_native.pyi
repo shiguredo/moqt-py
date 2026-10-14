@@ -3966,6 +3966,17 @@ class Session:
         """
         subscription を終了する (subscriber 側の STOP_SENDING)。
         """
+    def stopped_outgoing_subgroup_error_code(self, /, request_id: int, track_alias: int, group_id: int, subgroup_id: int |None = None) -> tuple[bool, int |None]:
+        """
+        STOP_SENDING を受けて再オープン禁止になった outgoing Subgroup を照会する。
+        
+        戻り値は `(再オープン禁止かどうか, peer が載せたアプリケーションエラーコード)` の
+        組である。エラーコードが `None` の場合はコードを解釈できなかったことを表す
+        (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams) /
+        §12.5 (Stream Reset Error Codes))。`subgroup_id` を省略した場合は FirstObjectId
+        モードの未解決 subgroup を表す。draft 由来の仕様であり、将来の改訂で変更される
+        可能性がある。
+        """
     def subscription(self, /, request_id: int) -> dict |None:
         """
         指定 Request ID の subscription の状態を返す。

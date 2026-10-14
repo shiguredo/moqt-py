@@ -425,6 +425,13 @@ class Client:
             self._transport.on_stream_reset(self._on_stream_reset)
             self._transport.on_session_closed(self._on_session_closed)
             self._transport.on_session_ready(self._on_session_ready)
+            # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Client は
+            # プロトコル固有のコールバックを持たないため、WT-H2 のハンドルから登録する。
+            # WT-H3 と QUIC 直接接続は受信 STOP_SENDING を公開していない
+            if self._transport.http_version is HTTPVersion.HTTP2:
+                h2_client = self._transport.h2
+                if h2_client is not None:
+                    h2_client.on_stop_sending(self._on_stop_sending)
         self._transport.on_datagram(self._on_datagram)
 
     # ─── 接続 ───────────────────────────────────────────────
@@ -1119,6 +1126,17 @@ class Client:
         Streams))。そのため終端の種類はどちらの経路でも `reset` で明示する。
         """
         await self._on_stream_closed(stream_id, reset=True, error_code=error_code)
+
+    async def _on_stop_sending(self, stream_id: int, error_code: int) -> None:
+        """ピアからの WT_STOP_SENDING を状態機械へ通知する。
+
+        WT-H2 の WT_STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        セッションが未確立のときに届いた場合は購読も fetch も無いため何もしない。
+        """
+        runtime = self._runtime
+        if runtime is not None:
+            await runtime.receive_stop_sending(stream_id, error_code)
 
     async def _on_stream_closed(
         self,
