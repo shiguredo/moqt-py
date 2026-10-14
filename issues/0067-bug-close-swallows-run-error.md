@@ -33,10 +33,16 @@ CI (ubuntu-26.04) で QMux のテストが `ssl.SSLError: [SSL: APPLICATION_DATA
 
 ## 設計方針
 
-- `Client.close()` で受信ループの終了を待つ箇所も best effort にする。`CancelledError` は
-  従来どおり握り、それ以外の例外はログに記録して送出しない (`runtime.close()` と同じ扱い)
+- `Client.close()` で受信ループの終了を待つ箇所では、接続の終了に伴う失敗だけを握る。
+  具体的には `OSError` (`ssl.SSLError` と `ConnectionResetError` などを含む) をログに記録し、
+  送出しない
+- 例外を広く握ってはならない。既存の `test_state_machine_session_close_reaches_the_peer` は、
+  peer の終了コードと理由を `close()` で観測できることを前提にしている。終了理由を運ぶ
+  WebTransport の例外 (`WebTransportSessionClosedError` / `QuicApplicationError` /
+  `QmuxConnectionError` / `QmuxProtocolError`) はいずれも `OSError` の派生ではないため、
+  従来どおり送出する
 - ログは英語で出し、閉じる処理の途中で起きたことを分かる文言にする。接続の異常自体は
-  `_on_run_done` が `_fail_connect` で記録しており、閉じる側で再度送出しない
+  `_on_run_done` が `_fail_connect` で記録している
 - テストの終了順は変えない。順序を変えると競合が server 側へ移るだけで、利用者が
   `close()` を呼ぶ経路の堅牢性は上がらない
 
