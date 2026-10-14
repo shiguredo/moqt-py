@@ -1,7 +1,7 @@
 # moqt-rs の develop を 3c63f49 へ更新する
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/update-moqt-rs-3c63f49
 - Polished:
 
@@ -30,3 +30,17 @@
 - `cargo update -p shiguredo_moqt` 後の `Cargo.lock` で `uv run pytest` が全件通ること
 - `cargo fmt` / `cargo clippy` / `cargo test` / `ruff` / `ty` が通ること
 - `python/moqt/_native.pyi` がビルドから再生成した内容と一致すること
+
+## 解決方法
+
+`cargo update -p shiguredo_moqt` で `Cargo.lock` の `shiguredo_moqt` を `162e5da0` から
+`3c63f49b` へ更新した。moqt-py 側のコード変更は生じていない。
+
+`src/` の変更は `src/playout/splice_fade.rs` のみであり、`python/moqt/_native.pyi` を
+再生成しても差分が出ないことを確認した。
+
+### 確認
+
+`uv run pytest` は 626 件すべて通る (relay が要る 7 件は skip)。`cargo fmt` /
+`cargo clippy` / `cargo test` / `ruff` / `ty` と `prek run --all-files` (pre-commit
+ステージ) も通ることを確認した。
