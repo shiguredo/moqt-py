@@ -1018,8 +1018,10 @@ class Server:
 
         QMux では MOQT のストリームがそのまま QMux のストリームへ対応する
         (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。ストリームの
-        reset / STOP_SENDING とデータグラムは webtransport-py の qmux が公開して
-        いないため、呼ばれたら理由の分かるエラーにする。
+        reset / STOP_SENDING は webtransport-py の qmux が送出 API を公開しておらず
+        (dwnx は対応済み)、データグラムは dwnx が実装していない
+        (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。呼ばれたら
+        理由の分かるエラーにする。
         """
 
         async def unsupported_stream_control(_stream_id: int, _error_code: int) -> None:
