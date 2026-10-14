@@ -1,7 +1,7 @@
 # WT-H3 で受信した STOP_SENDING を状態機械へ通知する
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/add-wt-h3-recv-stop-sending
 - Polished:
 
@@ -51,3 +51,32 @@ WT-H3 接続でも、ピアが自側の送信ストリームへ STOP_SENDING を
   記録すること
 - WT-H3 で fetch stream へ STOP_SENDING を送ると、publisher の fetch が終端すること
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`pyproject.toml` の webtransport-py の下限を 2026.1.0.dev28 へ上げ、`uv lock` と `uv sync`
+で追随した。
+
+`python/moqt/moq/client.py` の `Client.__init__` で、WT-H3 のときは `transport.h3` の
+`on_stop_sending` を登録するようにした。`Client._on_stop_sending` の `error_code` は
+`int | None` にした。WT-H3 では WT_APPLICATION_ERROR レンジ外のコードが
+「アプリケーションエラーコード無し」として `None` で届くためである。状態機械へは
+そのまま渡す (`Runtime.receive_stop_sending` が `int | None` を受け取る)。
+
+`python/moqt/moq/testing/server.py` の `Server.__init__` で、WT-H3 のときは
+`transport.h3` の `on_stop_sending` を登録するようにした。統一 API の `Server` の
+`on_stop_sending` は HTTP/2 専用であり WT-H3 では `ValueError` になるため、WT-H2 と
+同じくハンドルから登録する。コールバックは `(session_id, stream_id, error_code, addr)`
+を受け取るため、`_on_h3_stop_sending` で `(address, session_id)` の組から接続を引いて
+`Runtime.receive_stop_sending` へ渡す。
+
+WT-H3 の制約を書いていたコメントを削除し、`tests/test_e2e.py` の実通信テスト 2 件の
+パラメータに WT-H3 を追加した。
+
+### 確認
+
+- `test_received_stop_sending_marks_the_subgroup_stopped` と
+  `test_received_stop_sending_terminates_the_fetch` が WT-H2 / WT-H3 / QUIC の 3 接続方式で
+  通り、6 件すべて成功する
+- `uv run pytest` は 636 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
