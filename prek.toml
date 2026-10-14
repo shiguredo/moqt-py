@@ -9,7 +9,8 @@ default_stages = ["pre-commit"]
 # prek install で pre-commit と pre-push の両方の Git フックを入れる
 default_install_hook_types = ["pre-commit", "pre-push"]
 # ビルド成果物と仮想環境は対象外にする
-exclude = { glob = ["target/**", ".venv/**", "dist/**"] }
+# refs/ は参照仕様書であり、取得した原文のまま残すためフック対象外にする
+exclude = { glob = ["target/**", ".venv/**", "dist/**", "refs/**"] }
 
 # prek 組み込みフック (オフラインで動作する Rust ネイティブ実装)
 [[repos]]
