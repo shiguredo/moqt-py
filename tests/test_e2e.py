@@ -781,17 +781,23 @@ async def test_data_stream_timeout_sends_stop_sending(
     assert received.payload == b"second"
 
 
+@pytest.mark.parametrize(
+    "transport",
+    [Transport.WebTransportOverHTTP2, Transport.Quic],
+    ids=["wt-h2", "quic"],
+)
 async def test_received_stop_sending_marks_the_subgroup_stopped(
+    transport: Transport,
     moq_certificates: tuple[str, str],
 ) -> None:
     """
     購読者がデータストリームの送信停止を要求すると、publisher がその Subgroup を
     再オープン禁止として記録することを確認する。
 
-    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 の経路だけである
-    (webtransport-py の統一 API は WT-H3 と QUIC 直接接続の受信 STOP_SENDING を
-    公開していない)。subgroup stream への STOP_SENDING は再オープン禁止として記録され、
-    Forward State が 0 から 1 へ変わる REQUEST_UPDATE が受理されるまで解除されない
+    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 と QUIC 直接接続である
+    (webtransport-py は WT-H3 の受信 STOP_SENDING を公開していない)。subgroup stream への
+    STOP_SENDING は再オープン禁止として記録され、Forward State が 0 から 1 へ変わる
+    REQUEST_UPDATE が受理されるまで解除されない
     (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
     """
     certfile, keyfile = moq_certificates
@@ -800,7 +806,7 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
         port=0,
         certfile=certfile,
         keyfile=keyfile,
-        transport=Transport.WebTransportOverHTTP2,
+        transport=transport,
     )
     await server.start()
     run_task = asyncio.create_task(server.run())
@@ -822,7 +828,7 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
 
         client = Client(
             url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
-            transport=Transport.WebTransportOverHTTP2,
+            transport=transport,
             verify_peer=False,
         )
         await client.connect()
@@ -861,7 +867,13 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
             await run_task
 
 
+@pytest.mark.parametrize(
+    "transport",
+    [Transport.WebTransportOverHTTP2, Transport.Quic],
+    ids=["wt-h2", "quic"],
+)
 async def test_received_stop_sending_terminates_the_fetch(
+    transport: Transport,
     moq_certificates: tuple[str, str],
 ) -> None:
     """
@@ -879,7 +891,7 @@ async def test_received_stop_sending_terminates_the_fetch(
         port=0,
         certfile=certfile,
         keyfile=keyfile,
-        transport=Transport.WebTransportOverHTTP2,
+        transport=transport,
     )
     await server.start()
     run_task = asyncio.create_task(server.run())
@@ -902,7 +914,7 @@ async def test_received_stop_sending_terminates_the_fetch(
 
         client = Client(
             url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
-            transport=Transport.WebTransportOverHTTP2,
+            transport=transport,
             verify_peer=False,
         )
         await client.connect()

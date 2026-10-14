@@ -420,6 +420,8 @@ class Client:
             # QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで受ける
             self._transport.on_stream_data(self._on_quic_stream_data)
             self._transport.on_connection_closed(self._on_connection_closed)
+            # ピアがストリームの送信停止を求めたことを状態機械へ渡す
+            self._transport.on_stop_sending(self._on_stop_sending)
         else:
             self._transport.on_stream_data(self._on_stream_data)
             self._transport.on_stream_reset(self._on_stream_reset)
@@ -427,7 +429,7 @@ class Client:
             self._transport.on_session_ready(self._on_session_ready)
             # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Client は
             # プロトコル固有のコールバックを持たないため、WT-H2 のハンドルから登録する。
-            # WT-H3 と QUIC 直接接続は受信 STOP_SENDING を公開していない
+            # 受信 STOP_SENDING を公開していないのは WT-H3 だけである
             if self._transport.http_version is HTTPVersion.HTTP2:
                 h2_client = self._transport.h2
                 if h2_client is not None:
@@ -854,8 +856,9 @@ class Client:
         """トランスポート操作を組み立てる。"""
         transport = self._transport
         if isinstance(transport, quic.Client):
-            # webtransport-py の QUIC client には STOP_SENDING だけを送る API が
-            # 無いため、ストリームを reset して受信を終わらせる
+            # QUIC client には STOP_SENDING だけを送る API が無いため shutdown_stream を使う。
+            # ngtcp2 の shutdown はリモート単方向ストリーム (受信中の subgroup stream) では
+            # read 側だけ、つまり STOP_SENDING のみを送出する
             return TransportOps(
                 open_uni_stream=lambda: transport.open_stream(bidirectional=False),
                 open_bidi_stream=lambda: transport.open_stream(bidirectional=True),
@@ -1128,9 +1131,10 @@ class Client:
         await self._on_stream_closed(stream_id, reset=True, error_code=error_code)
 
     async def _on_stop_sending(self, stream_id: int, error_code: int) -> None:
-        """ピアからの WT_STOP_SENDING を状態機械へ通知する。
+        """ピアからの STOP_SENDING を状態機械へ通知する。
 
-        WT-H2 の WT_STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
+        WT-H2 の WT_STOP_SENDING と QUIC の STOP_SENDING は、どちらも MOQT の
+        エラーコードをそのまま運ぶ
         (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
         セッションが未確立のときに届いた場合は購読も fetch も無いため何もしない。
         """

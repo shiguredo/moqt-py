@@ -474,6 +474,7 @@ class Server:
             self._transport.on_stream_data(self._on_quic_stream_data)
             self._transport.on_datagram(self._on_quic_datagram)
             self._transport.on_stream_reset(self._on_quic_stream_reset)
+            self._transport.on_stop_sending(self._on_quic_stop_sending)
             self._transport.on_connection_closed(self._on_quic_connection_closed)
         else:
             # 統一 API の Server を HTTPVersion で選ぶ。コールバックは接続方式に
@@ -496,7 +497,7 @@ class Server:
             self._transport.on_stream_reset(self._on_stream_reset)
             self._transport.on_datagram(self._on_datagram)
             # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Server が
-            # 受信 STOP_SENDING を通知するのは WT-H2 だけである
+            # 受信 STOP_SENDING を通知するのは WT-H2 だけである (WT-H3 は公開していない)
             if transport is Transport.WebTransportOverHTTP2:
                 self._transport.on_stop_sending(self._on_stop_sending)
         self._implementation = implementation
@@ -941,6 +942,18 @@ class Server:
         """QUIC のデータグラムを状態機械へ渡す。"""
         connection = await self._quic_connection(address)
         await connection.runtime.receive_datagram(data)
+
+    async def _on_quic_stop_sending(
+        self, stream_id: int, error_code: int, address: tuple[str, int]
+    ) -> None:
+        """QUIC の STOP_SENDING を状態機械へ通知する。
+
+        QUIC の STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        """
+        connection = self._connections.get(_quic_context(address))
+        if connection is not None:
+            await connection.runtime.receive_stop_sending(stream_id, error_code)
 
     async def _on_quic_connection_closed(self, address: tuple[str, int]) -> None:
         """QUIC 接続の終了で MOQT 状態を破棄する。"""
