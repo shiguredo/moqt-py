@@ -1,7 +1,7 @@
 # WT-H3 で STOP_SENDING の代わりに RESET_STREAM を送出している
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/fix-wt-h3-stop-sending
 - Polished:
 
@@ -44,3 +44,24 @@ webtransport-py は `webtransport._h3_client.Client.stop_sending` を持って�
 
 - WT-H3 で `TransportOps.stop_sending` が STOP_SENDING を送出すること
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`python/moqt/moq/client.py` の `Client._transport_ops` の WT-H3 分岐で、`reset_stream` に
+よる代替をやめて `transport.h3` の `stop_sending` を使うようにした。WT-H2 の分岐と
+同じ形であり、統一 API の `webtransport.Client` がプロトコル固有の操作を持たないため
+ハンドルから呼ぶ。事実と異なっていた「WT-H3 には STOP_SENDING だけを送る API が無い」
+というコメントも削除した。
+
+`tests/test_client.py` に
+`test_webtransport_over_http3_sends_stop_sending_from_the_h3_handle` を追加し、
+`TransportOps.stop_sending` が h3 ハンドルの `stop_sending` を指し、`reset_stream` では
+ないことを固定した。
+
+`webtransport.quic.Client` には STOP_SENDING だけを送る API が無いため、QUIC 直接接続の
+回避策 (`shutdown_stream` による reset) は現状のままとした。
+
+### 確認
+
+`uv run pytest` は 624 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+(ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy) も通ることを確認した。
