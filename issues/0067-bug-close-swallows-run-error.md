@@ -1,7 +1,7 @@
 # QMux の接続終了時に受信ループの SSLError が close() から漏れる
 
 - Created: 2026-10-15
-- Completed:
+- Completed: 2026-10-15
 - Branch: feature/fix-close-swallows-run-error
 - Polished:
 
@@ -51,3 +51,24 @@ CI (ubuntu-26.04) で QMux のテストが `ssl.SSLError: [SSL: APPLICATION_DATA
 - QMux の e2e テスト (接続の終了を含むもの) が安定して通ること
 - ローカルで QMux の e2e テストを 30 回連続で回して失敗しないこと
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`python/moqt/moq/client.py` の `Client.close()` で、受信ループの終了を待つ箇所の例外処理を
+`except OSError` にした。接続の終了に伴う失敗はログに記録して送出しない。`ssl.SSLError` は
+`OSError` の派生であるため、CI で観測した `APPLICATION_DATA_AFTER_CLOSE_NOTIFY` はこれで
+握られる。`ConnectionResetError` や `BrokenPipeError` などの接続終了時の失敗も同様に扱う。
+
+例外を広く握る実装を先に試したが、既存の `test_state_machine_session_close_reaches_the_peer`
+が peer の終了コードと理由を `close()` で観測できることを前提にしていたため取りやめた。
+終了理由を運ぶ `WebTransportSessionClosedError` / `QuicApplicationError` /
+`QmuxConnectionError` / `QmuxProtocolError` はいずれも `OSError` の派生ではないため、今回の
+変更でも従来どおり送出される。
+
+### 確認
+
+- `uv run pytest` は 640 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
+- QMux の e2e テストを 30 回連続で実行して失敗しないことを確認した
+- CI (ubuntu-26.04) での再現はタイミング依存であり macOS では再現しないため、修正の確認は
+  同じテストを含む CI の再実行で行う
