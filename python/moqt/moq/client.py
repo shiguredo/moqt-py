@@ -471,12 +471,16 @@ class Client:
             self._transport.on_session_closed(self._on_session_closed)
             self._transport.on_session_ready(self._on_session_ready)
             # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Client は
-            # プロトコル固有のコールバックを持たないため、WT-H2 のハンドルから登録する。
-            # 受信 STOP_SENDING を公開していないのは WT-H3 だけである
+            # プロトコル固有のコールバックを持たないため、選んだプロトコルのハンドルから
+            # 登録する
             if self._transport.http_version is HTTPVersion.HTTP2:
                 h2_client = self._transport.h2
                 if h2_client is not None:
                     h2_client.on_stop_sending(self._on_stop_sending)
+            else:
+                h3_client = self._transport.h3
+                if h3_client is not None:
+                    h3_client.on_stop_sending(self._on_stop_sending)
         # QMux はデータグラムを運べないため、送受信のコールバックを登録しない
         if not isinstance(self._transport, qmux.Client):
             self._transport.on_datagram(self._on_datagram)
@@ -1228,12 +1232,14 @@ class Client:
         """
         await self._on_stream_closed(stream_id, reset=True, error_code=error_code)
 
-    async def _on_stop_sending(self, stream_id: int, error_code: int) -> None:
+    async def _on_stop_sending(self, stream_id: int, error_code: int | None) -> None:
         """ピアからの STOP_SENDING を状態機械へ通知する。
 
-        WT-H2 の WT_STOP_SENDING と QUIC の STOP_SENDING は、どちらも MOQT の
-        エラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        WT-H2 の WT_STOP_SENDING と QUIC の STOP_SENDING と QMux の STOP_SENDING は、
+        どちらも MOQT のエラーコードをそのまま運ぶ
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。WT-H3 では
+        WT_APPLICATION_ERROR レンジ外のコードが「アプリケーションエラーコード無し」と
+        して `None` で届く (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         セッションが未確立のときに届いた場合は購読も fetch も無いため何もしない。
         """
         runtime = self._runtime

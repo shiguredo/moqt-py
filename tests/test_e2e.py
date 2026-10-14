@@ -783,8 +783,8 @@ async def test_data_stream_timeout_sends_stop_sending(
 
 @pytest.mark.parametrize(
     "transport",
-    [Transport.WebTransportOverHTTP2, Transport.Quic],
-    ids=["wt-h2", "quic"],
+    [Transport.WebTransportOverHTTP2, Transport.WebTransportOverHTTP3, Transport.Quic],
+    ids=["wt-h2", "wt-h3", "quic"],
 )
 async def test_received_stop_sending_marks_the_subgroup_stopped(
     transport: Transport,
@@ -794,10 +794,10 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
     購読者がデータストリームの送信停止を要求すると、publisher がその Subgroup を
     再オープン禁止として記録することを確認する。
 
-    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 と QUIC 直接接続である
-    (webtransport-py は WT-H3 の受信 STOP_SENDING を公開していない)。subgroup stream への
-    STOP_SENDING は再オープン禁止として記録され、Forward State が 0 から 1 へ変わる
-    REQUEST_UPDATE が受理されるまで解除されない
+    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 / WT-H3 / QUIC 直接接続である
+    (QMux は webtransport-py が STOP_SENDING の送出 API を公開していないため対象外)。
+    subgroup stream への STOP_SENDING は再オープン禁止として記録され、Forward State が
+    0 から 1 へ変わる REQUEST_UPDATE が受理されるまで解除されない
     (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
     """
     certfile, keyfile = moq_certificates
@@ -869,8 +869,8 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
 
 @pytest.mark.parametrize(
     "transport",
-    [Transport.WebTransportOverHTTP2, Transport.Quic],
-    ids=["wt-h2", "quic"],
+    [Transport.WebTransportOverHTTP2, Transport.WebTransportOverHTTP3, Transport.Quic],
+    ids=["wt-h2", "wt-h3", "quic"],
 )
 async def test_received_stop_sending_terminates_the_fetch(
     transport: Transport,

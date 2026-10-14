@@ -537,9 +537,14 @@ class Server:
             self._transport.on_stream_reset(self._on_stream_reset)
             self._transport.on_datagram(self._on_datagram)
             # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Server が
-            # 受信 STOP_SENDING を通知するのは WT-H2 だけである (WT-H3 は公開していない)
+            # 受信 STOP_SENDING を通知するのは WT-H2 だけであるため、WT-H3 では h3 ハンドル
+            # から登録する
             if transport is Transport.WebTransportOverHTTP2:
                 self._transport.on_stop_sending(self._on_stop_sending)
+            else:
+                h3_server = self._transport.h3
+                if h3_server is not None:
+                    h3_server.on_stop_sending(self._on_h3_stop_sending)
         self._implementation = implementation
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
@@ -1112,6 +1117,24 @@ class Server:
         (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
         """
         connection = self._connections.get(_session_context(session))
+        if connection is not None:
+            await connection.runtime.receive_stop_sending(stream_id, error_code)
+
+    async def _on_h3_stop_sending(
+        self,
+        session_id: int,
+        stream_id: int,
+        error_code: int | None,
+        address: tuple[str, int],
+    ) -> None:
+        """WT-H3 のピア STOP_SENDING を状態機械へ通知する。
+
+        WT-H3 では WT_APPLICATION_ERROR レンジ外のコードが「アプリケーション
+        エラーコード無し」として `None` で届く
+        (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。接続は統一 API の
+        `Session` ではなく address とセッション ID の組で特定する。
+        """
+        connection = self._connections.get((address, session_id))
         if connection is not None:
             await connection.runtime.receive_stop_sending(stream_id, error_code)
 
