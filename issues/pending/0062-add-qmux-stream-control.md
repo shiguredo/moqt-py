@@ -60,3 +60,11 @@ webtransport-py の露出である。moqt-py から回避する方法は無い (
 `webtransport_ext.qmux.Connection` にも該当する API が無いことを確認済み)。
 
 webtransport-py が対応した版がリリースされた時点で reopened にして対応する。
+
+## reopened にした理由
+
+webtransport-py 2026.1.0.dev29 で 0285 (QMux のローカル発ストリーム終了 API) が
+リリースされ、`webtransport.qmux.Client` と `qmux.Server` の `Session` に
+`reset_stream(stream_id, error_code=0)` / `stop_sending(stream_id, error_code=0)` /
+`close_stream(stream_id, error_code=0)` が追加された。pending にした理由 (webtransport-py
+が送出 API を公開していない) が解消したため、reopened にして対応する。
