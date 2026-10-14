@@ -3608,9 +3608,13 @@ class Session:
         """
         fetch が破棄可能かを返す。
         """
-    def fetch_stop_sending_received(self, /, request_id: int) -> list[Event]:
+    def fetch_stop_sending_received(self, /, request_id: int, error_code: int |None = None) -> list[Event]:
         """
         FETCH の STOP_SENDING を受信したことを通知する。
+        
+        `error_code` は peer が STOP_SENDING に載せたアプリケーションエラーコードであり、
+        `None` は「アプリケーションエラーコード無し」を表す。状態機械は受理したコードを
+        FETCH に保持し、cancel の理由として参照できるようにする。
         """
     def fetches(self, /) -> dict:
         """
@@ -3759,9 +3763,13 @@ class Session:
         「アプリケーションエラーコード無しのリセット」である
         (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
-    def recv_data_stream_stop_sending(self, /, stream_id: int) -> list[Event]:
+    def recv_data_stream_stop_sending(self, /, stream_id: int, error_code: int |None = None) -> list[Event]:
         """
         peer が受信ストリームへ STOP_SENDING を送ったことを通知する。
+        
+        `error_code` は peer が STOP_SENDING に載せたアプリケーションエラーコードであり、
+        `None` は「アプリケーションエラーコード無し」を表す。状態機械は受理したコードを
+        再オープン禁止の記録と一緒に保持する。
         """
     def register_local_request_stream(self, /, stream_id: int, request_id: int) -> None:
         """

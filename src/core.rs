@@ -2361,13 +2361,26 @@ impl CoreSession {
                 reliable_size,
                 ..CoreEvent::simple("reset_data_stream")
             }),
-            SessionEvent::OpenFillFetchStream { request_id } => Ok(CoreEvent::with_message(
-                "open_fill_fetch_stream",
-                PyDict::new(py).unbind(),
-                data.clone(),
-                Some(request_id),
-                None,
-            )),
+            SessionEvent::OpenFillFetchStream {
+                request_id,
+                subscription_request_id,
+                start,
+                end,
+            } => {
+                // fill range は開設時点の Largest Object まで解決済みである。開いた範囲を
+                // E2E テストから観測できるよう、イベント本体へ載せる
+                let body = PyDict::new(py);
+                body.set_item("subscription_request_id", subscription_request_id)?;
+                body.set_item("start", (start.group_id, start.object_id))?;
+                body.set_item("end", (end.group_id, end.object_id))?;
+                Ok(CoreEvent::with_message(
+                    "open_fill_fetch_stream",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    None,
+                ))
+            }
             SessionEvent::ResetRequestStream {
                 request_id,
                 error_code,
@@ -2380,6 +2393,14 @@ impl CoreSession {
                     Some(request_id),
                     None,
                 )
+            }),
+            SessionEvent::StopSendingDataStream {
+                stream_id,
+                error_code,
+            } => Ok(CoreEvent {
+                stream_id: Some(stream_id.0),
+                code: Some(error_code),
+                ..CoreEvent::simple("stop_sending_data_stream")
             }),
             SessionEvent::StopSendingRequestStream {
                 request_id,
@@ -3376,13 +3397,19 @@ impl CoreSession {
     }
 
     /// FETCH の STOP_SENDING を受信したことを通知する。
+    ///
+    /// `error_code` は peer が STOP_SENDING に載せたアプリケーションエラーコードであり、
+    /// `None` は「アプリケーションエラーコード無し」を表す。状態機械は受理したコードを
+    /// FETCH に保持し、cancel の理由として参照できるようにする。
+    #[pyo3(signature = (request_id, error_code=None))]
     fn fetch_stop_sending_received(
         &mut self,
         py: Python<'_>,
         request_id: u64,
+        error_code: Option<u64>,
     ) -> PyResult<Vec<CoreEvent>> {
         self.session
-            .fetch_stop_sending_received(request_id)
+            .fetch_stop_sending_received(request_id, error_code)
             .map_err(runtime_error)?;
         self.drain_events(py)
     }
@@ -3605,13 +3632,19 @@ impl CoreSession {
     }
 
     /// peer が受信ストリームへ STOP_SENDING を送ったことを通知する。
+    ///
+    /// `error_code` は peer が STOP_SENDING に載せたアプリケーションエラーコードであり、
+    /// `None` は「アプリケーションエラーコード無し」を表す。状態機械は受理したコードを
+    /// 再オープン禁止の記録と一緒に保持する。
+    #[pyo3(signature = (stream_id, error_code=None))]
     fn recv_data_stream_stop_sending(
         &mut self,
         py: Python<'_>,
         stream_id: u64,
+        error_code: Option<u64>,
     ) -> PyResult<Vec<CoreEvent>> {
         self.session
-            .recv_data_stream_stop_sending(DataStreamId(stream_id))
+            .recv_data_stream_stop_sending(DataStreamId(stream_id), error_code)
             .map_err(runtime_error)?;
         self.drain_events(py)
     }

@@ -722,6 +722,65 @@ async def test_session_timeouts_can_be_configured(
     assert client.established
 
 
+async def test_data_stream_timeout_sends_stop_sending(
+    moq_server: Server,
+    moq_client_factory: ClientFactory,
+) -> None:
+    """
+    受信中のデータストリームが期限切れになったとき、そのストリームだけを止めることを
+    確認する。
+
+    状態機械は open な受信ストリームで新しい Object を待つ期限に達すると、購読を
+    生かしたままそのストリームへ STOP_SENDING を送る。DATA_STREAM_TIMEOUT (0x12) の
+    期限切れに対する措置は STOP_SENDING か購読の終了であり、他の Group のストリームは
+    通常どおり受信する (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes) /
+    §11.3.2 (Closing Subgroup Streams))。STOP_SENDING のコードは DATA_STREAM_TIMEOUT に
+    対応するストリームリセットコードが無いため CANCELLED (0x1) になる
+    (§12.5 (Stream Reset Error Codes))。
+    """
+    published: list[Publication] = []
+
+    async def on_subscribe(request: SubscriptionRequest) -> None:
+        published.append(await request.subscribe_ok(TRACK_ALIAS))
+
+    moq_server.on_subscribe(on_subscribe)
+
+    # 期限を短くして、受信ストリームが止まるまでテストが待てるようにする
+    client = await moq_client_factory(data_stream_timeout=0.2)
+
+    stops: list[tuple[int | None, int | None]] = []
+    closed: list[tuple[int, str]] = []
+
+    async def on_event(event: NativeEvent) -> None:
+        if event.kind == "stop_sending_data_stream":
+            stops.append((event.stream_id, event.code))
+        elif event.kind == "close":
+            closed.append((int(event.code or 0), str(event.reason or "")))
+
+    client.on_event(on_event)
+
+    subscription = await client.subscribe(NAMESPACE, TRACK_NAME)
+    await wait_until(lambda: bool(published))
+
+    # Object を 1 件だけ送る。続きを送らないため、受信ストリームは open のまま
+    # 新しい Object を待ち続け、期限に達する
+    await published[0].send_object(1, 0, b"first")
+    received = await subscription.objects().__anext__()
+    assert received.payload == b"first"
+
+    await wait_until(lambda: bool(stops))
+    assert stops[0][1] == moqt.STREAM_CANCELLED
+
+    # 期限切れはセッションの終了ではなくストリームの停止であり、購読は生きたままである
+    assert client.established
+    assert closed == []
+
+    # 新しい Group の Object は通常どおり届く
+    await published[0].send_object(2, 0, b"second")
+    received = await subscription.objects().__anext__()
+    assert received.payload == b"second"
+
+
 async def test_session_state_accessors_report_the_live_session(
     moq_certificates: tuple[str, str],
 ) -> None:
@@ -1561,9 +1620,11 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> N
     FILL_PARAMETERS 付きの購読で fill fetch stream が開かれることを確認する。
 
     peer が過去のオブジェクトの補充を求めた場合、publisher は fill fetch stream を
-    開いて応答する (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
+    開いて応答する (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。開く契機の
+    イベントには、起因した subscription の Request ID と解決済みの fill range が載る。
     """
     opened: list[tuple[int, int]] = []
+    fills: list[dict[str, object]] = []
 
     published: list[Publication] = []
 
@@ -1573,8 +1634,13 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> N
     async def on_subscribe(request: SubscriptionRequest) -> None:
         published.append(await request.subscribe_ok(TRACK_ALIAS))
 
+    async def on_event(runtime: Runtime, event: NativeEvent) -> None:
+        if event.kind == "open_fill_fetch_stream":
+            fills.append(dict(event.message or {}))
+
     moq_pair.server.on_fill_fetch_stream(on_fill_fetch_stream)
     moq_pair.server.on_subscribe(on_subscribe)
+    moq_pair.server.on_event(on_event)
 
     # fill の範囲は Largest Object を超えられないため、先に 1 件配信して観測させる
     await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
@@ -1582,7 +1648,7 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> N
     await published[0].send_object(1, 0, b"original")
 
     # 補充を求める購読を送る。FILL_PARAMETERS の内側は補充の範囲を指定する
-    await moq_pair.client.subscribe(
+    fill_subscription = await moq_pair.client.subscribe(
         NAMESPACE,
         TRACK_NAME,
         {moqt.PARAM_FILL_PARAMETERS: {moqt.PARAM_FILL_TIMEOUT: 1000}},
@@ -1591,6 +1657,15 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> N
     await wait_until(lambda: bool(opened))
     assert opened[0][0] >= 0
     assert opened[0][1] >= 0
+
+    # SUBSCRIBE 起因の fill は、起因した subscription と同じ Request ID を使う
+    assert opened[0][0] == fill_subscription.request_id
+
+    # fill range は開設時点の Largest Object まで解決済みであり、範囲の始点と終点が読める
+    await wait_until(lambda: bool(fills))
+    assert fills[0]["subscription_request_id"] == fill_subscription.request_id
+    assert fills[0]["start"] == (0, 0)
+    assert fills[0]["end"] == (1, 0)
 
 
 async def test_publish_state_notify_is_delivered_to_the_subscriber(moq_pair: MOQTPair) -> None:

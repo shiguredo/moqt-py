@@ -629,6 +629,10 @@ class Runtime:
         self._local_streams.add(stream_id)
         self._streams[stream_id] = StreamInfo(kind=_STREAM_CONTROL)
         await self._ops.send_stream_data(stream_id, self._core.start(), False)
+        # 状態機械は最初の tick で時計を記録し、それより前に登録されたデータストリームを
+        # DATA_STREAM_TIMEOUT の監視対象にしない。SETUP の直後に届くストリームも監視できる
+        # よう、定期処理を待たずに時計を 1 度進める
+        await self._apply_events(self._core.tick(_now_milliseconds()))
 
     async def close(self, code: int = 0, reason: str = "") -> None:
         """MOQT セッションを閉じる。"""
@@ -856,8 +860,7 @@ class Runtime:
         """
         if self._closed:
             return
-        now_ms = int(asyncio.get_running_loop().time() * 1000)
-        await self._apply_events(self._core.tick(now_ms))
+        await self._apply_events(self._core.tick(_now_milliseconds()))
         # 購読が確定する前に届いたデータを再試行する。購読の登録直後の再試行で
         # 拾えなかった分の受け皿であり、データグラムはここでだけ再試行する
         await self._apply_events(self._core.retry_pending_data_streams())
@@ -1512,7 +1515,12 @@ class Runtime:
                 "end_of_timed_out_range",
             }:
                 await self._notify(self._events.on_fetch_end, kind, event)
-            elif kind in {"reset_data_stream", "send_padding_stream", "send_padding_datagram"}:
+            elif kind in {
+                "reset_data_stream",
+                "stop_sending_data_stream",
+                "send_padding_stream",
+                "send_padding_datagram",
+            }:
                 await self._handle_data_control(event)
             elif kind in {"accepted", "unknown_track_alias", "discarded", "filtered_out"}:
                 # データグラムの受理結果は送信側では使わない
@@ -1653,6 +1661,13 @@ class Runtime:
                     )
                 with contextlib.suppress(Exception):
                     await self._ops.reset_stream(stream_id, int(event.code or 0))
+        elif event.kind == "stop_sending_data_stream":
+            # 状態機械が受信中のデータストリームを止める判断をした。購読は生かしたまま
+            # 受信方向へ STOP_SENDING を送る
+            stream_id = event.stream_id
+            if stream_id is not None:
+                with contextlib.suppress(Exception):
+                    await self._ops.stop_sending(stream_id, int(event.code or 0))
         elif event.kind == "send_padding_stream":
             length = _message_int(event, "length")
             stream_id = await self._ops.open_uni_stream()
@@ -1895,6 +1910,15 @@ def _to_milliseconds(seconds: float) -> int:
     呼び出し側の意図しない設定を避けて 1 ms を下限にする。
     """
     return max(1, round(seconds * 1000))
+
+
+def _now_milliseconds() -> int:
+    """状態機械へ渡す単調増加ミリ秒時刻を返す。
+
+    状態機械は時計を持たないため、期限の判定時刻は I/O 層が渡す。イベントループの
+    時刻を基準にすることで、tick の間隔と期限の比較が同じ時計になる。
+    """
+    return int(asyncio.get_running_loop().time() * 1000)
 
 
 def _is_bidirectional(stream_id: int) -> bool:
