@@ -211,21 +211,31 @@ def test_webtransport_rejects_authority_and_path_setup_options() -> None:
         )
 
 
-async def test_qmux_reports_unsupported_transport_operations() -> None:
+def test_qmux_wires_stream_reset_and_stop_sending() -> None:
     """
-    QMux が対応していない操作が理由の分かるエラーになることを確認する。
+    QMux の reset / STOP_SENDING が送出 API へ配線されていることを確認する。
 
-    webtransport-py の qmux はストリームの reset / STOP_SENDING の送出 API と、
-    データグラムの送受信 API を公開していない
-    (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension) /
-    §9.2 (Stream Resets with Partial Delivery Extension) が未実装)。黙って捨てずに
+    QMux は RESET_STREAM と STOP_SENDING を QUIC のフレームとして扱い、
+    webtransport-py の qmux が `reset_stream` / `stop_sending` を公開している。配線が
+    外れると `MOQTError` を送出する実装へ戻るため、同一の関数であることを確認する。
+    """
+    client = Client(url="moqt://example.com:4433/live", transport=Transport.Qmux)
+    transport = client._transport
+    assert isinstance(transport, qmux.Client)
+    ops = client._transport_ops()
+    assert ops.reset_stream == transport.reset_stream
+    assert ops.stop_sending == transport.stop_sending
+
+
+async def test_qmux_reports_unsupported_datagram() -> None:
+    """
+    QMux が対応していないデータグラムが理由の分かるエラーになることを確認する。
+
+    QMux はデータグラムを規定しているが、dwnx が実装していない
+    (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。黙って捨てずに
     状態機械から呼ばれた時点で失敗させる。
     """
     client = Client(url="moqt://example.com:4433/live", transport=Transport.Qmux)
     ops = client._transport_ops()
-    with pytest.raises(MOQTError, match="does not support stream reset"):
-        await ops.reset_stream(0, 1)
-    with pytest.raises(MOQTError, match="does not support stream reset"):
-        await ops.stop_sending(0, 1)
     with pytest.raises(MOQTError, match="does not support datagrams"):
         await ops.send_datagram(b"datagram")

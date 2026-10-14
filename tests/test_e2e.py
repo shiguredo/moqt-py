@@ -781,10 +781,92 @@ async def test_data_stream_timeout_sends_stop_sending(
     assert received.payload == b"second"
 
 
+async def test_qmux_data_stream_timeout_sends_stop_sending(
+    moq_certificates: tuple[str, str],
+) -> None:
+    """
+    QMux でも受信中のデータストリームが期限切れになったとき、そのストリームだけを
+    止めることを確認する。
+
+    状態機械は open な受信ストリームで新しい Object を待つ期限に達すると、そのストリームへ
+    STOP_SENDING を送る。QMux では webtransport-py の qmux が公開する `stop_sending` を
+    使う。RESET_STREAM と STOP_SENDING は QMux でも QUIC のフレームとして規定されており、
+    MOQT のストリームはそのまま対応する
+    (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping) /
+    draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.Qmux,
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client: Client | None = None
+    try:
+        published: list[Publication] = []
+
+        async def on_subscribe(request: SubscriptionRequest) -> None:
+            published.append(await request.subscribe_ok(TRACK_ALIAS))
+
+        server.on_subscribe(on_subscribe)
+
+        # 期限を短くして、受信ストリームが止まるまでテストが待てるようにする
+        client = Client(
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+            transport=Transport.Qmux,
+            verify_peer=False,
+            data_stream_timeout=0.2,
+        )
+
+        stops: list[tuple[int | None, int | None]] = []
+        closed: list[tuple[int, str]] = []
+
+        async def on_event(event: NativeEvent) -> None:
+            if event.kind == "stop_sending_data_stream":
+                stops.append((event.stream_id, event.code))
+            elif event.kind == "close":
+                closed.append((int(event.code or 0), str(event.reason or "")))
+
+        client.on_event(on_event)
+        await client.connect()
+
+        subscription = await client.subscribe(NAMESPACE, TRACK_NAME)
+        await wait_until(lambda: bool(published))
+
+        # Object を 1 件だけ送る。続きを送らないため、受信ストリームは open のまま
+        # 新しい Object を待ち続け、期限に達する
+        await published[0].send_object(1, 0, b"first")
+        received = await subscription.objects().__anext__()
+        assert received.payload == b"first"
+
+        await wait_until(lambda: bool(stops))
+        assert stops[0][1] == moqt.STREAM_CANCELLED
+
+        # 期限切れはセッションの終了ではなくストリームの停止である
+        assert client.established
+        assert closed == []
+    finally:
+        if client is not None:
+            await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
+
+
 @pytest.mark.parametrize(
     "transport",
-    [Transport.WebTransportOverHTTP2, Transport.WebTransportOverHTTP3, Transport.Quic],
-    ids=["wt-h2", "wt-h3", "quic"],
+    [
+        Transport.WebTransportOverHTTP2,
+        Transport.WebTransportOverHTTP3,
+        Transport.Quic,
+        Transport.Qmux,
+    ],
+    ids=["wt-h2", "wt-h3", "quic", "qmux"],
 )
 async def test_received_stop_sending_marks_the_subgroup_stopped(
     transport: Transport,
@@ -794,10 +876,9 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
     購読者がデータストリームの送信停止を要求すると、publisher がその Subgroup を
     再オープン禁止として記録することを確認する。
 
-    ピアからの STOP_SENDING を状態機械へ渡すのは WT-H2 / WT-H3 / QUIC 直接接続である
-    (QMux は webtransport-py が STOP_SENDING の送出 API を公開していないため対象外)。
-    subgroup stream への STOP_SENDING は再オープン禁止として記録され、Forward State が
-    0 から 1 へ変わる REQUEST_UPDATE が受理されるまで解除されない
+    ピアからの STOP_SENDING は接続方式によらず状態機械へ渡される。subgroup stream への
+    STOP_SENDING は再オープン禁止として記録され、Forward State が 0 から 1 へ変わる
+    REQUEST_UPDATE が受理されるまで解除されない
     (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
     """
     certfile, keyfile = moq_certificates
@@ -869,8 +950,13 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
 
 @pytest.mark.parametrize(
     "transport",
-    [Transport.WebTransportOverHTTP2, Transport.WebTransportOverHTTP3, Transport.Quic],
-    ids=["wt-h2", "wt-h3", "quic"],
+    [
+        Transport.WebTransportOverHTTP2,
+        Transport.WebTransportOverHTTP3,
+        Transport.Quic,
+        Transport.Qmux,
+    ],
+    ids=["wt-h2", "wt-h3", "quic", "qmux"],
 )
 async def test_received_stop_sending_terminates_the_fetch(
     transport: Transport,

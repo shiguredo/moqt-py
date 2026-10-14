@@ -241,7 +241,7 @@ asyncio.run(main())
 - `ca_file` は WT-H3 / QUIC / QMux で使える。WT-H2 では `ValueError` になる
 - `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する期限 (秒)。省略時は期限を設けない
 - `setup_options` は SETUP で送る Setup Option。AUTHORITY と PATH は QUIC 直接接続と QMux のときだけ指定できる
-- QMux は TCP/TLS 上で動き、TLS では ALPN に `MOQT_PROTOCOL` を提示する。ストリームの reset / STOP_SENDING は webtransport-py が送出 API を公開しておらず、データグラムは dwnx が実装していないため、該当する操作は `MOQTError` になる
+- QMux は TCP/TLS 上で動き、TLS では ALPN に `MOQT_PROTOCOL` を提示する。データグラムは dwnx が実装していないため、`send_datagram` は `MOQTError` になる
 - 1 接続 = 1 セッションであり、`Client` が接続と MOQT セッションを兼ねる
 
 | メソッド | 内容 |

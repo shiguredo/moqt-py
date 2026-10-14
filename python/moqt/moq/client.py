@@ -939,14 +939,10 @@ class Client:
                 close=self._close_transport,
             )
         if isinstance(transport, qmux.Client):
-            # QMux は reset / STOP_SENDING を QUIC のフレームとして扱うが、webtransport-py の
-            # qmux がその送出 API を公開していない (dwnx は対応済みであり露出漏れである)。
-            # データグラムは QMux でも規定されているが、dwnx が実装していない
-            # (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。いずれも
-            # 黙って捨てず、呼ばれたら理由の分かるエラーにする
-            async def unsupported_stream_control(_stream_id: int, _error_code: int) -> None:
-                raise MOQTError("the QMux transport does not support stream reset or STOP_SENDING")
-
+            # QMux は reset / STOP_SENDING を QUIC のフレームとして扱い、webtransport-py の
+            # qmux が送出 API を公開している。データグラムは QMux でも規定されているが、
+            # dwnx が実装していないため、呼ばれたら理由の分かるエラーにする
+            # (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))
             async def unsupported_datagram(_data: bytes) -> None:
                 raise MOQTError("the QMux transport does not support datagrams")
 
@@ -954,8 +950,8 @@ class Client:
                 open_uni_stream=lambda: transport.open_stream(unidirectional=True),
                 open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
                 send_stream_data=transport.send_stream_data,
-                reset_stream=unsupported_stream_control,
-                stop_sending=unsupported_stream_control,
+                reset_stream=transport.reset_stream,
+                stop_sending=transport.stop_sending,
                 send_datagram=unsupported_datagram,
                 close=self._close_transport,
             )

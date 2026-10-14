@@ -1023,14 +1023,10 @@ class Server:
 
         QMux では MOQT のストリームがそのまま QMux のストリームへ対応する
         (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。ストリームの
-        reset / STOP_SENDING は webtransport-py の qmux が送出 API を公開しておらず
-        (dwnx は対応済み)、データグラムは dwnx が実装していない
-        (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。呼ばれたら
-        理由の分かるエラーにする。
+        reset / STOP_SENDING は webtransport-py の qmux が送出 API を公開している。
+        データグラムは dwnx が実装していないため、呼ばれたら理由の分かるエラーにする
+        (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。
         """
-
-        async def unsupported_stream_control(_stream_id: int, _error_code: int) -> None:
-            raise MOQTError("the QMux transport does not support stream reset or STOP_SENDING")
 
         async def unsupported_datagram(_data: bytes) -> None:
             raise MOQTError("the QMux transport does not support datagrams")
@@ -1039,8 +1035,8 @@ class Server:
             open_uni_stream=lambda: session.open_stream(unidirectional=True),
             open_bidi_stream=lambda: session.open_stream(unidirectional=False),
             send_stream_data=session.send_stream_data,
-            reset_stream=unsupported_stream_control,
-            stop_sending=unsupported_stream_control,
+            reset_stream=session.reset_stream,
+            stop_sending=session.stop_sending,
             send_datagram=unsupported_datagram,
             close=lambda code, reason: session.close(code, reason),
         )
@@ -1110,11 +1106,15 @@ class Server:
         if connection is not None:
             await connection.runtime.receive_datagram(data)
 
-    async def _on_stop_sending(self, session: Session, stream_id: int, error_code: int) -> None:
-        """ピアからの WT_STOP_SENDING を状態機械へ通知する。
+    async def _on_stop_sending(
+        self, session: Session, stream_id: int, error_code: int | None
+    ) -> None:
+        """ピアからの STOP_SENDING を状態機械へ通知する。
 
         WT-H2 の WT_STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。WT-H3 では
+        WT_APPLICATION_ERROR レンジ外のコードが「アプリケーションエラーコード無し」と
+        して `None` で届く (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
         connection = self._connections.get(_session_context(session))
         if connection is not None:
