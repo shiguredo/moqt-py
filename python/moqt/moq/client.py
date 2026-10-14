@@ -875,16 +875,17 @@ class Client:
                 send_datagram=transport.send_datagram,
                 close=self._close_transport,
             )
+        # WT-H3 も STOP_SENDING を送出できる。統一 API の Client は
+        # プロトコル固有の操作を持たないため、ハンドルから呼ぶ
+        h3_client = transport.h3
+        if h3_client is None:
+            raise RuntimeError("the WebTransport over HTTP/3 client is missing")
         return TransportOps(
             open_uni_stream=lambda: transport.open_stream(unidirectional=True),
             open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
             send_stream_data=transport.send_stream_data,
             reset_stream=transport.reset_stream,
-            # WT-H3 には STOP_SENDING だけを送る API が無いため、
-            # ストリームを reset して受信を終わらせる
-            stop_sending=lambda stream_id, error_code: transport.reset_stream(
-                stream_id, error_code
-            ),
+            stop_sending=h3_client.stop_sending,
             send_datagram=transport.send_datagram,
             close=self._close_transport,
         )
