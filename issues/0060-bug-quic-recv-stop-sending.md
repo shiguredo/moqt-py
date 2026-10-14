@@ -1,7 +1,7 @@
 # QUIC 直接接続で受信した STOP_SENDING を状態機械へ通知していない
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/fix-quic-recv-stop-sending
 - Polished:
 
@@ -59,3 +59,31 @@ webtransport-py が同じコールバックを公開しているのに登録し�
   終端すること
 - WT-H2 の既存テストが引き続き通ること
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`python/moqt/moq/client.py` の `Client.__init__` で、QUIC 直接接続の分岐に
+`quic.Client.on_stop_sending` を登録し、既存の `Client._on_stop_sending` から
+`Runtime.receive_stop_sending` へ渡すようにした。docstring も WT-H2 と QUIC の両方を
+運ぶことを示すように更新した。
+
+`python/moqt/moq/testing/server.py` の `Server.__init__` で、QUIC 直接接続の分岐に
+`quic.Server.on_stop_sending` を登録し、`_on_quic_stop_sending` が `_quic_context(address)`
+で接続を引いて `Runtime.receive_stop_sending` へ渡すようにした。
+
+コメントを実態に合わせて訂正した。
+
+- 受信 STOP_SENDING を公開していないのは WT-H3 だけであること
+- `quic.Client.shutdown_stream` はリモート単方向ストリーム (受信中の subgroup stream) では
+  read 側だけ、つまり STOP_SENDING のみを送出すること
+
+`tests/test_e2e.py` の実通信テスト 2 件を WT-H2 / QUIC の 2 接続方式で実行するように
+パラメータ化した。
+
+- `test_received_stop_sending_marks_the_subgroup_stopped`
+- `test_received_stop_sending_terminates_the_fetch`
+
+### 確認
+
+`uv run pytest` は 628 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+(ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy) も通ることを確認した。
