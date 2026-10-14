@@ -1,7 +1,7 @@
 # 受信した STOP_SENDING を状態機械へ通知していない
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/fix-recv-stop-sending
 - Polished:
 
@@ -65,3 +65,37 @@ FETCH の cancel では、仕様が bidi request stream と uni data stream の 
   送られること
 - 終端済みストリームへの遅延した STOP_SENDING でセッションが壊れないこと
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`python/moqt/moq/_runtime.py` の `Runtime` に `receive_stop_sending` を追加し、自側が
+開いたストリームの種別で状態機械への通知先を分けた。fetch stream は
+`fetch_stop_sending_received(request_id, error_code)`、subgroup stream と fill fetch
+stream は `recv_data_stream_stop_sending(stream_id, error_code)` へ渡す。種別の判定の
+ため `FetchWriter` に `request_id` と `is_fill_fetch` を持たせた。終端済みストリームへ
+遅れて届いた STOP_SENDING は状態機械が拒否するため、例外を送出せずログに記録して
+継続する。
+
+`python/moqt/moq/client.py` の `Client.__init__` は WT-H2 のときだけ
+`webtransport._h2_client.Client.on_stop_sending` を登録し、`Client._on_stop_sending` から
+`Runtime.receive_stop_sending` へ渡す。`python/moqt/moq/testing/server.py` の `Server` も
+WT-H2 のときだけ統一 API の `webtransport.Server.on_stop_sending` を登録する。WT-H3 と
+QUIC 直接接続は webtransport-py が受信 STOP_SENDING を公開していないため対象外とし、
+その旨をコメントに残した。
+
+`src/core.rs` に `stopped_outgoing_subgroup_error_code` を追加し、moqt-rs の
+`Session::stopped_outgoing_subgroup_error_code` の `Option<Option<u64>>` を
+`(bool, Option<u64>)` として公開した。`Runtime` からも同じ名前で呼べる。
+
+`tests/test_e2e.py` に WT-H2 の実通信テストを 2 件追加した。
+
+- `test_received_stop_sending_marks_the_subgroup_stopped`: 購読者がデータストリームへ
+  STOP_SENDING を送ると、publisher の状態機械が `(True, STREAM_CANCELLED)` を記録し、
+  購読が生きたままであること
+- `test_received_stop_sending_terminates_the_fetch`: 購読者が fetch stream へ
+  STOP_SENDING を送ると、publisher の fetch が `terminated` になること
+
+### 確認
+
+`uv run pytest` は 626 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+(ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy) も通ることを確認した。
