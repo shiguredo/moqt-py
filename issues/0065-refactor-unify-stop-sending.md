@@ -1,7 +1,7 @@
 # 統一 Server.on_stop_sending へ寄せる
 
 - Created: 2026-10-15
-- Completed:
+- Completed: 2026-10-15
 - Branch: feature/refactor-unify-stop-sending
 - Polished:
 
@@ -52,3 +52,18 @@ HTTP/2 と HTTP/3 の両方で `(session, stream_id, error_code)` を通知す�
 サーバー側を保留していた理由が解消したため reopened にする。統一 `Client` の
 `on_stop_sending` と `stop_sending` は dev29 にも入っておらず引き続き保留であるため、
 クライアント側は本 issue の対象から外し、別 issue で扱う。
+
+## 解決方法
+
+`python/moqt/moq/testing/server.py` の `Server.__init__` で、WT-H2 と WT-H3 で分けていた
+登録を統一 API の `Server.on_stop_sending` 1 本に戻した。WT-H3 用に持っていた
+`_on_h3_stop_sending` を削除し、`_on_stop_sending` が `(session, stream_id, error_code)` を
+受けて接続を引く経路に一本化した。
+
+### 確認
+
+- `tests/test_e2e.py` の実通信テスト 2 件 (WT-H2 / WT-H3 / QUIC / QMux の 8 件) が通る
+- `uv run pytest` は 640 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
+- クライアント側の統一 API 化 (統一 `Client` の `on_stop_sending` と `stop_sending`) は
+  webtransport-py 側に API が無いため別 issue とした

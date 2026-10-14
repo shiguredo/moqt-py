@@ -1,7 +1,7 @@
 # QMux でストリームの reset / STOP_SENDING を送れない
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-15
 - Branch: feature/add-qmux-stream-control
 - Polished:
 
@@ -68,3 +68,30 @@ webtransport-py 2026.1.0.dev29 で 0285 (QMux のローカル発ストリーム�
 `reset_stream(stream_id, error_code=0)` / `stop_sending(stream_id, error_code=0)` /
 `close_stream(stream_id, error_code=0)` が追加された。pending にした理由 (webtransport-py
 が送出 API を公開していない) が解消したため、reopened にして対応する。
+
+## 解決方法
+
+`pyproject.toml` の webtransport-py の下限を 2026.1.0.dev29 へ上げ、`uv lock` と `uv sync`
+で追随した。
+
+`python/moqt/moq/client.py` の `Client._transport_ops()` で、QMux の `reset_stream` と
+`stop_sending` を `webtransport.qmux.Client` のメソッドへ配線した。データグラムは dwnx が
+実装していないため、引き続き理由の分かる `MOQTError` を送出する。
+
+`python/moqt/moq/testing/server.py` の `Server._qmux_transport_ops()` も同じく
+`webtransport.qmux.Session` の `reset_stream` / `stop_sending` へ配線した。
+
+webtransport-py 2026.1.0.dev29 の変更により統一 `Server.on_stop_sending` のコールバックの
+`error_code` が `int | None` になったため、`Server._on_stop_sending` の型もあわせた。
+
+### 確認
+
+- `tests/test_client.py`: `test_qmux_wires_stream_reset_and_stop_sending` で配線を確認し、
+  `test_qmux_reports_unsupported_datagram` をデータグラムだけの確認に絞った
+- `tests/test_e2e.py`: 実通信テスト 2 件のパラメータに QMux を追加し、WT-H2 / WT-H3 /
+  QUIC / QMux の 4 接続方式で回すようにした (8 件)。QMux でデータストリームのタイムアウトが
+  STOP_SENDING を送ることを確認する `test_qmux_data_stream_timeout_sends_stop_sending` を
+  追加した
+- `skills/moqt-py/SKILL.md` の QMux の制約をデータグラムだけに直した
+- `uv run pytest` は 640 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
