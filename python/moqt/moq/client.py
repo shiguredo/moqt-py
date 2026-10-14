@@ -707,7 +707,15 @@ class Client:
             await self._on_datagram(data)
 
     async def close(self) -> None:
-        """MOQT client と接続を閉じる。"""
+        """MOQT client と接続を閉じる。
+
+        接続の終了待ちで受信ループが `OSError` で失敗した場合は送出せず、ログに記録する。
+        接続を閉じる処理に伴う失敗であり、利用者に伝える意味が無いためである。例えば TLS 上で
+        動く QMux では、こちらが close_notify を送った後に peer がアプリケーションデータ
+        (CONNECTION_CLOSE など) を送ると、asyncio の TLS 層が `SSLObject.unwrap()` で
+        `ssl.SSLError` (`OSError` の派生) を送出する。peer の終了理由を運ぶ
+        WebTransport の例外は `OSError` ではないため、従来どおり送出する。
+        """
         if self._tick_task is not None:
             self._tick_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -727,6 +735,8 @@ class Client:
                 await self._run_task
             except asyncio.CancelledError:
                 pass
+            except OSError as error:
+                logger.debug("MOQT receive loop failed during close: %s", error)
             finally:
                 self._run_task = None
 
