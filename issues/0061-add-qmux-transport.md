@@ -63,3 +63,47 @@ WebTransport (WT-H2 / WT-H3) だけに対応しており、TCP しか通らな�
 - QMux で未対応の操作 (reset / STOP_SENDING / データグラム) が理由の分かる
   `MOQTError` になること
 - `uv run pytest` が全件通ること
+
+## 解決方法
+
+`python/moqt/moq/transport.py` に `Transport.Qmux` (`"qmux"`) を追加した。
+
+`python/moqt/moq/client.py` では `_create_transport` に QMux の経路を追加し、URI の
+authority へ TCP 接続して TLS を張る `webtransport.qmux.Client` を作るようにした。
+`SSLContext` は `verify_peer` と `ca_file` から作り、ALPN に `MOQT_PROTOCOL` を提示する。
+`TransportOps` は `open_stream` / `send_stream_data` / `close` を QMux へ写し、reset /
+STOP_SENDING / データグラムは webtransport-py の qmux が公開していないため、呼ばれたら
+理由の分かる `MOQTError` を送出する。AUTHORITY と PATH は HTTP 層を持たない接続として
+QMux でも送る。
+
+`python/moqt/moq/testing/server.py` では `Transport.Qmux` の経路を追加し、`certfile` と
+`keyfile` からサーバー側の `SSLContext` を作って `webtransport.qmux.Server` を動かす。
+接続はセッションハンドル単位のコールバックで扱い、`peer_address` とサーバーが振る
+`session_id` の組で識別する。
+
+`src/core.rs` の `transport_from_python` は `"qmux"` を native QUIC と同じ扱いにする。
+QMux は WebTransport ではないため、状態機械から見た Setup Option の制約が QUIC と同じに
+なる (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
+
+QMux ではサーバーが接続の確立と同時に制御ストリームへ SETUP を書くため、クライアントの
+`connect()` が返る前にデータが届く。ランタイムができる前に届いたストリームデータと
+データグラムは保持し、`Runtime.start()` の後に状態機械へ渡すようにした。自側の SETUP より
+先に peer の SETUP を渡すと、状態機械が初期状態のまま制御メッセージを受けたとして拒否する
+ためである。
+
+### 確認
+
+- `tests/test_client.py`: 接続先の authority、ALPN、AUTHORITY / PATH、未対応操作の
+  `MOQTError` を確認する 4 件を追加した
+- `tests/test_e2e.py`: QMux で SETUP と SUBSCRIBE とオブジェクトの配送を確認する
+  `test_qmux_delivers_objects_to_the_subscriber` と、FETCH と fetch 応答を確認する
+  `test_qmux_fetches_objects` を追加した
+- `uv run pytest` は 634 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
+
+### 残る制約
+
+ストリームの reset / STOP_SENDING とデータグラムは QMux では使えない。QMux 側では
+それぞれ draft-ietf-quic-qmux-02 §9.2 / §9.1 の拡張にあたり、webtransport-py の qmux が
+未実装である。既存の `moq_transport` fixture には QMux を加えていない。これらの操作を
+使うテストが多数あるためである。
