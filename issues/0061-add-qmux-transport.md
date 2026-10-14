@@ -1,7 +1,7 @@
 # QMux 上の MOQT に対応する
 
 - Created: 2026-10-14
-- Completed:
+- Completed: 2026-10-14
 - Branch: feature/add-qmux-transport
 - Polished:
 
