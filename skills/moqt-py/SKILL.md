@@ -53,7 +53,7 @@ print(message.kind, hex(message.type_id), message.body)
 
 ### Session
 
-`Session.client(implementation="moqt-py", setup_options=None, transport="wt-h3")` と `Session.server(...)` で作る。`transport` は `moqt.moq.Transport` の値であり、QUIC 直接接続では AUTHORITY と PATH を SETUP に載せ、WebTransport では載せない。
+`Session.client(implementation="moqt-py", setup_options=None, transport="wt-h3")` と `Session.server(...)` で作る。`transport` は `moqt.moq.Transport` の値であり、QUIC 直接接続と QMux では AUTHORITY と PATH を SETUP に載せ、WebTransport では載せない。
 
 回し方は「受信バイト列を `receive_*` へ渡す → 戻り値の `Event` を見る → `send_*` が返すバイト列を送出する」の繰り返しである。SETUP の交換は次のように書ける。
 
@@ -208,7 +208,7 @@ print(token.format, token.claims.issuer)
 
 ## moqt.moq
 
-WebTransport (WT-H3 / WT-H2) と QUIC 直接接続で MOQT セッションを張る client。公開 API は client だけで、server は `moqt.moq.testing` に置く。
+WebTransport (WT-H3 / WT-H2)、QUIC 直接接続、QMux 接続で MOQT セッションを張る client。公開 API は client だけで、server は `moqt.moq.testing` に置く。
 
 ```python
 import asyncio
@@ -238,9 +238,10 @@ asyncio.run(main())
 `Client(url, *, transport=None, verify_peer=True, origin="", ca_file=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`
 
 - `url` は MOQT の URI (`moqt://host:port/path`)。`transport` を省略すると WT-H3 になる
-- `ca_file` は WT-H3 と QUIC だけで使える。WT-H2 では `ValueError` になる
+- `ca_file` は WT-H3 / QUIC / QMux で使える。WT-H2 では `ValueError` になる
 - `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する期限 (秒)。省略時は期限を設けない
-- `setup_options` は SETUP で送る Setup Option。AUTHORITY と PATH は QUIC 直接接続のときだけ指定できる
+- `setup_options` は SETUP で送る Setup Option。AUTHORITY と PATH は QUIC 直接接続と QMux のときだけ指定できる
+- QMux は TCP/TLS 上で動き、TLS では ALPN に `MOQT_PROTOCOL` を提示する。ストリームの reset / STOP_SENDING とデータグラムは webtransport-py の qmux が公開していないため、該当する操作は `MOQTError` になる
 - 1 接続 = 1 セッションであり、`Client` が接続と MOQT セッションを兼ねる
 
 | メソッド | 内容 |
@@ -264,6 +265,7 @@ asyncio.run(main())
 | `Transport.WebTransportOverHTTP3` | WT-H3 (省略時) |
 | `Transport.WebTransportOverHTTP2` | WT-H2 |
 | `Transport.Quic` | QUIC 直接接続。ALPN に `moqt.moq.transport.MOQT_PROTOCOL` (`moqt-22`) を提示する |
+| `Transport.Qmux` | QMux 接続 (TCP/TLS)。TLS では ALPN に `MOQT_PROTOCOL` を提示する |
 
 ### 購読・配信・取得
 
@@ -385,10 +387,11 @@ pytest_plugins = ["moqt.moq.testing"]
 | `moq_pair` | 接続済みの client / server と、確立した `ServerSession` |
 
 `Server` は `Transport.WebTransportOverHTTP3` / `Transport.WebTransportOverHTTP2` /
-`Transport.Quic` のすべてで使える。`moq_transport` を `Transport.Quic` に上書きすると、
-同じテストを QUIC 直接接続で実行できる。QUIC には WebTransport session が無いため、
-接続は address 単位になり `ServerSession.session_id` は `QUIC_SESSION_ID` (0) になる。
-`allowed_origins` は WebTransport の Origin 検査で使うため、QUIC では指定できない。
+`Transport.Quic` / `Transport.Qmux` のすべてで使える。`moq_transport` を `Transport.Quic`
+に上書きすると、同じテストを QUIC 直接接続で実行できる。QUIC には WebTransport session が
+無いため、接続は address 単位になり `ServerSession.session_id` は `QUIC_SESSION_ID` (0) に
+なる。QMux では接続ごとにサーバーが振るセッション ID を使う。`allowed_origins` は
+WebTransport の Origin 検査で使うため、QUIC と QMux では指定できない。
 
 ```python
 from moqt.moq import Publication
@@ -437,7 +440,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` では ALPN に `MOQT_PROTOCOL` を提示し、`allowed_origins` を指定すると `ValueError` になる
+- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` と `Transport.Qmux` では ALPN に `MOQT_PROTOCOL` を提示し、`allowed_origins` を指定すると `ValueError` になる
 - コールバックは `on_session_established` / `on_subscribe` / `on_fetch` / `on_publish` / `on_request_update` / `on_goaway` / `on_event` / `on_fill_fetch_stream`
 - `ServerSession` は `goaway()` と状態照会、`SubscriptionRequest` は `subscribe_ok()` / `reject()`、`FetchRequest` は `respond()` / `reject()`、`PublisherRequest` は `accept()` / `reject()` を持つ
 - 補助 API: `generate_certificates()` / `wait_until()` / `collect_objects()`

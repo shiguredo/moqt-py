@@ -115,8 +115,8 @@ assert token.claims.authorize(c4m.MoqtAction.PUBLISH, (b"example.com",), b"video
 
 ## moqt.moq
 
-WebTransport (WT-H3 / WT-H2) と QUIC 直接接続で MOQT セッションを張る client。接続方式は
-`Transport` で選ぶ (省略時は WT-H3)。
+WebTransport (WT-H3 / WT-H2)、QUIC 直接接続、QMux 接続で MOQT セッションを張る client。
+接続方式は `Transport` で選ぶ (省略時は WT-H3)。
 
 ```python
 import asyncio
@@ -166,9 +166,9 @@ pytest_plugins = ["moqt.moq.testing"]
 
 fixture は `moq_certificates` / `moq_transport` / `moq_server` / `moq_client_factory` /
 `moq_pair` の 5 つである。`moq_transport` を上書きすると suite 全体の接続方式を変えられる。
-`Server` は WT-H3 / WT-H2 / QUIC 直接接続のすべてに対応しており、`Transport.Quic` を選ぶと
-同じテストを QUIC で実行できる。QUIC では接続が address 単位になるため、
-`ServerSession.session_id` は `QUIC_SESSION_ID` (0) になる。
+`Server` は WT-H3 / WT-H2 / QUIC 直接接続 / QMux 接続のすべてに対応しており、
+`Transport.Quic` を選ぶと同じテストを QUIC で実行できる。QUIC では接続が address 単位に
+なるため、`ServerSession.session_id` は `QUIC_SESSION_ID` (0) になる。
 
 ```python
 from moqt.moq import Publication

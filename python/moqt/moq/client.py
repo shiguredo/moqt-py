@@ -1,15 +1,16 @@
-"""QUIC / WebTransport を利用する MOQT client。"""
+"""QUIC / QMux / WebTransport を利用する MOQT client。"""
 
 import asyncio
 import contextlib
 import logging
+import ssl
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from webtransport import Client as WebTransportClient
-from webtransport import HTTPVersion, quic
+from webtransport import HTTPVersion, qmux, quic
 
 from moqt import moqt
 from moqt.moq._runtime import (
@@ -74,6 +75,23 @@ def _parse_target(url: str) -> _Target:
     return _Target(authority=parsed.netloc, host=host, port=port, path=path)
 
 
+def _create_qmux_ssl_context(*, verify_peer: bool, ca_file: str | None) -> ssl.SSLContext:
+    """QMux over TLS のクライアント設定を作る。
+
+    QMux を TLS で使う場合は ALPN が必須であり、提示する値は呼び出し側が設定する
+    (draft-ietf-quic-qmux-02 §8.1 (Protocol Negotiation))。`verify_peer` が偽の場合は
+    証明書の検証とホスト名の検証を無効にする。`ca_file` を渡した場合はその証明書を
+    信頼する。
+    """
+    context = ssl.create_default_context()
+    if not verify_peer:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    if ca_file is not None:
+        context.load_verify_locations(ca_file)
+    return context
+
+
 def _create_transport(
     transport: Transport,
     target: _Target,
@@ -81,7 +99,7 @@ def _create_transport(
     verify_peer: bool,
     origin: str,
     ca_file: str | None,
-) -> WebTransportClient | quic.Client:
+) -> WebTransportClient | qmux.Client | quic.Client:
     """接続方式に応じた webtransport-py のクライアントを作る。
 
     WebTransport は統一 API の `webtransport.Client` を `HTTPVersion` で
@@ -97,6 +115,15 @@ def _create_transport(
             alpn_protocols=[MOQT_PROTOCOL],
             verify_peer=verify_peer,
             ca_file=ca_file,
+        )
+    if transport is Transport.Qmux:
+        # QMux では TCP/TLS 上で MOQT を運ぶ。ALPN は native QUIC と同じ値を提示する
+        # (draft-nandakumar-moq-qmux-moqt-00 §3.2 (ALPN Identification))。
+        return qmux.Client(
+            host=target.host,
+            port=target.port,
+            ssl=_create_qmux_ssl_context(verify_peer=verify_peer, ca_file=ca_file),
+            alpn_protocols=[MOQT_PROTOCOL],
         )
     # WebTransport では moqt URI のスキームを https に置き換えた URI へ
     # extended CONNECT を送る (draft-ietf-moq-transport-22 §6.2.1 (WebTransport))。
@@ -327,7 +354,7 @@ class Fetch:
 
 
 class Client:
-    """QUIC / WebTransport 接続上で MOQT を扱う client。
+    """QUIC / QMux / WebTransport 接続上で MOQT を扱う client。
 
     client は自側から request を送る側であり、peer から届いた request
     (SUBSCRIBE / PUBLISH / FETCH / TRACK_STATUS) に応答する機構を持たない。
@@ -384,11 +411,16 @@ class Client:
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
         options = dict(setup_options) if setup_options is not None else {}
-        if self.transport is Transport.Quic:
+        if self.transport in {Transport.Quic, Transport.Qmux}:
+            # HTTP 層を持たない接続では、URI の authority と path を Setup Option で
+            # 通知する (draft-ietf-moq-transport-22 §6.2.2 (Native QUIC) /
+            # §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
             options[moqt.SETUP_OPTION_AUTHORITY] = target.authority.encode()
             options[moqt.SETUP_OPTION_PATH] = target.path.encode()
         elif moqt.SETUP_OPTION_AUTHORITY in options or moqt.SETUP_OPTION_PATH in options:
-            raise ValueError("AUTHORITY and PATH setup options are only valid for QUIC connections")
+            raise ValueError(
+                "AUTHORITY and PATH setup options are only valid for QUIC and QMux connections"
+            )
         self._setup_options = options or None
         self._runtime: Runtime | None = None
         self._established_event = asyncio.Event()
@@ -403,6 +435,10 @@ class Client:
         # その場合は登録時に終了させる必要があるため保持する
         self._pending_terminations: dict[int, None] = {}
         self._fetches: dict[int, Fetch] = {}
+        # 接続の確立前に届いたデータ。QMux ではサーバーが接続の確立と同時に制御
+        # ストリームへ SETUP を書くため、ランタイムができる前に届くことがある
+        self._early_stream_data: list[tuple[int, bytes, bool]] = []
+        self._early_datagrams: list[bytes] = []
 
         # アプリが登録するコールバック
         self._publish_state_notify_callback: (
@@ -422,6 +458,13 @@ class Client:
             self._transport.on_connection_closed(self._on_connection_closed)
             # ピアがストリームの送信停止を求めたことを状態機械へ渡す
             self._transport.on_stop_sending(self._on_stop_sending)
+        elif isinstance(self._transport, qmux.Client):
+            # QMux の受信コールバックも FIN を運ぶため、ストリームの終端もここで受ける。
+            # 接続の終了は接続単位のコールバックで受ける
+            self._transport.on_stream_data(self._on_quic_stream_data)
+            self._transport.on_stream_reset(self._on_stream_reset)
+            self._transport.on_stop_sending(self._on_stop_sending)
+            self._transport.on_closed(self._on_connection_closed)
         else:
             self._transport.on_stream_data(self._on_stream_data)
             self._transport.on_stream_reset(self._on_stream_reset)
@@ -434,7 +477,9 @@ class Client:
                 h2_client = self._transport.h2
                 if h2_client is not None:
                     h2_client.on_stop_sending(self._on_stop_sending)
-        self._transport.on_datagram(self._on_datagram)
+        # QMux はデータグラムを運べないため、送受信のコールバックを登録しない
+        if not isinstance(self._transport, qmux.Client):
+            self._transport.on_datagram(self._on_datagram)
 
     # ─── 接続 ───────────────────────────────────────────────
 
@@ -605,8 +650,8 @@ class Client:
         if self._run_task is not None:
             raise RuntimeError("client has already been started")
 
-        # 接続に失敗した場合、WebTransport は webtransport-py が具体的な例外を
-        # 送出する。QUIC は例外ではなく False を返す
+        # 接続に失敗した場合、WebTransport と QMux は webtransport-py が具体的な
+        # 例外を送出する。QUIC は例外ではなく False を返す
         if isinstance(self._transport, quic.Client):
             if not await self._transport.connect(timeout=timeout):
                 raise ConnectionError("failed to establish a QUIC connection")
@@ -630,6 +675,8 @@ class Client:
 
         try:
             await self._runtime.start()
+            # 接続の確立前に届いたデータを、自側の SETUP を送った後に渡す
+            await self._flush_early_data()
             await asyncio.wait_for(self._established_event.wait(), timeout=timeout)
         except TimeoutError:
             await self.close()
@@ -639,6 +686,21 @@ class Client:
             error = self._connect_error
             await self.close()
             raise error
+
+    async def _flush_early_data(self) -> None:
+        """接続の確立前に届いたデータを状態機械へ渡す。
+
+        自側の SETUP を送る前に peer の SETUP を渡すと、状態機械が初期状態のまま
+        制御メッセージを受けたとして拒否するため、`Runtime.start()` の後に呼ぶ。
+        """
+        early_stream_data = self._early_stream_data
+        self._early_stream_data = []
+        for stream_id, data, fin in early_stream_data:
+            await self._on_quic_stream_data(stream_id, data, fin)
+        early_datagrams = self._early_datagrams
+        self._early_datagrams = []
+        for data in early_datagrams:
+            await self._on_datagram(data)
 
     async def close(self) -> None:
         """MOQT client と接続を閉じる。"""
@@ -653,6 +715,8 @@ class Client:
                 await runtime.close()
             self._runtime = None
         self._pending_objects.clear()
+        self._early_stream_data.clear()
+        self._early_datagrams.clear()
         await self._transport.close()
         if self._run_task is not None:
             try:
@@ -870,6 +934,25 @@ class Client:
                 send_datagram=transport.send_datagram,
                 close=self._close_transport,
             )
+        if isinstance(transport, qmux.Client):
+            # QMux はストリームの reset / STOP_SENDING の送出 API とデータグラムの API を
+            # 公開していない (draft-ietf-quic-qmux-02 §9.1 / §9.2 の拡張が未実装)。
+            # 黙って捨てず、呼ばれたら理由の分かるエラーにする
+            async def unsupported_stream_control(_stream_id: int, _error_code: int) -> None:
+                raise MOQTError("the QMux transport does not support stream reset or STOP_SENDING")
+
+            async def unsupported_datagram(_data: bytes) -> None:
+                raise MOQTError("the QMux transport does not support datagrams")
+
+            return TransportOps(
+                open_uni_stream=lambda: transport.open_stream(unidirectional=True),
+                open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
+                send_stream_data=transport.send_stream_data,
+                reset_stream=unsupported_stream_control,
+                stop_sending=unsupported_stream_control,
+                send_datagram=unsupported_datagram,
+                close=self._close_transport,
+            )
         if transport.http_version is HTTPVersion.HTTP2:
             # WT-H2 は STOP_SENDING を送出できる。統一 API の Client は
             # プロトコル固有の操作を持たないため、ハンドルから呼ぶ
@@ -910,6 +993,10 @@ class Client:
         if isinstance(transport, quic.Client):
             # QUIC 直接接続では接続の終了として伝える
             await transport.close(error_code=code, reason=reason)
+        elif isinstance(transport, qmux.Client):
+            # QMux の client は接続の終了理由を `close_reason` として作るときにしか
+            # 受け取らないため、ここでは接続を閉じるだけにする
+            await transport.close()
         else:
             await transport.close(error_code=code, error_message=reason)
 
@@ -1105,6 +1192,8 @@ class Client:
         """受信したストリームデータを状態機械へ渡す。"""
         runtime = self._runtime
         if runtime is None:
+            # 接続の確立前に届いたデータは、ランタイムを作るまで保持する
+            self._early_stream_data.append((stream_id, data, False))
             return
         try:
             await runtime.receive_stream(stream_id, data)
@@ -1112,11 +1201,18 @@ class Client:
             self._fail_connect(error)
 
     async def _on_quic_stream_data(self, stream_id: int, data: bytes, fin: bool) -> None:
-        """QUIC のストリームデータを受信する。
+        """QUIC / QMux のストリームデータを受信する。
 
-        QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
-        QUIC の FIN はリセットではないため `reset=False` で通知する。
+        QUIC と QMux の受信コールバックは FIN を運ぶため、ストリームの終端もここで
+        通知する。FIN はリセットではないため `reset=False` で通知する。
+
+        QMux では、サーバーが接続の確立と同時に制御ストリームへ SETUP を書くため、
+        クライアントの `connect()` が返る前にデータが届く。ランタイムがまだ無い場合は
+        保持し、`connect()` が再現する
         """
+        if self._runtime is None:
+            self._early_stream_data.append((stream_id, data, fin))
+            return
         await self._on_stream_data(stream_id, data)
         if fin:
             await self._on_stream_closed(stream_id, reset=False)
@@ -1159,6 +1255,8 @@ class Client:
     async def _on_datagram(self, data: bytes) -> None:
         runtime = self._runtime
         if runtime is None:
+            # 接続の確立前に届いたデータグラムは、ランタイムを作るまで保持する
+            self._early_datagrams.append(data)
             return
         try:
             await runtime.receive_datagram(data)

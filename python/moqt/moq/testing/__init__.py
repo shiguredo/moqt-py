@@ -23,7 +23,8 @@
 
 ``moq_transport`` を上書きすると接続方式を変えられる。``Transport.Quic`` では
 WebTransport session が無いため、接続は address 単位になり ``ServerSession.session_id``
-は :data:`QUIC_SESSION_ID` (0) になる。
+は :data:`QUIC_SESSION_ID` (0) になる。``Transport.Qmux`` では接続ごとにサーバーが
+振るセッション ID を使う。
 
 証明書生成だけを単体で使いたい場合は :func:`generate_certificates` を、
 述語の待ち合わせだけを単体で使いたい場合は :func:`wait_until` を使う。

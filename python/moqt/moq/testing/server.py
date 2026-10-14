@@ -1,13 +1,14 @@
-"""QUIC / WebTransport を利用する MOQT server。"""
+"""QUIC / QMux / WebTransport を利用する MOQT server。"""
 
 import asyncio
 import contextlib
 import logging
+import ssl
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from webtransport import HTTPVersion, Session, quic
+from webtransport import HTTPVersion, Session, qmux, quic
 from webtransport import Server as WebTransportServer
 
 from moqt import moqt
@@ -55,6 +56,28 @@ def _session_context(session: Session) -> ConnectionContext:
     """
     address = session.addr
     return (address if address is not None else ("", 0), session.session_id)
+
+
+def _qmux_context(session: qmux.Session) -> ConnectionContext:
+    """QMux の接続を識別する context を作る。
+
+    QMux には WebTransport session が無く、`session_id` はサーバーが接続ごとに振る
+    連番である (draft-ietf-quic-qmux-02 (QMux))。address を取得できない場合は
+    `("", 0)` にする。
+    """
+    address = session.peer_address
+    return (address if address is not None else ("", 0), session.session_id)
+
+
+def _create_qmux_server_ssl_context(*, certfile: str, keyfile: str) -> ssl.SSLContext:
+    """QMux over TLS のサーバー設定を作る。
+
+    QMux を TLS で使う場合は ALPN が必須であり、受け入れる値は呼び出し側が設定する
+    (draft-ietf-quic-qmux-02 §8.1 (Protocol Negotiation))。
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile, keyfile)
+    return context
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,7 +444,7 @@ class _Connection:
 
 
 class Server:
-    """QUIC / WebTransport 接続上で MOQT を扱う server。"""
+    """QUIC / QMux / WebTransport 接続上で MOQT を扱う server。"""
 
     def __init__(
         self,
@@ -441,8 +464,9 @@ class Server:
 
         `transport` は接続方式である。`Transport.Quic` では WebTransport session が無いため、
         接続は address 単位になり、`ServerSession.session_id` は `QUIC_SESSION_ID` (0) に
-        なる。`allowed_origins` は WebTransport の Origin 検査で使うため、`Transport.Quic`
-        では指定できない。
+        なる。`Transport.Qmux` では接続ごとにサーバーが振るセッション ID を使う。
+        `allowed_origins` は WebTransport の Origin 検査で使うため、`Transport.Quic` と
+        `Transport.Qmux` では指定できない。
 
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
@@ -455,11 +479,27 @@ class Server:
         担うため指定できない
         (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         """
-        if transport is Transport.Quic and allowed_origins is not None:
-            raise ValueError("allowed_origins is not supported for QUIC")
+        if transport in {Transport.Quic, Transport.Qmux} and allowed_origins is not None:
+            raise ValueError("allowed_origins is not supported for QUIC and QMux")
         self.transport = transport
-        self._transport: WebTransportServer | quic.Server
-        if transport is Transport.Quic:
+        self._transport: WebTransportServer | qmux.Server | quic.Server
+        if transport is Transport.Qmux:
+            # QMux では TCP/TLS 上で MOQT を運ぶ。ALPN は native QUIC と同じ値を
+            # 受け入れる (draft-nandakumar-moq-qmux-moqt-00 §3.2 (ALPN Identification))。
+            self._transport = qmux.Server(
+                host=host,
+                port=port,
+                ssl=_create_qmux_server_ssl_context(certfile=certfile, keyfile=keyfile),
+                alpn_protocols=[MOQT_PROTOCOL],
+            )
+            # QMux には WebTransport session が無いため、接続の確立と終了は
+            # セッションハンドル単位のコールバックで扱う
+            self._transport.on_session_ready(self._on_qmux_session_ready)
+            self._transport.on_session_closed(self._on_qmux_session_closed)
+            self._transport.on_stream_data(self._on_qmux_stream_data)
+            self._transport.on_stream_reset(self._on_qmux_stream_reset)
+            self._transport.on_stop_sending(self._on_qmux_stop_sending)
+        elif transport is Transport.Quic:
             # QUIC 直接接続では MOQT の ALPN を提示する
             # (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
             self._transport = quic.Server(
@@ -958,6 +998,84 @@ class Server:
     async def _on_quic_connection_closed(self, address: tuple[str, int]) -> None:
         """QUIC 接続の終了で MOQT 状態を破棄する。"""
         self._connections.pop(_quic_context(address), None)
+
+    async def _on_qmux_session_ready(self, session: qmux.Session) -> None:
+        """QMux 接続の確立で MOQT Session を開始する。"""
+        address, session_id = _qmux_context(session)
+        await self._open_connection(
+            (address, session_id),
+            address=address,
+            session_id=session_id,
+            ops=self._qmux_transport_ops(session),
+        )
+
+    async def _on_qmux_session_closed(self, session: qmux.Session) -> None:
+        """閉じた QMux 接続の MOQT 状態を破棄する。"""
+        self._connections.pop(_qmux_context(session), None)
+
+    def _qmux_transport_ops(self, session: qmux.Session) -> TransportOps:
+        """QMux 接続のトランスポート操作を組み立てる。
+
+        QMux では MOQT のストリームがそのまま QMux のストリームへ対応する
+        (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。ストリームの
+        reset / STOP_SENDING とデータグラムは webtransport-py の qmux が公開して
+        いないため、呼ばれたら理由の分かるエラーにする。
+        """
+
+        async def unsupported_stream_control(_stream_id: int, _error_code: int) -> None:
+            raise MOQTError("the QMux transport does not support stream reset or STOP_SENDING")
+
+        async def unsupported_datagram(_data: bytes) -> None:
+            raise MOQTError("the QMux transport does not support datagrams")
+
+        return TransportOps(
+            open_uni_stream=lambda: session.open_stream(unidirectional=True),
+            open_bidi_stream=lambda: session.open_stream(unidirectional=False),
+            send_stream_data=session.send_stream_data,
+            reset_stream=unsupported_stream_control,
+            stop_sending=unsupported_stream_control,
+            send_datagram=unsupported_datagram,
+            close=lambda code, reason: session.close(code, reason),
+        )
+
+    async def _on_qmux_stream_data(
+        self, session: qmux.Session, stream_id: int, data: bytes, fin: bool
+    ) -> None:
+        """QMux のストリームデータを受信する。
+
+        QMux の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
+        QMux の FIN はリセットではないため `reset=False` で通知する
+        (draft-ietf-quic-qmux-02 §4 (QUIC Frames))。
+        """
+        context = _qmux_context(session)
+        connection = self._connections.get(context)
+        if connection is None:
+            return
+        await self._receive_stream(context, stream_id, data)
+        if fin:
+            await connection.runtime.receive_stream_closed(stream_id, reset=False, error_code=None)
+
+    async def _on_qmux_stream_reset(
+        self, session: qmux.Session, stream_id: int, error_code: int
+    ) -> None:
+        """QMux のストリームリセットを状態機械へ通知する。
+
+        QMux の RESET_STREAM は MOQT のエラーコードをそのまま運ぶ
+        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        """
+        connection = self._connections.get(_qmux_context(session))
+        if connection is not None:
+            await connection.runtime.receive_stream_closed(
+                stream_id, reset=True, error_code=error_code
+            )
+
+    async def _on_qmux_stop_sending(
+        self, session: qmux.Session, stream_id: int, error_code: int
+    ) -> None:
+        """QMux の STOP_SENDING を状態機械へ通知する。"""
+        connection = self._connections.get(_qmux_context(session))
+        if connection is not None:
+            await connection.runtime.receive_stop_sending(stream_id, error_code)
 
     async def _on_stream_data(self, session: Session, stream_id: int, data: bytes) -> None:
         """受信データを状態機械へ渡す。"""

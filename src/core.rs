@@ -1640,15 +1640,17 @@ pub(crate) struct CoreSession {
 ///
 /// `moqt.moq.Transport` の値を受け取る。WebTransport over HTTP/2 と HTTP/3 は、状態機械
 /// から見れば同じ WebTransport である (違いは I/O 層の ALPN とフレーミングだけである)。
-/// 接続方式によって SETUP に載せられる Setup Option が変わるため、状態機械へ正しく
-/// 伝えないと AUTHORITY と PATH が違反として拒否される
+/// QMux は WebTransport ではないため、HTTP 層が URI を運ばない点で QUIC と同じ扱いにする
+/// (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。接続方式によって SETUP に
+/// 載せられる Setup Option が変わるため、状態機械へ正しく伝えないと AUTHORITY と PATH が
+/// 違反として拒否される
 /// (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
 fn transport_from_python(transport: &str) -> PyResult<Transport> {
     match transport {
-        "quic" => Ok(Transport::Quic),
+        "quic" | "qmux" => Ok(Transport::Quic),
         "wt-h2" | "wt-h3" => Ok(Transport::WebTransport),
         other => Err(PyValueError::new_err(format!(
-            "transport must be \"quic\", \"wt-h2\" or \"wt-h3\", got {other:?}"
+            "transport must be \"quic\", \"qmux\", \"wt-h2\" or \"wt-h3\", got {other:?}"
         ))),
     }
 }

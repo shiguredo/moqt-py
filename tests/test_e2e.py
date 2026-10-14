@@ -2303,3 +2303,115 @@ def test_quic_server_rejects_allowed_origins(moq_certificates: tuple[str, str]) 
             transport=Transport.Quic,
             allowed_origins=["https://example.com"],
         )
+
+
+async def test_qmux_delivers_objects_to_the_subscriber(
+    moq_certificates: tuple[str, str],
+) -> None:
+    """
+    QMux 上の MOQT で SETUP と購読とオブジェクトの配送が動くことを確認する。
+
+    QMux は TCP/TLS 上で QUIC v1 相当のストリーム多重化を提供し、MOQT のストリームは
+    そのまま対応する。オブジェクトは単方向ストリームで運ばれる
+    (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping) / §4.3 (Object Delivery))。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.Qmux,
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client: Client | None = None
+    try:
+        sessions: list[ServerSession] = []
+        established = asyncio.Event()
+        published: list[Publication] = []
+
+        async def on_session_established(session: ServerSession) -> None:
+            sessions.append(session)
+            established.set()
+
+        async def on_subscribe(request: SubscriptionRequest) -> None:
+            published.append(await request.subscribe_ok(TRACK_ALIAS))
+
+        server.on_session_established(on_session_established)
+        server.on_subscribe(on_subscribe)
+
+        client = Client(
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+            transport=Transport.Qmux,
+            verify_peer=False,
+        )
+        await client.connect()
+        assert client.established
+
+        await wait_until(lambda: established.is_set())
+        subscription = await client.subscribe(NAMESPACE, TRACK_NAME)
+        await wait_until(lambda: bool(published))
+        await published[0].send_object(7, 3, b"qmux-object")
+
+        received = await subscription.objects().__anext__()
+        assert (received.group_id, received.object_id, received.payload) == (7, 3, b"qmux-object")
+    finally:
+        if client is not None:
+            await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
+
+
+async def test_qmux_fetches_objects(moq_certificates: tuple[str, str]) -> None:
+    """
+    QMux 上で FETCH と fetch stream の配送が動くことを確認する。
+
+    fetch stream も QMux のストリームへそのまま対応する
+    (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.Qmux,
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client: Client | None = None
+    try:
+        responded = False
+
+        async def on_fetch(request: FetchRequest) -> None:
+            nonlocal responded
+            response = await request.respond((9, 9), end_of_track=False)
+            await response.send_object(5, 10, b"fetched-over-qmux")
+            await response.close()
+            responded = True
+
+        server.on_fetch(on_fetch)
+
+        client = Client(
+            url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+            transport=Transport.Qmux,
+            verify_peer=False,
+        )
+        await client.connect()
+
+        fetch = await client.fetch(NAMESPACE, TRACK_NAME)
+        await wait_until(lambda: responded)
+        received = await _take_fetch_objects(fetch, 1)
+        assert [(item.group_id, item.object_id, item.payload) for item in received] == [
+            (5, 10, b"fetched-over-qmux")
+        ]
+    finally:
+        if client is not None:
+            await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task

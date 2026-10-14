@@ -1,10 +1,14 @@
 """moqt.moq.Client の接続方式選択の単体テスト。"""
 
+import ssl
+
 import pytest
 from moqt import moqt
 from moqt.moq import Client, Transport
+from moqt.moq._runtime import MOQTError
+from moqt.moq.transport import MOQT_PROTOCOL
 from webtransport import Client as WebTransportClient
-from webtransport import HTTPVersion, quic
+from webtransport import HTTPVersion, qmux, quic
 
 
 def test_url_scheme_must_be_moqt() -> None:
@@ -133,6 +137,66 @@ def test_quic_sets_authority_and_path_setup_options() -> None:
     }
 
 
+def test_qmux_connects_to_the_uri_authority() -> None:
+    """
+    QMux 接続が URI の authority へ接続することを確認する。
+
+    authority の host と port (省略時は 443) へ TCP 接続し、TLS では MOQT の ALPN を
+    提示する (draft-nandakumar-moq-qmux-moqt-00 §3.2 (ALPN Identification))。
+    """
+    client = Client(url="moqt://example.com:4433/live", transport=Transport.Qmux)
+    assert client.transport is Transport.Qmux
+    transport = client._transport
+    assert isinstance(transport, qmux.Client)
+    assert (transport.host, transport.port) == ("example.com", 4433)
+
+    # port を省略した場合は 443 になる (§6.2 (Session establishment))
+    default_port = Client(url="moqt://example.com", transport=Transport.Qmux)
+    default_transport = default_port._transport
+    assert isinstance(default_transport, qmux.Client)
+    assert default_transport.port == 443
+
+
+def test_qmux_offers_the_moqt_alpn_protocol() -> None:
+    """
+    QMux over TLS が MOQT の ALPN を提示することを確認する。
+
+    QMux を TLS で使う場合は ALPN が必須であり、MOQT over QMux は native QUIC と
+    同じ値を使う (draft-ietf-quic-qmux-02 §8.1 (Protocol Negotiation) /
+    draft-nandakumar-moq-qmux-moqt-00 §3.2 (ALPN Identification))。
+    """
+    client = Client(
+        url="moqt://example.com:4433/live",
+        transport=Transport.Qmux,
+        verify_peer=False,
+    )
+    transport = client._transport
+    assert isinstance(transport, qmux.Client)
+    # ALPN は SSLContext へ設定される (asyncio の接続 API に引数が無いため)
+    assert transport._alpn_protocols == [MOQT_PROTOCOL]
+    context = transport._ssl
+    assert context is not None
+    # verify_peer=False では証明書の検証とホスト名の検証を無効にする
+    assert context.verify_mode == ssl.CERT_NONE
+    assert context.check_hostname is False
+
+
+def test_qmux_sets_authority_and_path_setup_options() -> None:
+    """
+    QMux でも AUTHORITY と PATH が SETUP に載ることを確認する。
+
+    QMux は WebTransport ではないため、HTTP 層が URI を運ぶことはない。そのため
+    native QUIC と同じく Setup Option で通知する
+    (draft-ietf-moq-transport-22 §6.2.2 (Native QUIC) / §9.1.1 (AUTHORITY) /
+    §9.1.2 (PATH))。
+    """
+    client = Client(url="moqt://example.com:4433/live?token=1", transport=Transport.Qmux)
+    assert client._setup_options == {
+        moqt.SETUP_OPTION_AUTHORITY: b"example.com:4433",
+        moqt.SETUP_OPTION_PATH: b"/live?token=1",
+    }
+
+
 def test_webtransport_rejects_authority_and_path_setup_options() -> None:
     """
     WebTransport では AUTHORITY と PATH を拒否することを確認する。
@@ -140,8 +204,28 @@ def test_webtransport_rejects_authority_and_path_setup_options() -> None:
     どちらも WebTransport では送ってはならない
     (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
     """
-    with pytest.raises(ValueError, match="only valid for QUIC connections"):
+    with pytest.raises(ValueError, match="only valid for QUIC and QMux connections"):
         Client(
             url="moqt://127.0.0.1:4433/webtransport",
             setup_options={moqt.SETUP_OPTION_PATH: b"/live"},
         )
+
+
+async def test_qmux_reports_unsupported_transport_operations() -> None:
+    """
+    QMux が対応していない操作が理由の分かるエラーになることを確認する。
+
+    webtransport-py の qmux はストリームの reset / STOP_SENDING の送出 API と、
+    データグラムの送受信 API を公開していない
+    (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension) /
+    §9.2 (Stream Resets with Partial Delivery Extension) が未実装)。黙って捨てずに
+    状態機械から呼ばれた時点で失敗させる。
+    """
+    client = Client(url="moqt://example.com:4433/live", transport=Transport.Qmux)
+    ops = client._transport_ops()
+    with pytest.raises(MOQTError, match="does not support stream reset"):
+        await ops.reset_stream(0, 1)
+    with pytest.raises(MOQTError, match="does not support stream reset"):
+        await ops.stop_sending(0, 1)
+    with pytest.raises(MOQTError, match="does not support datagrams"):
+        await ops.send_datagram(b"datagram")
