@@ -48,3 +48,11 @@ HTTP/2 と HTTP/3 の両方に対応しており、非対称が残っている�
 側でも未起票・未実装である。moqt-py から回避する方法は無く (現在のハンドル経由が回避策で
 ある)、webtransport-py が統一 `Client` へ配線した版をリリースした時点で reopened にして
 対応する。
+
+## reopened にした理由
+
+webtransport-py 2026.1.0.dev30 で 0288 がリリースされ、統一 `Client` に
+`on_stop_sending(callback(stream_id, error_code: int | None))` と
+`stop_sending(stream_id, error_code=0)` が追加された。`_impl()` が選択した HTTP/2 と
+HTTP/3 の実装へ委譲するため、どちらの接続方式でも使える。pending にした理由が解消したため
+reopened にする。
