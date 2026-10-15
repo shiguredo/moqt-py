@@ -470,17 +470,9 @@ class Client:
             self._transport.on_stream_reset(self._on_stream_reset)
             self._transport.on_session_closed(self._on_session_closed)
             self._transport.on_session_ready(self._on_session_ready)
-            # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Client は
-            # プロトコル固有のコールバックを持たないため、選んだプロトコルのハンドルから
-            # 登録する
-            if self._transport.http_version is HTTPVersion.HTTP2:
-                h2_client = self._transport.h2
-                if h2_client is not None:
-                    h2_client.on_stop_sending(self._on_stop_sending)
-            else:
-                h3_client = self._transport.h3
-                if h3_client is not None:
-                    h3_client.on_stop_sending(self._on_stop_sending)
+            # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API は HTTP/2 と
+            # HTTP/3 のどちらでも通知する
+            self._transport.on_stop_sending(self._on_stop_sending)
         # QMux はデータグラムを運べないため、送受信のコールバックを登録しない
         if not isinstance(self._transport, qmux.Client):
             self._transport.on_datagram(self._on_datagram)
@@ -965,32 +957,14 @@ class Client:
                 send_datagram=unsupported_datagram,
                 close=self._close_transport,
             )
-        if transport.http_version is HTTPVersion.HTTP2:
-            # WT-H2 は STOP_SENDING を送出できる。統一 API の Client は
-            # プロトコル固有の操作を持たないため、ハンドルから呼ぶ
-            h2_client = transport.h2
-            if h2_client is None:
-                raise RuntimeError("the WebTransport over HTTP/2 client is missing")
-            return TransportOps(
-                open_uni_stream=lambda: transport.open_stream(unidirectional=True),
-                open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
-                send_stream_data=transport.send_stream_data,
-                reset_stream=transport.reset_stream,
-                stop_sending=h2_client.stop_sending,
-                send_datagram=transport.send_datagram,
-                close=self._close_transport,
-            )
-        # WT-H3 も STOP_SENDING を送出できる。統一 API の Client は
-        # プロトコル固有の操作を持たないため、ハンドルから呼ぶ
-        h3_client = transport.h3
-        if h3_client is None:
-            raise RuntimeError("the WebTransport over HTTP/3 client is missing")
+        # WebTransport は HTTP/2 と HTTP/3 のどちらでも STOP_SENDING を送出できる。統一 API が
+        # 選択したプロトコルの実装へ委譲するため、接続方式で分ける必要はない
         return TransportOps(
             open_uni_stream=lambda: transport.open_stream(unidirectional=True),
             open_bidi_stream=lambda: transport.open_stream(unidirectional=False),
             send_stream_data=transport.send_stream_data,
             reset_stream=transport.reset_stream,
-            stop_sending=h3_client.stop_sending,
+            stop_sending=transport.stop_sending,
             send_datagram=transport.send_datagram,
             close=self._close_transport,
         )

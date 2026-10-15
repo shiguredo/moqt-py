@@ -20,8 +20,8 @@ classifiers = [
 dependencies = [
   # WebTransport (HTTP/3 / HTTP/2) と QUIC と QMux の asyncio I/O。
   # 統一 API (webtransport.Client / webtransport.Server + HTTPVersion) と、
-  # WT-H3 で受信した STOP_SENDING の通知が必要なため dev28 以上の最新へ追従する
-  "webtransport-py>=2026.1.0.dev29,<2026.2",
+  # 統一 Client の STOP_SENDING が必要なため dev30 以上の最新へ追従する
+  "webtransport-py>=2026.1.0.dev30,<2026.2",
 ]
 
 [project.optional-dependencies]

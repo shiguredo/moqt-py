@@ -57,27 +57,32 @@ def test_webtransport_over_http2_uses_the_https_uri() -> None:
     assert transport.url == "https://127.0.0.1:4433/webtransport"
 
 
-def test_webtransport_over_http3_sends_stop_sending_from_the_h3_handle() -> None:
+@pytest.mark.parametrize(
+    "transport_kind",
+    [Transport.WebTransportOverHTTP2, Transport.WebTransportOverHTTP3],
+    ids=["wt-h2", "wt-h3"],
+)
+def test_webtransport_sends_stop_sending_from_the_unified_client(
+    transport_kind: Transport,
+) -> None:
     """
-    WT-H3 の STOP_SENDING が h3 ハンドルの実装から送られることを確認する。
+    WebTransport の STOP_SENDING が統一 API から送られることを確認する。
 
     状態機械が cancel で要求するのは STOP_SENDING であり、RESET_STREAM は
     ストリームの破棄である
     (draft-ietf-moq-transport-22 §6.4.2.3 (Request Cancellation and Rejection) /
-    §12.2 (Session Termination Codes))。統一 API の Client はプロトコル固有の操作を
-    持たないため、h3 ハンドルから呼ぶ。
+    §12.2 (Session Termination Codes))。統一 API は選択した HTTP/2 / HTTP/3 の実装へ
+    委譲するため、moqt-py は接続方式で分けずに同じ経路を使う。
     """
-    client = Client(url="moqt://127.0.0.1:4433/webtransport")
-    transport = client._transport
-    assert isinstance(transport, WebTransportClient)
-    h3_client = transport.h3
-    assert h3_client is not None
+    client = Client(url="moqt://127.0.0.1:4433/webtransport", transport=transport_kind)
+    webtransport = client._transport
+    assert isinstance(webtransport, WebTransportClient)
 
-    # 状態機械の STOP_SENDING は h3 ハンドルの stop_sending へ繋がる
+    # 状態機械の STOP_SENDING は統一 API の stop_sending へ繋がる
     ops = client._transport_ops()
-    assert ops.stop_sending == h3_client.stop_sending
+    assert ops.stop_sending == webtransport.stop_sending
     # reset による代替ではない
-    assert ops.stop_sending != transport.reset_stream
+    assert ops.stop_sending != webtransport.reset_stream
 
 
 def test_webtransport_over_http2_rejects_ca_file() -> None:
