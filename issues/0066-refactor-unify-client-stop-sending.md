@@ -1,7 +1,7 @@
 # クライアントの STOP_SENDING を統一 API に寄せる
 
 - Created: 2026-10-15
-- Completed:
+- Completed: 2026-10-15
 - Branch: feature/refactor-unify-client-stop-sending
 - Polished:
 
@@ -56,3 +56,22 @@ webtransport-py 2026.1.0.dev30 で 0288 がリリースされ、統一 `Client` 
 `stop_sending(stream_id, error_code=0)` が追加された。`_impl()` が選択した HTTP/2 と
 HTTP/3 の実装へ委譲するため、どちらの接続方式でも使える。pending にした理由が解消したため
 reopened にする。
+
+## 解決方法
+
+`pyproject.toml` の webtransport-py の下限を 2026.1.0.dev30 へ上げ、`uv lock` と `uv sync`
+で追随した。
+
+`python/moqt/moq/client.py` の `Client.__init__` で、WT-H2 と WT-H3 で分けていた受信の登録を
+統一 API の `Client.on_stop_sending` 1 本にした。`Client._transport_ops()` も、WT-H2 と
+WT-H3 で分岐していた `TransportOps` を 1 本にし、`stop_sending` を統一 API の
+`Client.stop_sending` にした。`http_version` で分ける理由が無くなったため、分岐と
+ハンドルの取り出しを削除した。
+
+### 確認
+
+- `tests/test_client.py` の WT-H3 ハンドル前提のテストを、WT-H2 / WT-H3 の両方で統一 API に
+  繋がることを確認する `test_webtransport_sends_stop_sending_from_the_unified_client` に
+  置き換えた
+- `uv run pytest` は 641 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る

@@ -84,3 +84,26 @@ TLS 終了時の失敗を `QmuxConnectionError` として送出する (原因は
 失敗した場合に `close()` から `QmuxConnectionError` が漏れる状態が残るため、回避策を
 見直す必要がある。reopened にして、接続の終了に伴う失敗を QMux の例外も含めて扱う形に
 置き換える。
+
+## 解決方法
+
+`python/moqt/moq/client.py` の `Client.close()` で、受信ループの終了待ちに
+`QmuxConnectionError` も加えた (`except (OSError, QmuxConnectionError)`)。
+
+webtransport-py 2026.1.0.dev30 の 0289 により、QMux の `ConnectionDriver.run()` は
+`TRANSPORT_ERRORS` に含まれる `ssl.SSLError` を `QmuxConnectionError` に包んで送出する。
+`QmuxConnectionError` は `OSError` の派生ではないため、0067 で入れた `except OSError` では
+受けられない。回避策を撤去するだけでは `close()` から `QmuxConnectionError` が漏れる状態が
+残るため、接続の終了に伴う失敗として同じ扱いにした。
+
+peer の終了理由を運ぶ例外 (`WebTransportSessionClosedError` / `QuicApplicationError` /
+`QmuxProtocolError`) は従来どおり送出する。`test_state_machine_session_close_reaches_the_peer`
+が前提にしている挙動である。
+
+### 確認
+
+- `uv run pytest` は 641 件すべて通る (relay が要る 7 件は skip)。`prek run --all-files`
+  (ruff-format / ruff-check / ty / tombi / cargo fmt / cargo clippy / cargo test) も通る
+- 接続の終了時に peer が書き込み続ける状況と、peer を先に止めてから `close()` を呼ぶ状況を
+  実測したが、macOS では `close()` から例外は出なかった。競合はタイミング依存であるため、
+  最終確認は CI の再実行で行う
