@@ -72,3 +72,15 @@ CI (ubuntu-26.04) で QMux のテストが `ssl.SSLError: [SSL: APPLICATION_DATA
 - QMux の e2e テストを 30 回連続で実行して失敗しないことを確認した
 - CI (ubuntu-26.04) での再現はタイミング依存であり macOS では再現しないため、修正の確認は
   同じテストを含む CI の再実行で行う
+
+## reopened にした理由
+
+webtransport-py 2026.1.0.dev30 で 0289 がリリースされ、`TRANSPORT_ERRORS` に
+`ssl.SSLError` が含まれるようになった。これにより QMux の `ConnectionDriver.run()` は
+TLS 終了時の失敗を `QmuxConnectionError` として送出する (原因は `__cause__` に入る)。
+
+`QmuxConnectionError` は `OSError` の派生ではないため、本 issue で入れた
+`Client.close()` の `except OSError` では受けられない。QMux の接続断で受信ループが
+失敗した場合に `close()` から `QmuxConnectionError` が漏れる状態が残るため、回避策を
+見直す必要がある。reopened にして、接続の終了に伴う失敗を QMux の例外も含めて扱う形に
+置き換える。
