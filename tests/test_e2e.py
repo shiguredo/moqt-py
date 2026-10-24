@@ -255,8 +255,9 @@ async def test_subscribe_carries_all_authorization_token_kinds(
     AUTHORIZATION_TOKEN の 4 種が購読パラメータとして往復することを確認する。
 
     種別は draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression) の
-    DELETE / REGISTER / USE_ALIAS / USE_VALUE である。REGISTER で登録した alias を
-    同じメッセージの USE_ALIAS が参照できるよう、登録を先に並べる。既存の
+    DELETE / REGISTER / USE_ALIAS / USE_VALUE である。同じメッセージ内の Token は
+    alias 解決後の (Token Type, Token Value) が一意でなければならないため、
+    USE_ALIAS は直前のメッセージで REGISTER した alias を参照する。既存の
     `(token_type, token_value)` タプルも USE_VALUE として受け付け続ける。
     """
     certfile, keyfile = moq_certificates
@@ -288,26 +289,38 @@ async def test_subscribe_carries_all_authorization_token_kinds(
         )
         await client.connect()
 
+        # 同一メッセージ内の AUTHORIZATION_TOKEN は、alias 解決後の (Token Type,
+        # Token Value) が一意でなければならない
+        # (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+        # 同じメッセージで REGISTER した alias を USE_ALIAS で参照すると解決後の値が
+        # 重複するため、USE_ALIAS は次のメッセージで送る。
         tokens: list[dict[str, object]] = [
             {"kind": "delete", "alias": 9},
             {"kind": "register", "alias": 3, "token_type": 1, "token_value": b"registered"},
-            {"kind": "use_alias", "alias": 3},
             {"kind": "use_value", "token_type": 2, "token_value": b"value"},
         ]
         await client.subscribe(NAMESPACE, TRACK_NAME, {moqt.PARAM_AUTHORIZATION_TOKEN: tokens})
         await wait_until(lambda: bool(requests))
 
-        # 受信側でも 4 種すべてが alias / token_type / token_value まで復元される
+        # 受信側でも alias / token_type / token_value まで復元される
         received = moqt.MessageParameters(requests[0].parameters).authorization_tokens()
         assert received == tokens
+
+        # 前のメッセージで REGISTER した alias を USE_ALIAS で参照できる
+        use_alias: list[dict[str, object]] = [{"kind": "use_alias", "alias": 3}]
+        await client.subscribe(NAMESPACE, b"video", {moqt.PARAM_AUTHORIZATION_TOKEN: use_alias})
+        await wait_until(lambda: len(requests) == 2)
+
+        received = moqt.MessageParameters(requests[1].parameters).authorization_tokens()
+        assert received == use_alias
 
         # タプル表現は USE_VALUE として扱われる
         await client.subscribe(
             NAMESPACE, b"audio", {moqt.PARAM_AUTHORIZATION_TOKEN: (4, b"legacy")}
         )
-        await wait_until(lambda: len(requests) == 2)
+        await wait_until(lambda: len(requests) == 3)
 
-        assert moqt.MessageParameters(requests[1].parameters).authorization_tokens() == [
+        assert moqt.MessageParameters(requests[2].parameters).authorization_tokens() == [
             {"kind": "use_value", "token_type": 4, "token_value": b"legacy"}
         ]
     finally:

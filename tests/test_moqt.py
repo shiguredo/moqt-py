@@ -414,6 +414,26 @@ def test_quic_transport_accepts_authority_and_path_setup_options() -> None:
     assert Session.server("moqt-py", None, "quic").start()
 
 
+def test_qmux_transport_accepts_authority_and_path_setup_options() -> None:
+    """
+    QMux 接続では AUTHORITY と PATH を SETUP に載せられることを確認する。
+
+    QMux は WebTransport ではないため、AUTHORITY と PATH を禁じる §9.1.1 / §9.1.2 の
+    制限は適用されない。状態機械へ接続方式を WebTransport と誤って伝えると SETUP が
+    拒否されるため、I/O 層が選んだ方式をそのまま伝える
+    (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
+    """
+    options = {
+        moqt.SETUP_OPTION_AUTHORITY: b"127.0.0.1:14443",
+        moqt.SETUP_OPTION_PATH: b"/live",
+    }
+
+    # 自側の SETUP を組み立てられれば、接続方式が正しく伝わっている
+    assert Session.client("moqt-py", options, "qmux").start()
+    # server は AUTHORITY と PATH を送れない (§9.1.1 / §9.1.2) ため、載せずに組み立てる
+    assert Session.server("moqt-py", None, "qmux").start()
+
+
 def test_server_cannot_send_authority_or_path() -> None:
     """
     server role が AUTHORITY と PATH を送れないことを確認する。
@@ -1056,6 +1076,72 @@ def test_track_status_request_does_not_create_subscription_state() -> None:
     assert server.track_status_request(request_id) is not None
 
 
+def _unsupported_request(type_id: int, body: bytes) -> bytes:
+    """未対応 request の制御メッセージを組み立てる。
+
+    制御メッセージは Type (vi64) + Length (u16 big-endian) + Message Body の順に
+    直列化する (draft-ietf-moq-transport-22 §9 (Control Messages))。
+    """
+    return encode_varint(type_id) + len(body).to_bytes(2, "big") + body
+
+
+def _unsupported_request_body(
+    request_id: int,
+    namespace: tuple[bytes, ...],
+    parameters: bytes,
+) -> bytes:
+    """未対応 request の本体を組み立てる。
+
+    PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS は共通して
+    Request ID (vi64) + Track Namespace Prefix + Parameters を運ぶ
+    (draft-ietf-moq-transport-22 §9.14 (PUBLISH_NAMESPACE) / §9.15
+    (SUBSCRIBE_NAMESPACE) / §9.18 (SUBSCRIBE_TRACKS))。`parameters` は
+    Number of Parameters (vi64) を含むエンコード済みのブロックである。
+    """
+    body = encode_varint(request_id) + encode_varint(len(namespace))
+    for field in namespace:
+        body += encode_varint(len(field)) + field
+    return body + parameters
+
+
+def _parameter_block(*entries: bytes) -> bytes:
+    """Message Parameters のブロックを組み立てる。
+
+    Number of Parameters (vi64) + KVP の並びである
+    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
+    """
+    return encode_varint(len(entries)) + b"".join(entries)
+
+
+def _kvp(param_type: int, value: bytes, previous_type: int = 0) -> bytes:
+    """Message Parameter の KVP を 1 件組み立てる。
+
+    Type は直前の Type との差分 (delta) でエンコードする。`value` は型に応じた
+    ワイヤ表現を呼び出し側が渡す (draft-ietf-moq-transport-22 §8.3
+    (Key-Value-Pair Structure))。
+    """
+    return encode_varint(param_type - previous_type) + value
+
+
+def _authorization_token_use_value(token_type: int, token_value: bytes) -> bytes:
+    """USE_VALUE の AUTHORIZATION_TOKEN 構造を組み立てる。
+
+    Alias Type (vi64) 3 = USE_VALUE の後ろに Token Type (vi64) と Token Value が
+    続く (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+    """
+    return encode_varint(3) + encode_varint(token_type) + token_value
+
+
+def _authorization_token_register(alias: int, token_type: int, token_value: bytes) -> bytes:
+    """REGISTER の AUTHORIZATION_TOKEN 構造を組み立てる。
+
+    Alias Type (vi64) 1 = REGISTER の後ろに Alias (vi64) と Token Type (vi64) と
+    Token Value が続く
+    (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+    """
+    return encode_varint(1) + encode_varint(alias) + encode_varint(token_type) + token_value
+
+
 def test_defined_but_unimplemented_request_is_rejected_with_not_supported() -> None:
     """
     定義済みだが実装しない request を NOT_SUPPORTED で拒否することを確認する。
@@ -1063,16 +1149,17 @@ def test_defined_but_unimplemented_request_is_rejected_with_not_supported() -> N
     draft-ietf-moq-transport-22 §1.6 (Modularity): "Limited endpoints SHOULD respond to
     any unsupported messages with the appropriate NOT_SUPPORTED error code, rather than
     ignoring them." §9 Table 5 の PUBLISH_NAMESPACE (0x06) は relay 専用の namespace
-    発見・告知機構であり、moqt-rs は実装しない。受信したセッションは閉じない。
+    発見・告知機構であり、moqt-rs は実装しない。本体は Request ID + Track Namespace
+    Prefix + Parameters として解析されるため、完全な本体を送る。受信したセッションは
+    閉じない。
     """
     _client, server = _setup()
-    # Type (vi64) 0x06 + Length (u16 big-endian) 1 + Message Body (Request ID 0)
-    data = b"\x06\x00\x01\x00"
+    body = _unsupported_request_body(0, (b"ns",), _parameter_block())
 
-    events = server.receive_request_stream(4, data, "peer")
+    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
 
     assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
-    assert events[0].message == {"type_id": 0x06, "request_id": 0, "body": b"\x00"}
+    assert events[0].message == {"type_id": 0x06, "request_id": 0, "body": body}
     rejection = events[1].message
     assert rejection is not None
     # REQUEST_ERROR は request の拒否であり、送信後に FIN で stream を閉じる
@@ -1096,7 +1183,7 @@ def test_defined_but_unimplemented_response_message_closes_the_session() -> None
     # Type (vi64) 0x08 + Length (u16 big-endian) 1 + Message Body
     data = b"\x08\x00\x01\x00"
 
-    with pytest.raises(RuntimeError, match="response-only control message"):
+    with pytest.raises(RuntimeError, match="control message type cannot start a request stream"):
         server.receive_request_stream(4, data, "peer")
 
     # 終端通知の処理でセッションの終了が観測できる
@@ -1105,6 +1192,211 @@ def test_defined_but_unimplemented_response_message_closes_the_session() -> None
         ("close", moqt.SESSION_PROTOCOL_VIOLATION)
     ]
     assert server.established is False
+
+
+def test_truncated_unsupported_request_closes_the_session() -> None:
+    """
+    本体が途中で切れた未対応 request は PROTOCOL_VIOLATION で閉じることを確認する。
+
+    状態機械は未対応 request の本体 (Request ID + Track Namespace Prefix +
+    Parameters) を解析する
+    (draft-ietf-moq-transport-22 §9.14 (PUBLISH_NAMESPACE) / §8.7 (Track Namespace
+    Structure))。Request ID の後で切れた本体はフレーミング違反であり、セッションを
+    閉じる。
+    """
+    _client, server = _setup()
+    # Request ID 0 だけで、Track Namespace Prefix 以降が無い
+    data = _unsupported_request(0x06, encode_varint(0))
+
+    with pytest.raises(RuntimeError, match="unsupported request body decode error"):
+        server.receive_request_stream(4, data, "peer")
+
+    # 終端通知の処理でセッションの終了が観測できる
+    events = server.receive_request_stream_closed(4, False, None)
+    assert [(event.kind, event.code) for event in events] == [
+        ("close", moqt.SESSION_PROTOCOL_VIOLATION)
+    ]
+    assert server.established is False
+
+
+def test_unsupported_request_with_disallowed_parameter_closes_the_session() -> None:
+    """
+    未対応 request に許可されないパラメータを入れるとセッションを閉じることを確認する。
+
+    draft-ietf-moq-transport-22 §9.20.1 (Parameter Scope): メッセージ型ごとに許可される
+    パラメータ以外の受信は PROTOCOL_VIOLATION で閉じる (MUST)。PUBLISH_NAMESPACE が
+    許可するのは AUTHORIZATION_TOKEN だけである (§9.14 (PUBLISH_NAMESPACE))。
+    """
+    _client, server = _setup()
+    # FORWARD (0x10) は uint8 のパラメータであり、PUBLISH_NAMESPACE では許可されない
+    parameters = _parameter_block(_kvp(moqt.PARAM_FORWARD, b"\x01"))
+    body = _unsupported_request_body(0, (b"ns",), parameters)
+
+    with pytest.raises(RuntimeError, match="parameter is not allowed in the unsupported request"):
+        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+    events = server.receive_request_stream_closed(4, False, None)
+    assert [(event.kind, event.code) for event in events] == [
+        ("close", moqt.SESSION_PROTOCOL_VIOLATION)
+    ]
+    assert server.established is False
+
+
+def test_unsupported_request_with_broken_parameter_value_closes_the_session() -> None:
+    """
+    パラメータの値の直列化が壊れていると KEY_VALUE_FORMATTING_ERROR で閉じることを確認する。
+
+    draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure): 長さ付きの値で宣言長が
+    残りバイトを超える場合は KEY_VALUE_FORMATTING_ERROR である。
+    """
+    _client, server = _setup()
+    # AUTHORIZATION_TOKEN の値長を 5 と宣言しているが、実体は 1 バイトしか無い
+    parameters = _parameter_block(_kvp(moqt.PARAM_AUTHORIZATION_TOKEN, b"\x05\x00"))
+    body = _unsupported_request_body(0, (b"ns",), parameters)
+
+    with pytest.raises(RuntimeError, match="value length exceeds remaining buffer"):
+        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+    events = server.receive_request_stream_closed(4, False, None)
+    assert [(event.kind, event.code) for event in events] == [
+        ("close", moqt.SESSION_KEY_VALUE_FORMATTING_ERROR)
+    ]
+    assert server.established is False
+
+
+def test_unsupported_request_with_duplicate_authorization_token_is_rejected() -> None:
+    """
+    内容が重複する AUTHORIZATION_TOKEN をメッセージ単位で拒否することを確認する。
+
+    draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression): alias 解決後の
+    (Token Type, Token Value) が重複するメッセージは MALFORMED_AUTH_TOKEN で拒否する
+    (MUST)。request 単位の拒否であり、セッションは維持する。REGISTER を含めると
+    token cache への適用が先に走るため、重複は USE_VALUE で作る。
+    """
+    _client, server = _setup()
+    token = _authorization_token_use_value(1, b"x")
+    value = encode_varint(len(token)) + token
+    # 同じ USE_VALUE を 2 件並べる。2 件目の Type は差分 0 でエンコードする
+    parameters = _parameter_block(
+        _kvp(moqt.PARAM_AUTHORIZATION_TOKEN, value),
+        _kvp(
+            moqt.PARAM_AUTHORIZATION_TOKEN,
+            value,
+            previous_type=moqt.PARAM_AUTHORIZATION_TOKEN,
+        ),
+    )
+    body = _unsupported_request_body(0, (b"ns",), parameters)
+
+    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    rejection = events[1].message
+    assert rejection is not None
+    assert rejection["error_code"] == moqt.REQUEST_MALFORMED_AUTH_TOKEN
+    # REQUEST_ERROR は request の拒否であり、送信後に FIN で stream を閉じる
+    assert events[1].fin is True
+    # セッションは閉じない
+    assert server.established is True
+
+
+def test_unsupported_request_registering_an_overflowing_token_closes_the_session() -> None:
+    """
+    MAX_AUTH_TOKEN_CACHE_SIZE を超える REGISTER はセッションを閉じることを確認する。
+
+    draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE): 1 件あたり 16 バイト +
+    Token Value のバイト数で数える。自側が MAX_AUTH_TOKEN_CACHE_SIZE を宣言していない
+    場合の上限は 0 であるため、REGISTER 1 件でも超過する
+    (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+    """
+    _client, server = _setup()
+    token = _authorization_token_register(0, 1, b"x")
+    value = encode_varint(len(token)) + token
+    parameters = _parameter_block(_kvp(moqt.PARAM_AUTHORIZATION_TOKEN, value))
+    body = _unsupported_request_body(0, (b"ns",), parameters)
+
+    with pytest.raises(RuntimeError, match="REGISTER exceeds cache size"):
+        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+    events = server.receive_request_stream_closed(4, False, None)
+    assert [(event.kind, event.code) for event in events] == [
+        ("close", moqt.SESSION_AUTH_TOKEN_CACHE_OVERFLOW)
+    ]
+    assert server.established is False
+
+
+def test_unsupported_request_is_rejected_with_going_away_after_goaway() -> None:
+    """
+    control GOAWAY 送信後は NOT_SUPPORTED より GOING_AWAY を優先することを確認する。
+
+    draft-ietf-moq-transport-22 §9.2 (GOAWAY): "a publisher MAY reject new requests
+    after sending a GOAWAY" の拒否コードは GOING_AWAY である。
+    """
+    _client, server = _setup()
+    server.send_goaway(b"", 5000)
+    body = _unsupported_request_body(0, (b"ns",), _parameter_block())
+
+    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    rejection = events[1].message
+    assert rejection is not None
+    assert rejection["error_code"] == moqt.REQUEST_GOING_AWAY
+    assert events[1].fin is True
+    # 拒否は request 単位であり、セッションは維持する
+    assert server.established is True
+
+
+def test_unsupported_request_for_reserved_namespace_is_rejected_with_does_not_exist() -> None:
+    """
+    予約名前空間への未対応 request を DOES_NOT_EXIST で拒否することを確認する。
+
+    draft-ietf-moq-transport-22 §2.4.3 (Reserved Namespaces): `.` 単独の Track Namespace
+    への request は DOES_NOT_EXIST で拒否する (MUST)。§6.5 (Session-Level Tracks and
+    Namespaces): 未認識のセッション名前空間 `.session` への request も同じコードで
+    拒否する (MUST)。どちらも request 単位の拒否であり、セッションは維持する。
+    """
+    for namespace in ((b".",), (b".session",)):
+        # Request ID はセッションごとに重複できないため、名前空間ごとにセッションを作る
+        _client, server = _setup()
+        body = _unsupported_request_body(0, namespace, _parameter_block())
+
+        events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+
+        assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+        rejection = events[1].message
+        assert rejection is not None
+        assert rejection["error_code"] == moqt.REQUEST_DOES_NOT_EXIST
+        assert events[1].fin is True
+        assert server.established is True
+
+
+def test_unsupported_request_with_invalid_range_filter_is_rejected() -> None:
+    """
+    MAX_FILTER_RANGES を超える Range Filter を持つ未対応 request を INVALID_FILTER で拒否する。
+
+    draft-ietf-moq-transport-22 §3.3.2 (Range Filters): MAX_FILTER_RANGES を宣言して
+    いない場合、Range を 1 つ以上持つ Range Filter は INVALID_FILTER で拒否する (MUST)。
+    SUBSCRIBE_TRACKS (0x51) は Range Filter を載せられる
+    (§9.18 (SUBSCRIBE_TRACKS))。
+    """
+    _client, server = _setup()
+    # SetID=0 で Object ID 0..=1 を指定する OBJECTID_FILTER (Range 1 個)
+    # (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。値は長さプレフィックスを
+    # 含むエンコード済みの形である (§8.3 (Key-Value-Pair Structure))
+    filter_body = bytes([0]) + encode_varint(0) + encode_varint(1)
+    filter_value = encode_varint(len(filter_body)) + filter_body
+    parameters = _parameter_block(_kvp(moqt.PARAM_OBJECTID_FILTER, filter_value))
+    body = _unsupported_request_body(0, (b"ns",), parameters)
+
+    events = server.receive_request_stream(4, _unsupported_request(0x51, body), "peer")
+
+    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    rejection = events[1].message
+    assert rejection is not None
+    assert rejection["error_code"] == moqt.REQUEST_INVALID_FILTER
+    assert events[1].fin is True
+    # セッションは閉じない
+    assert server.established is True
 
 
 def test_request_error_redirect_round_trips() -> None:
@@ -2963,6 +3255,23 @@ def test_goaway_drain_accessors_report_blocking_requests() -> None:
         "blocking_fetch_request_ids": [],
         "blocking_track_status_request_ids": [],
     }
+
+
+def test_goaway_drain_ready_event_is_emitted_once() -> None:
+    """自側 GOAWAY の drain 完了が 1 回だけイベントで通知されることを確認する。
+
+    draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration): GOAWAY を送った側は
+    open request が無くなった時点で NO_ERROR でセッションを閉じるのが RECOMMENDED である。
+    状態機械は `goaway_drain_ready` を毎 tick ポーリングしなくて済むよう、drain 完了を
+    1 回だけイベントで通知する。
+    """
+    client, _server = _setup()
+    # 開いている request が無いため、GOAWAY の送信直後から drain は完了している
+    client.send_goaway(b"", 5000)
+
+    assert [event.kind for event in client.tick(1000)] == ["goaway_drain_ready"]
+    # 同じセッションでは 2 回目以降の tick で発行しない
+    assert client.tick(1100) == []
 
 
 def test_open_outgoing_fill_stream_count_reports_open_streams() -> None:

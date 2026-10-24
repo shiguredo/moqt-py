@@ -1791,6 +1791,12 @@ class Runtime:
             await self._notify(self._events.on_fill_fetch_stream, event.request_id or 0)
         elif kind == "goaway":
             await self._notify(self._events.on_goaway, event)
+        elif kind == "goaway_drain_ready":
+            # 自側が送った GOAWAY の drain が完了した。セッションを早期に閉じるかは
+            # アプリの判断であるため、ここでは何もしない。アプリは on_event か
+            # `goaway_drain_ready()` のポーリングで観測できる
+            # (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
+            pass
         elif kind == "unsupported":
             # 定義済みだが実装しない request は状態機械が REQUEST_ERROR
             # (NOT_SUPPORTED) + FIN で拒否する (draft-ietf-moq-transport-22

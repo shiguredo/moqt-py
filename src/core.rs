@@ -1640,14 +1640,16 @@ pub(crate) struct CoreSession {
 ///
 /// `moqt.moq.Transport` の値を受け取る。WebTransport over HTTP/2 と HTTP/3 は、状態機械
 /// から見れば同じ WebTransport である (違いは I/O 層の ALPN とフレーミングだけである)。
-/// QMux は WebTransport ではないため、HTTP 層が URI を運ばない点で QUIC と同じ扱いにする
-/// (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。接続方式によって SETUP に
-/// 載せられる Setup Option が変わるため、状態機械へ正しく伝えないと AUTHORITY と PATH が
-/// 違反として拒否される
+/// QMux は WebTransport ではないため、HTTP 層が URI を運ばない点で QUIC と同じ扱いになる
+/// (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。ただし状態機械は transport を
+/// 区別して保持するため、QUIC へ丸めず QMux として伝える。状態機械は AUTHORITY と PATH を
+/// WebTransport に限って拒否するので、QMux を WebTransport に写すと SETUP が
+/// INVALID_AUTHORITY / INVALID_PATH で閉じられる
 /// (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
 fn transport_from_python(transport: &str) -> PyResult<Transport> {
     match transport {
-        "quic" | "qmux" => Ok(Transport::Quic),
+        "quic" => Ok(Transport::Quic),
+        "qmux" => Ok(Transport::Qmux),
         "wt-h2" | "wt-h3" => Ok(Transport::WebTransport),
         other => Err(PyValueError::new_err(format!(
             "transport must be \"quic\", \"qmux\", \"wt-h2\" or \"wt-h3\", got {other:?}"
@@ -2424,6 +2426,10 @@ impl CoreSession {
                 Some(request_id),
                 None,
             )),
+            // 自側が送った GOAWAY の drain が完了したことを通知する。セッションを閉じるかは
+            // アプリの判断であるため、I/O 層の処理は持たない
+            // (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
+            SessionEvent::GoawayDrainReady => Ok(CoreEvent::simple("goaway_drain_ready")),
         }
     }
 }
@@ -2472,9 +2478,11 @@ impl CoreSession {
     /// MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
     /// (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
     ///
-    /// `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続では AUTHORITY と
-    /// PATH を SETUP に載せ、WebTransport では載せてはならない
+    /// `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続と QMux では
+    /// AUTHORITY と PATH を SETUP に載せ、WebTransport では載せてはならない
     /// (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    /// QMux 上の MOQT は individual draft で扱われる
+    /// (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
     #[staticmethod]
     #[pyo3(signature = (implementation="moqt-py", setup_options=None, transport="wt-h3"))]
     fn client(

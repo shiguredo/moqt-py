@@ -3556,9 +3556,11 @@ class Session:
         MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
         (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
         
-        `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続では AUTHORITY と
-        PATH を SETUP に載せ、WebTransport では載せてはならない
+        `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続と QMux では
+        AUTHORITY と PATH を SETUP に載せ、WebTransport では載せてはならない
         (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+        QMux 上の MOQT は individual draft で扱われる
+        (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
         """
     def close(self, /, code: int, reason: str = "internal error") -> list[Event]:
         """
