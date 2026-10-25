@@ -2030,6 +2030,46 @@ async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: MOQ
     assert moq_pair.client.established is True
 
 
+async def test_datagram_priority_mismatch_cancels_all_subscriptions_for_the_track(
+    moq_pair: MOQTPair,
+) -> None:
+    """
+    同じ Track の他の購読も Malformed Track で取り消されることを確認する。
+
+    draft-ietf-moq-transport-22 §12.1 (Malformed Tracks): "When a subscriber detects a
+    Malformed Track, it MUST cancel any corresponding subscription or fetches for that
+    Track from that publisher." 取り消す対象は malformed を検出した購読だけでなく、
+    同じ Track の全購読である。セッションは閉じない。
+    """
+    published: list[Publication] = []
+
+    async def on_subscribe(request: SubscriptionRequest) -> None:
+        # 同じ Track への購読でも Track Alias は購読ごとに変える
+        published.append(await request.subscribe_ok(len(published) + 1))
+
+    moq_pair.server.on_subscribe(on_subscribe)
+
+    first = await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
+    second = await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
+    await wait_until(lambda: len(published) == 2)
+
+    # 1 つ目の購読へ、同じ Location の Priority が食い違う Object を 2 回送る
+    await published[0].send_datagram(1, 0, b"first", publisher_priority=10)
+    received = await _take_objects(first, 1)
+    assert received[0].payload == b"first"
+
+    await published[0].send_datagram(1, 0, b"second", publisher_priority=20)
+
+    # malformed を検出した購読だけでなく、同じ Track の 2 つ目の購読も取り消される
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(first.objects()), timeout=OBJECT_TIMEOUT)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(second.objects()), timeout=OBJECT_TIMEOUT)
+
+    # §12.1 が求めるのは購読の取り消しであり、セッションの終了ではない
+    assert moq_pair.client.established is True
+
+
 async def test_datagram_end_of_group_ends_the_group(moq_pair: MOQTPair) -> None:
     """
     END_OF_GROUP を宣言したデータグラムで Group の終端が伝わることを確認する。

@@ -1754,11 +1754,17 @@ def test_track_properties_rejects_a_nested_immutable_properties() -> None:
 
 
 def test_track_properties_rejects_a_truncated_value() -> None:
-    """途中で切れた Track Properties を decode が拒否することを確認する。"""
+    """宣言長が残りバイトを超える Track Properties を decode が拒否することを確認する。
+
+    draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure): 受信側が Type を
+    理解する場合、Length/Value が直列化と一致しなければ KEY_VALUE_FORMATTING_ERROR
+    (0x6) でセッションを閉じる MUST。§16.8 (Properties) は未知 Type でも Length による
+    skip が成立しないため、同じ分類になる。
+    """
     properties = TrackProperties()
     properties.add(0x0D, b"\x01\x02\x03")
 
-    with pytest.raises(ValueError, match="unexpected end of buffer"):
+    with pytest.raises(ValueError, match="track property value length exceeds remaining buffer"):
         TrackProperties.decode(properties.encode()[:-1])
 
 
