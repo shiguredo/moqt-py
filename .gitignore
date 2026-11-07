@@ -1,5 +1,7 @@
 .venv/
 .venv-*/
+# ローカルの環境変数 (秘密情報を含みうる)
+.env
 __pycache__/
 *.pyc
 *.so
