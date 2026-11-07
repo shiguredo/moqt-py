@@ -13,7 +13,7 @@ delta 更新の適用を担う。
 違反する場合は encode 時に ``ValueError`` になる。
 
 Track 識別子 (``namespace--track``) と、その構成要素である namespace と Track 名の
-正規表現 (draft-ietf-moq-transport-22 §8.8) の相互変換も扱う。``parse_name`` /
+正規表現 (draft-ietf-moq-transport-23 §8.8) の相互変換も扱う。``parse_name`` /
 ``serialize_name`` が識別子全体、``parse_namespace`` / ``serialize_namespace`` と
 ``parse_track_name`` / ``serialize_track_name`` が構成要素である。``moqt.c4m`` の
 ``AuthorizationContext`` が要求する ``tns`` / ``tn`` は後者の表現である。

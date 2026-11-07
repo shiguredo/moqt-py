@@ -5,7 +5,7 @@ description: Python の MOQT ライブラリ moqt-py (import 名 moqt) の利用
 
 # moqt-py
 
-MOQT (Media over QUIC Transport) の codec と sans I/O セッション状態機械を提供する Python ライブラリ。本体は I/O を持たない低レベル API で、WebTransport / QUIC の I/O は `moqt.moq` が [webtransport-py](https://pypi.org/project/webtransport-py/) に委ねる。
+MOQT (Media over QUIC Transport) の codec と sans I/O セッション状態機械を提供する Python ライブラリ。本体は I/O を持たない低レベル API で、WebTransport over HTTP/3 / HTTP/2、QUIC 直接接続、QMux の I/O は `moqt.moq` が Rust 側 (tobi-quic / http2-rs / http3-rs / qmux-rs) に委ねる。
 
 人間向けの使い方は `docs/USAGE.md` にある。このファイルは API の一覧と注意点をまとめたリファレンスである。
 
@@ -16,8 +16,8 @@ uv add moqt-py
 ```
 
 - 配布名は `moqt-py`、import 名は `moqt`
-- Python 3.14 / 3.14t (Free-Threading)
-- wheel は配布しておらず、Rust 1.93 以降の toolchain でソースからビルドする
+- Python 3.14 / 3.14t / 3.15 / 3.15t (Free-Threading)
+- wheel は配布しておらず、Rust 1.95 以降の toolchain でソースからビルドする
 - 対応プラットフォームは macOS 26 arm64、Ubuntu 26.04 / 24.04 の x86_64 と arm64
 - `moqt.moq.testing` を使う場合は `uv add "moqt-py[testing]"` (`pytest` / `pytest-asyncio` / `cryptography` が入る)
 
@@ -264,14 +264,14 @@ asyncio.run(main())
 |---|---|
 | `Transport.WebTransportOverHTTP3` | WT-H3 (省略時) |
 | `Transport.WebTransportOverHTTP2` | WT-H2 |
-| `Transport.Quic` | QUIC 直接接続。ALPN に `moqt.moq.transport.MOQT_PROTOCOL` (`moqt-22`) を提示する |
+| `Transport.Quic` | QUIC 直接接続。ALPN に `moqt.moq.transport.MOQT_PROTOCOL` (`moqt-23`) を提示する |
 | `Transport.Qmux` | QMux 接続 (TCP/TLS)。TLS では ALPN に `MOQT_PROTOCOL` を提示する |
 
 ### 購読・配信・取得
 
 - `Subscription`: `request_id` / `track_alias` / `namespace` / `track_name` / `parameters` / `track_properties` と、`objects()` (非同期イテレータ) / `close()` / `request_update()`
 - `Publication`: `send_object()` (subgroup ストリーム) / `send_datagram()` / `send_publish_state_notify()` / `close()` / `reset_subgroup()` / `reset_subgroup_at()`
-- `Fetch`: `objects()` / `ranges()` / `cancel()` と `end_of_track` / `end_location`
+- `Fetch`: `objects()` / `ranges()` / `cancel()` と `end_of_track` / `end_location` / `expires_ms`。`end_of_track` は fetch stream の End of Track マーカーで `True` になる
 - `MOQTObject`: `stream_id` (データグラムは `None`) / `group_id` / `object_id` / `payload` / `status` / `properties` / `publisher_priority` / `subgroup_id`
 - `PeerGoaway`: 受信した GOAWAY の `new_session_uri` と `timeout`
 
@@ -440,17 +440,17 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` と `Transport.Qmux` では ALPN に `MOQT_PROTOCOL` を提示し、`allowed_origins` を指定すると `ValueError` になる
+- `Server(host, port, *, certfile, keyfile, transport=Transport.WebTransportOverHTTP3, allowed_origins=None, implementation="moqt-py", control_message_timeout=None, data_stream_timeout=None, setup_options=None)`。`Transport.Quic` と `Transport.Qmux` では ALPN に `MOQT_PROTOCOL` を提示する。`allowed_origins` は WT-H2 でのみ使え、QUIC / QMux / WT-H3 で指定すると `ValueError` になる
 - コールバックは `on_session_established` / `on_subscribe` / `on_fetch` / `on_publish` / `on_request_update` / `on_goaway` / `on_event` / `on_fill_fetch_stream`
-- `ServerSession` は `goaway()` と状態照会、`SubscriptionRequest` は `subscribe_ok()` / `reject()`、`FetchRequest` は `respond()` / `reject()`、`PublisherRequest` は `accept()` / `reject()` を持つ
+- `ServerSession` は `goaway()` と状態照会、`SubscriptionRequest` は `subscribe_ok()` / `reject()`、`FetchRequest` は `respond(parameters=..., track_properties=...)` / `reject()`、`PublisherRequest` は `accept()` / `reject()` を持つ。open-ended な FETCH では `respond(parameters={PARAM_LARGEST_OBJECT: (group, object)})` のように LARGEST_OBJECT を渡す
 - 補助 API: `generate_certificates()` / `wait_until()` / `collect_objects()`
 
 ## 仕様参照
 
-- MOQT: draft-ietf-moq-transport-22
+- MOQT: draft-ietf-moq-transport-23
 - LOC: draft-ietf-moq-loc-04
 - MSF: draft-ietf-moq-msf-01
-- C4M: draft-ietf-moq-c4m-01
+- C4M: draft-ietf-moq-c4m-02
 - CBOR / COSE / CWT: RFC 8949 / RFC 9052 / RFC 8392
 - DPoP: draft-nandakumar-moq-generic-dpop-proof-00
 

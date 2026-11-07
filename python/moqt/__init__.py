@@ -1,11 +1,11 @@
 """MOQT (Media over QUIC Transport) の codec と状態機械を扱う Python ライブラリ。
 
-`moqt-rs` が MOQT (draft-ietf-moq-transport-22) の codec と sans I/O セッション
+`moqt-rs` が MOQT (draft-ietf-moq-transport-23) の codec と sans I/O セッション
 状態機械を、LOC (draft-ietf-moq-loc-04) / MSF (draft-ietf-moq-msf-01) /
-C4M (draft-ietf-moq-c4m-01) の codec を PyO3 経由で提供し、このパッケージが
+C4M (draft-ietf-moq-c4m-02) の codec を PyO3 経由で提供し、このパッケージが
 それらを公開する。
 
-`webtransport-py` と接続する高レベル API は `moqt.moq` が提供する。relay は
+Rust の I/O 層と接続する高レベル API は `moqt.moq` が提供する。relay は
 どちらの層にも含まない。
 
 公開 API:

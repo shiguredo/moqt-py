@@ -7,11 +7,9 @@
 #   (PyO3 拡張のビルド、QUIC の実通信テスト) を検出する
 #   - ubuntu-slim は Rust が入っておらず、moqt-py は PyO3 拡張のビルドに cargo を
 #     要するため使わない
-#   - ubuntu-24.04 系を残すのは、webtransport-py の Linux wheel が manylinux_2_39
-#     (glibc 2.39) であり、対応する最古の LTS が 24.04 であるため
-#   - macos-15 は入れない。webtransport-py の macOS wheel は macosx_26_0_arm64 だけで
-#     sdist も無く、macOS 15 では互換 wheel が見つからず uv sync が失敗する。
-#     webtransport-py が macOS 15 向けの wheel か sdist を用意したら追加する
+#   - ubuntu-24.04 系を残すのは、古い glibc でも PyO3 拡張のビルドとテストが通ることを
+#     確認するため
+#   - macOS は macos-26 のみ。macOS 15 を追加する場合は別途検証する
 # - Rust ツールチェーン: rust-toolchain.toml が channel と components
 #   (rustfmt / clippy) を宣言しているため、rustup がツールチェーンごと自動で導入する。
 #   CI 側で `rustup component add` を実行する必要はない
@@ -56,3 +54,28 @@ jobs:
         uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
         with:
           extra-args: "--all-files --stage pre-push"
+
+  # Python 3.15 / 3.15t の PyO3 拡張ビルドとテストを確認する。
+  # .python-version は 3.14 のままにし、3.14 系と 3.15 系の両方を CI で通す
+  python-315:
+    strategy:
+      # 1 つの Python の失敗で残りの Python を打ち切らない
+      fail-fast: false
+      matrix:
+        python:
+          - "3.15"
+          - "3.15t"
+    runs-on: ubuntu-26.04
+    # Python 3.15 のダウンロード、PyO3 拡張のビルド、テストを見込んで余裕を持たせる
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # uv で Python 3.15 を取得し、Rust 拡張をビルドする
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      # Python ごとに独立した venv を作り、同じテストを実行する
+      - name: Python ${{ matrix.python }} でテストを実行する
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv-${{ matrix.python }}
+        run: |
+          uv sync --python "${{ matrix.python }}"
+          uv run --python "${{ matrix.python }}" pytest

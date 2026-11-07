@@ -1,6 +1,6 @@
 """`moqt.c4m` の C4M (CAT) codec のテスト。
 
-draft-ietf-moq-c4m-01 付録 A のテストベクタ、CBOR / COSE / JWK / JWT / DPoP の
+draft-ietf-moq-c4m-02 付録 A のテストベクタ、CBOR / COSE / JWK / JWT / DPoP の
 境界値、および発行と検証の往復を検証する。署名と検証には aws-lc-rs を使う。
 """
 
@@ -163,25 +163,26 @@ TOKEN_DPOP_ES256 = (
 
 # 付録 A.5 の認可テストのベクタ
 SCOPE_VECTOR_PUBLISHER_EXACT = (
-    "ogEjEGNDQVQ.owF4GGh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbQQaZVVCgBkBR4GDggIGgktleGFtcGxl"
-    "LmNvbUVhbGljZYIBRnZpZGVvLQ.oAPD24Wu_zHnDcuM6a-ePeGvRJjbCa6U7iswdsKzFDk"
+    "0YRIogEFEGNDQVSgWEqjAXgYaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tBBplVUKAOgABAAChAIGDggIG"
+    "gktleGFtcGxlLmNvbUVhbGljZYIBRnZpZGVvLVggRnxXrecta-Ypt0XvM9bijsOLocqL0_64UfODKvlP"
+    "5oY"
 )
 SCOPE_VECTOR_SUBSCRIBER_PREFIX = (
-    "ogEjEGNDQVQ.owF4GGh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbQQaZVVCgBkBR4GCgwMEB4GCAVJjb25m"
-    "ZXJlbmNlLmV4YW1wbGU.pfUPZultmyCm1GF2PvPXAYXzvK6d1D-OFNBLG1AwjDg"
+    "0YRIogEFEGNDQVSgWEWjAXgYaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tBBplVUKAOgABAAChAIGCgwME"
+    "B4GCAVJjb25mZXJlbmNlLmV4YW1wbGVYIOBQIgK4wB1athUIzRm33ZQ7KHvg8mw9N8EuWDyoepN7"
 )
 SCOPE_VECTOR_MULTI_SCOPE = (
-    "ogEjEGNDQVQ.pAF4GGh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbQQaZVVCgBkBR4KCggIGgkxsaXZlLmV4"
-    "YW1wbGVIc3R1ZGlvLWGCggQHgYIBTGxpdmUuZXhhbXBsZRkBSPlcsA.byEzQmxc28UXFyFekHtgOtaV"
-    "mWyIPl-63xNMOF0Q_IU"
+    "0YRIogEFEGNDQVSgWGGkAXgYaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tBBplVUKAOgABAAChAIKCggIG"
+    "gkxsaXZlLmV4YW1wbGVIc3R1ZGlvLWGCggQHgYIBTGxpdmUuZXhhbXBsZToAAQABGQEsWCDxCAr1mnGf"
+    "vLegNqpvlxT1KtpGe4wWd8h63g_PzKr1Dw"
 )
 SCOPE_VECTOR_ADMIN_WILDCARD = (
-    "ogEjEGNDQVQ.owF4GGh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbQQaZVVCgBkBR4GBiQABAgMEBQYHCA."
-    "XlNItz7OGqnNEbaqZ_bQh6TL-wV6SDr8hXyOLmtQkj4"
+    "0YRIogEFEGNDQVSgWDWjAXgYaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tBBplVUKAOgABAAChAIGBiQAB"
+    "AgMEBQYHCFggFy6-B_InpBwxloTvkW_b8ULTkfrGkC44vNz7OWa0alA"
 )
 SCOPE_VECTOR_SUFFIX_MATCH = (
-    "ogEjEGNDQVQ.owF4GGh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbQQaZVVCgBkBR4GDgQSBggJMLmV4YW1w"
-    "bGUuY29tggJGLWF1ZGlv.-eGYTPe_n1PeC0sgHdWCqgnKRHGYF-T89WTk269liBg"
+    "0YRIogEFEGNDQVSgWEajAXgYaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tBBplVUKAOgABAAChAIGDgQSB"
+    "ggJMLmV4YW1wbGUuY29tggJGLWF1ZGlvWCBgLBzrJylIWitesJJJ4lSkHUKr0LY7KEb9Z31_v1k5IA"
 )
 
 # (ベクタ, アクション, namespace, track, 期待値)
@@ -199,7 +200,9 @@ AUTHORIZATION_CASES: list[tuple[str, int, tuple[bytes, ...], bytes, bool]] = [
     (SCOPE_VECTOR_MULTI_SCOPE, 4, (b"live.example.studio-b",), b"cam1", True),
     (SCOPE_VECTOR_MULTI_SCOPE, 6, (b"live.example", b"studio-b"), b"cam1", False),
     (SCOPE_VECTOR_MULTI_SCOPE, 2, (b"other.example", b"studio-a"), b"", False),
-    (SCOPE_VECTOR_ADMIN_WILDCARD, 0, (b"any.namespace",), b"any-track", True),
+    # draft-02 の action 0 は Table 1 の既知アクションではないため認可されない
+    # (moqt-rs の `scope_admin_wildcard_action_zero_is_not_mapped` と同じ扱い)。
+    (SCOPE_VECTOR_ADMIN_WILDCARD, 0, (b"any.namespace",), b"any-track", False),
     (SCOPE_VECTOR_ADMIN_WILDCARD, 6, (b"any.namespace",), b"any-track", True),
     (SCOPE_VECTOR_ADMIN_WILDCARD, 8, (b"any.namespace",), b"status", True),
     (SCOPE_VECTOR_SUFFIX_MATCH, 4, (b"cdn.example.com",), b"stream1-audio", True),
@@ -378,7 +381,7 @@ def test_decode_moqt_auth_token_rejects_other_types() -> None:
     """
     MOQT の Auth Token Type が CAT (0x01) 以外の場合に拒否されることを確認する。
 
-    draft-ietf-moq-c4m-01 §7.1 は Token Type 0x01 を CAT と定める。
+    draft-ietf-moq-c4m-02 §7.1 は Token Type 0x01 を CAT と定める。
     """
     token = CatToken.decode_moqt_auth_token(c4m.MOQT_AUTH_TOKEN_TYPE_CAT, TOKEN_HMAC_MINIMAL)
     assert token.claims.issuer == "https://auth.example.com"
@@ -469,7 +472,7 @@ def test_clock_tolerance_allows_expired_token() -> None:
     """
     `exp` の許容ずれの範囲内であれば期限切れとして拒否しないことを確認する。
 
-    draft-ietf-moq-c4m-01 の検証は `clock_tolerance_seconds` でずれを許容する。
+    draft-ietf-moq-c4m-02 の検証は `clock_tolerance_seconds` でずれを許容する。
     このベクタの `exp` は 1600000000 である。
     """
     expired = CatToken.decode(CLAIM_VALIDATION_CASES[1][0]).claims
@@ -1014,7 +1017,7 @@ def test_authorization_context_accepts_serialized_names() -> None:
     `moqt.msf` の正規シリアライズ結果を `tns` / `tn` へそのまま渡せることを確認する。
 
     Track Namespace の `.` と Track 名の `-` はリテラルでないためエスケープが要る
-    (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。生の
+    (draft-ietf-moq-transport-23 §8.8 (Representing Namespace and Track Names))。生の
     名前を渡すと `verify_target` が一致しないため、変換関数を通す。
     """
     namespace = [b"example.com"]
@@ -1184,7 +1187,7 @@ def test_dpop_verify_against_cat_token_with_replay_cache() -> None:
 
     # 同じ jti の再送は拒否される
     replay = DpopProof.decode(proof_text)
-    with pytest.raises(ValueError, match="jti was already used"):
+    with pytest.raises(ValueError, match="already used"):
         replay.verify_against_cat_token(
             token,
             MoqtAction.PUBLISH,
@@ -1283,7 +1286,7 @@ def test_replay_cache_expires_old_entries() -> None:
     cache.check_and_record("id-1", 1700000000.0, 60.0, 1700000000.0)
 
     assert len(cache) == 1
-    with pytest.raises(ValueError, match="jti was already used"):
+    with pytest.raises(ValueError, match="already used"):
         cache.check_and_record("id-1", 1700000000.0, 60.0, 1700000030.0)
 
     # ウィンドウを過ぎた記録は破棄される
@@ -1328,7 +1331,7 @@ def test_authorization_context_decode_and_errors() -> None:
     Authorization Context の JSON のデコードと整合検証を確認する。
 
     `resource` が与えられている場合は `tns` / `tn` と整合する必要がある
-    (draft-ietf-moq-c4m-01 §3.1.3)。
+    (draft-ietf-moq-c4m-02 §3.1.3)。
     """
     context = AuthorizationContext.decode(
         '{"type":"moqt","action":"PUB_NS","tns":"example.2ecom","tn":"live",'

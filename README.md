@@ -17,23 +17,23 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## moqt-py について
 
-moqt-py は Media over QUIC Transport (MOQT) の codec と sans I/O セッション状態機械を提供する Python ライブラリです。I/O を一切持たず、バイト列を入れてイベントを取り出す形なので、任意のイベントループ、スレッド、テストから呼び出せます。
+moqt-py は Media over QUIC Transport (MOQT) の codec と sans I/O セッション状態機械を提供する Python ライブラリです。`moqt.moqt` などのコアは I/O を一切持たず、バイト列を入れてイベントを取り出す形なので、任意のイベントループ、スレッド、テストから呼び出せます。`moqt.moq` はその上に載る MOQT client で、接続、ストリーム、データグラムの I/O を Rust 側で持ちます。
 
 - `moqt.moqt`: MOQT の codec と sans I/O セッション状態機械
 - `moqt.loc`: LOC (Low Overhead Media Container) のプロパティ codec
 - `moqt.msf`: MSF (MOQT Streaming Format) のカタログとタイムラインの codec
 - `moqt.c4m`: C4M (Common Access Token for MoQ) のトークンと DPoP proof の codec
-- `moqt.moq`: これらの上に載る WebTransport / QUIC の client (おまけ)
+- `moqt.moq`: QUIC / WebTransport over HTTP/3 / WebTransport over HTTP/2 / QMux を使う MOQT client
 - `moqt.moq.testing`: E2E テスト向けの server と pytest fixture
 
-実装には [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で、署名と検証に [aws-lc-rs](https://github.com/aws/aws-lc-rs) を、`moqt.moq` の I/O に [webtransport-py](https://pypi.org/project/webtransport-py/) を利用しています。
+実装には [moqt-rs](https://github.com/shiguredo/moqt-rs) を PyO3 経由で、署名と検証に [aws-lc-rs](https://github.com/aws/aws-lc-rs) を利用しています。`moqt.moq` の I/O は、QUIC 直接接続と WebTransport over HTTP/3 に [tobi-quic](https://github.com/shiguredo/tobi-quic) (HTTP/3 は [http3-rs](https://github.com/shiguredo/http3-rs))、WebTransport over HTTP/2 に [http2-rs](https://github.com/shiguredo/http2-rs)、QMux に [qmux-rs](https://github.com/shiguredo/qmux-rs) を利用しています。
 
 ## 対応仕様
 
-- Media over QUIC Transport: [draft-ietf-moq-transport-22](https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-22)
+- Media over QUIC Transport: [draft-ietf-moq-transport-23](https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-23)
 - Low Overhead Media Container: [draft-ietf-moq-loc-04](https://datatracker.ietf.org/doc/html/draft-ietf-moq-loc-04)
 - MOQT Streaming Format: [draft-ietf-moq-msf-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-01)
-- Authorization scheme for MOQT using Common Access Tokens: [draft-ietf-moq-c4m-01](https://datatracker.ietf.org/doc/html/draft-ietf-moq-c4m-01)
+- Authorization scheme for MOQT using Common Access Tokens: [draft-ietf-moq-c4m-02](https://datatracker.ietf.org/doc/html/draft-ietf-moq-c4m-02)
 - CBOR / COSE / CWT: [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) / [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052) / [RFC 8392](https://www.rfc-editor.org/rfc/rfc8392)
 - Application-Agnostic Demonstrating Proof-of-Possession: [draft-nandakumar-moq-generic-dpop-proof-00](https://datatracker.ietf.org/doc/draft-nandakumar-moq-generic-dpop-proof/)
 
@@ -41,7 +41,7 @@ moqt-py は Media over QUIC Transport (MOQT) の codec と sans I/O セッショ
 
 ## 対応プラットフォーム
 
-wheel は配布しておらず、Rust 1.93 以降の toolchain を使ってソースからビルドします。
+wheel は配布しておらず、Rust 1.95 以降の toolchain を使ってソースからビルドします。
 
 - macOS 26 arm64
 - Ubuntu 26.04 / 24.04 の x86_64 と arm64
@@ -50,6 +50,8 @@ wheel は配布しておらず、Rust 1.93 以降の toolchain を使ってソ�
 
 - 3.14
 - 3.14t (Free-Threading)
+- 3.15
+- 3.15t (Free-Threading)
 
 ## インストール
 

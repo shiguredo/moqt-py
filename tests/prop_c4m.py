@@ -75,7 +75,7 @@ def moqt_scopes(draw: st.DrawFn) -> MoqtScope:
     """encode できる `moqt-scope` を生成する。
 
     アクションは 1 つ以上、`nil` は末尾にだけ置き、トラック名マッチは名前空間
-    マッチがある場合だけ設定する (draft-ietf-moq-c4m-01 §2.1)。
+    マッチがある場合だけ設定する (draft-ietf-moq-c4m-02 §2.1)。
     """
     scope = MoqtScope(draw(st.lists(ACTIONS, min_size=1, max_size=4, unique=True)))
     namespace = draw(st.lists(MATCHES, max_size=3))
@@ -123,7 +123,7 @@ def prop_moqt_scope_round_trips(
     任意の `moqt-scope` が encode と decode で往復することを確認する。
 
     認可判定が decode の前後で変わらないことも検証する
-    (draft-ietf-moq-c4m-01 §2.1 (moqt claim))。
+    (draft-ietf-moq-c4m-02 §2.1 (moqt claim))。
     """
     decoded = MoqtScope.decode(scope.encode())
 
@@ -144,7 +144,7 @@ def prop_moqt_claim_round_trips(
     任意の `moqt` クレームが encode と decode で往復することを確認する。
 
     スコープのいずれかが認可すれば許可になる評価が decode の前後で変わらない
-    ことも検証する (draft-ietf-moq-c4m-01 §2.1.2)。
+    ことも検証する (draft-ietf-moq-c4m-02 §2.1.2)。
     """
     decoded = MoqtClaim.decode(claim.encode())
 

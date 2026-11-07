@@ -27,17 +27,18 @@ use shiguredo_moqt::decoder::MessageDecoder;
 use shiguredo_moqt::error::MessageError;
 use shiguredo_moqt::message::common::{Location, TrackNamespace};
 use shiguredo_moqt::message::{
-    ControlMessage, FetchOk, Publish, PublishDone, PublishStateNotify, Redirect, RequestError,
-    RequestOk, RequestUpdate, Subscribe, SubscribeOk, TrackStatus,
+    ControlMessage, ErrorDetail, ErrorDetails, Publish, PublishDone, PublishStateNotify, Redirect,
+    RequestError, RequestOk, RequestUpdate, Subscribe, SubscribeOk, TrackStatus,
 };
 use shiguredo_moqt::message_parameter::{
     AuthorizationToken, LocationFilter as MoqtLocationFilter, MessageParameter,
     MessageParameterValue, MessageParameters, PARAM_AUTHORIZATION_TOKEN, PARAM_FILL_PARAMETERS,
-    PARAM_FORWARD, PARAM_GROUP_ORDER, PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT,
-    PARAM_LOCATION_FILTER, PARAM_OBJECT_PROPERTY_FILTER, PARAM_OBJECTID_FILTER,
-    PARAM_PRIORITY_FILTER, PARAM_SUBGROUP_FILTER, PARAM_SUBSCRIBER_PRIORITY,
-    PARAM_TRACK_NAMESPACE_PREFIX, PARAM_TRACK_PROPERTY_FILTER,
+    PARAM_GROUP_ORDER, PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT, PARAM_LOCATION_FILTER,
+    PARAM_OBJECT_PROPERTY_FILTER, PARAM_OBJECTID_FILTER, PARAM_PAUSED, PARAM_PRIORITY_FILTER,
+    PARAM_SUBGROUP_FILTER, PARAM_SUBSCRIBER_PRIORITY, PARAM_TRACK_NAMESPACE_PREFIX,
+    PARAM_TRACK_PROPERTY_FILTER,
 };
+use shiguredo_moqt::parameter::DEFAULT_MAX_CONTROL_MESSAGE_SIZE;
 use shiguredo_moqt::parameter::{
     SETUP_OPTION_AUTHORIZATION_TOKEN, SETUP_OPTION_MOQT_IMPLEMENTATION, SetupOption,
     SetupOptionValue, SetupOptions,
@@ -76,7 +77,7 @@ const MAX_STREAM_BUFFER_BYTES: usize = 128 * 1024;
 /// 制限する。
 const MAX_PENDING_DATA_STREAMS: usize = 256;
 
-// Subgroup ID のエンコードモード (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
+// Subgroup ID のエンコードモード (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))
 //
 // SUBGROUP_ID_MODE は Type Flags の bits 1-2 (mask 0x06) の 2 bit である。Python からは
 // 数値ではなく名前で指定させるため、モード名の文字列として公開する。0b11 は将来の
@@ -102,17 +103,19 @@ pub(crate) fn decode_varint_prefix(buf: &[u8]) -> Result<Option<(u64, usize)>, M
 /// `buf` の先頭にある制御メッセージの全長を返す。
 ///
 /// 制御メッセージは Type (vi64) + Length (u16 big-endian) + Message Body で構成される
-/// (draft-ietf-moq-transport-22 §9 (Control Messages))。長さを決めるヘッダが
+/// (draft-ietf-moq-transport-23 §9 (Control Messages))。長さを決めるヘッダが
 /// 途中で切れている場合は `None` を返し、続きの到着を待つ。
 pub(crate) fn control_message_length(buf: &[u8]) -> Result<Option<usize>, MessageError> {
     let Some((_, type_len)) = decode_varint_prefix(buf)? else {
         return Ok(None);
     };
-    if buf.len() < type_len + 2 {
+    // draft-23 では Length も vi64 である
+    // (draft-ietf-moq-transport-23 §9 (Control Messages) / §8.1 (Variable-Length Integers))。
+    let Some((body_len, length_len)) = decode_varint_prefix(&buf[type_len..])? else {
         return Ok(None);
-    }
-    let body_len = (usize::from(buf[type_len]) << 8) | usize::from(buf[type_len + 1]);
-    Ok(Some(type_len + 2 + body_len))
+    };
+    let body_len = usize::try_from(body_len).map_err(|_| MessageError::PayloadTooLong)?;
+    Ok(Some(type_len + length_len + body_len))
 }
 
 /// `buf` の先頭から完成した制御メッセージを 1 件デコードし `(メッセージ, 消費バイト数)` を返す。
@@ -197,9 +200,9 @@ fn reason_from_python(reason: &str) -> PyResult<shiguredo_moqt::message::ReasonP
 /// 値が長さ付きバイト列であるパラメータ型かを返す。
 ///
 /// これらの型の値は先頭の vi64 が値本体の長さである
-/// (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
+/// (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))。
 /// LOCATION_FILTER は Location Filter Type が後続フィールドを定める Type-prefixed であり、
-/// ここには含めない (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
+/// ここには含めない (draft-ietf-moq-transport-23 §9.19.9 (LOCATION FILTER Parameter))。
 fn is_length_prefixed(param_type: u64) -> bool {
     matches!(
         param_type,
@@ -209,7 +212,6 @@ fn is_length_prefixed(param_type: u64) -> bool {
             | PARAM_PRIORITY_FILTER
             | PARAM_OBJECT_PROPERTY_FILTER
             | PARAM_TRACK_PROPERTY_FILTER
-            | PARAM_FILL_PARAMETERS
     )
 }
 
@@ -268,6 +270,18 @@ pub(crate) fn parameter_from_python(
             value: MessageParameterValue::LocationFilter(filter.borrow().inner()),
         });
     }
+    // FILL_PARAMETERS は外側の長さを持たず、内側のパラメータ数が終端を定める
+    // (draft-ietf-moq-transport-23 §9.19.15 (FILL PARAMETERS Parameter))。
+    // 受信側が返すエンコード済みバイト列はパラメータブロックとしてデコードする
+    if param_type == PARAM_FILL_PARAMETERS
+        && let Ok(encoded) = value.cast::<PyBytes>()
+    {
+        let (parameters, _) = MessageParameters::decode(encoded.as_bytes()).map_err(codec_error)?;
+        return Ok(MessageParameter {
+            param_type,
+            value: MessageParameterValue::FillParameters(parameters),
+        });
+    }
     // エンコード済みバイト列 (受信側が返す辞書の値と同じ形式) として解釈する
     if let Ok(encoded) = value.cast::<PyBytes>() {
         validate_encoded_value(param_type, encoded.as_bytes())?;
@@ -285,11 +299,10 @@ fn typed_parameter_value_from_python(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<MessageParameterValue> {
     match param_type {
-        // uint8 で表現するパラメータ (draft-ietf-moq-transport-22 §9.20)
-        PARAM_FORWARD
-        | PARAM_SUBSCRIBER_PRIORITY
-        | PARAM_GROUP_ORDER
-        | PARAM_INCLUDE_PROPERTIES => Ok(MessageParameterValue::Uint8(value.extract::<u8>()?)),
+        // uint8 で表現するパラメータ (draft-ietf-moq-transport-23 §9.19)
+        PARAM_PAUSED | PARAM_SUBSCRIBER_PRIORITY | PARAM_GROUP_ORDER | PARAM_INCLUDE_PROPERTIES => {
+            Ok(MessageParameterValue::Uint8(value.extract::<u8>()?))
+        }
         // 長さ付きバイト列で表現するフィルタは、エンコード済みバイト列だけを受け付ける。
         // エンコード済みバイト列は呼び出し元の `parameter_from_python` が処理済みである
         PARAM_SUBGROUP_FILTER
@@ -316,12 +329,12 @@ fn typed_parameter_value_from_python(
             Ok(MessageParameterValue::Location { group, object })
         }
         // AUTHORIZATION_TOKEN は 4 種の Token 構造を取る
-        // (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+        // (draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression))。
         // SETUP と同じ表現で受け取る
         PARAM_AUTHORIZATION_TOKEN => Ok(MessageParameterValue::AuthorizationToken(
             authorization_token_from_python(value)?,
         )),
-        // FILL_PARAMETERS の内側パラメータ群 (draft-ietf-moq-transport-22 §9.20.15 (FILL PARAMETERS Parameter))
+        // FILL_PARAMETERS の内側パラメータ群 (draft-ietf-moq-transport-23 §9.19.15 (FILL PARAMETERS Parameter))
         PARAM_FILL_PARAMETERS => Ok(MessageParameterValue::FillParameters(
             message_parameters_from_python(value)?,
         )),
@@ -355,6 +368,10 @@ pub(crate) fn message_parameters_from_python(
 
         parameters.push(parameter_from_python(param_type, &item)?);
     }
+    // 値域 (PAUSED の 0/1、uint8) と重複を構築時に検証する。encode は
+    // ライブラリの検証をそのまま使う
+    // (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))。
+    parameters.encode(&mut Vec::new()).map_err(codec_error)?;
     Ok(parameters)
 }
 
@@ -368,7 +385,7 @@ pub(crate) fn message_parameters_to_python(
 ) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
     for parameter in parameters.as_slice() {
-        let value = PyBytes::new(py, &encode_parameter_value(parameter)).into_any();
+        let value = PyBytes::new(py, &encode_parameter_value(parameter)?).into_any();
         // AUTHORIZATION_TOKEN は複数回出現できるためリストで保持する
         if parameter.param_type == PARAM_AUTHORIZATION_TOKEN {
             match dict.get_item(parameter.param_type)? {
@@ -390,23 +407,19 @@ pub(crate) fn message_parameters_to_python(
 ///
 /// `MessageParameterValue` のエンコード関数は公開されていないため、
 /// パラメータ 1 件だけのリストを encode / decode して取り出す。
-fn encode_parameter_value(parameter: &MessageParameter) -> Vec<u8> {
+fn encode_parameter_value(parameter: &MessageParameter) -> PyResult<Vec<u8>> {
     let mut parameters = MessageParameters::new();
     parameters.push(parameter.clone());
     let mut buf = Vec::new();
-    if parameters.encode(&mut buf).is_err() {
-        return Vec::new();
-    }
+    parameters.encode(&mut buf).map_err(codec_error)?;
     // 先頭はパラメータ数 (vi64)、続いて KVP の delta key (vi64) である。
     // パラメータ 1 件だけのリストでは delta key は 0 になる
     let mut offset = 0;
     for _ in 0..2 {
-        match varint::decode(&buf[offset..]) {
-            Ok((_, consumed)) => offset += consumed,
-            Err(_) => return Vec::new(),
-        }
+        let (_, consumed) = varint::decode(&buf[offset..]).map_err(codec_error)?;
+        offset += consumed;
     }
-    buf[offset..].to_vec()
+    Ok(buf[offset..].to_vec())
 }
 
 /// Python 側の辞書から `TrackProperties` を構築する。
@@ -462,10 +475,10 @@ pub(crate) fn track_namespace_to_python(
 ///
 /// `value` はパラメータの値部分だけのバイト列である。型と値形式の対応は
 /// パラメータ型ごとに決まっているため、型を付けた 1 件のリストとしてデコードする。
-/// (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
+/// (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))
 pub(crate) fn decode_parameter_entry(param_type: u64, value: &[u8]) -> PyResult<MessageParameter> {
     // パラメータ 1 件だけのリストを組み立てる。KVP の型は直前の型との差分であり、
-    // 先頭の直前の型は 0 である (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))
+    // 先頭の直前の型は 0 である (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))
     let mut buf = Vec::new();
     varint::encode(1, &mut buf);
     varint::encode(param_type, &mut buf);
@@ -496,7 +509,7 @@ pub(crate) fn decode_parameter_to_python(
 /// `Event.parameters` の生バイトをこの関数で解釈する。
 ///
 /// AUTHORIZATION_TOKEN は `kind` で種別を表す辞書になり、キーは種別ごとに異なる
-/// (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+/// (draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression))。
 /// LOCATION_FILTER は `LocationFilter` になる。
 pub(crate) fn parameter_value_to_python(
     py: Python<'_>,
@@ -518,7 +531,7 @@ pub(crate) fn parameter_value_to_python(
             let dict = PyDict::new(py);
             // 種別ごとに必要なキーだけを入れる。`alias` は DELETE / REGISTER / USE_ALIAS、
             // `token_type` と `token_value` は REGISTER / USE_VALUE が持つ
-            // (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+            // (draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression))。
             match token {
                 AuthorizationToken::Delete { alias } => {
                     dict.set_item("kind", "delete")?;
@@ -572,10 +585,9 @@ pub(crate) fn message_kind(message: &ControlMessage) -> &'static str {
         ControlMessage::PublishDone(_) => "publish_done",
         ControlMessage::PublishStateNotify(_) => "publish_state_notify",
         ControlMessage::Fetch(_) => "fetch",
-        ControlMessage::FetchOk(_) => "fetch_ok",
         ControlMessage::TrackStatus(_) => "track_status",
         // 定義済みだが moqt-rs が実装しない制御メッセージ
-        // (relay 専用の namespace 発見・告知機構。draft-ietf-moq-transport-22 §9 Table 5)
+        // (relay 専用の namespace 発見・告知機構。draft-ietf-moq-transport-23 §9 Table 5)
         ControlMessage::Unsupported { .. } => "unsupported",
     }
 }
@@ -612,7 +624,7 @@ fn request_kind_to_python(kind: RequestKind) -> &'static str {
 /// (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
 ///
 /// `goaway_timeout` は自側が request stream 上の GOAWAY の deadline 満了で送信方向を
-/// reset したことを表す (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+/// reset したことを表す (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
 fn termination_reason_to_python(
     py: Python<'_>,
     reason: &TerminationReason,
@@ -745,10 +757,11 @@ fn subscription_to_python(py: Python<'_>, subscription: &Subscription) -> PyResu
         "initiator",
         subscription_initiator_to_python(subscription.initiator),
     )?;
-    // Forward State は 0 = 送らない / 1 = 送る の 2 値である
-    // (draft-ietf-moq-transport-22 §9.20.18 (FORWARD Parameter))。
+    // 配信を停止しているかを PAUSED パラメータで表す。draft-23 で FORWARD
+    // パラメータは PAUSED に置き換わった
+    // (draft-ietf-moq-transport-23 §9.19.18 (PAUSED Parameter))。
     // draft 由来の値であり、将来の改訂で変更される可能性がある
-    dict.set_item("forward", subscription.forward_state != 0)?;
+    dict.set_item("paused", subscription.paused)?;
     dict.set_item("subscriber_priority", subscription.subscriber_priority)?;
     dict.set_item("group_order", subscription.group_order)?;
     dict.set_item(
@@ -793,11 +806,11 @@ fn fetch_to_python(py: Python<'_>, fetch: &Fetch) -> PyResult<Py<PyDict>> {
         "end_location",
         location_to_python(fetch.end_location.as_ref()),
     )?;
-    dict.set_item("end_of_track", fetch.end_of_track)?;
+    dict.set_item("expires_ms", fetch.expires_ms)?;
     dict.set_item("response_received", fetch.response_received)?;
     // Group Order は FETCH の GROUP_ORDER パラメータで要求された値であり、省略時は
     // `None` になる。Group ID の差分の解決方向と、届いた Group の順序検証に使う
-    // (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
+    // (draft-ietf-moq-transport-23 §9.19.8 (GROUP ORDER Parameter))。
     // draft 由来の値であり、将来の改訂で変更される可能性がある
     dict.set_item("group_order", fetch.group_order)?;
     Ok(dict.unbind())
@@ -815,13 +828,18 @@ fn track_status_to_python(py: Python<'_>, entry: &TrackStatusEntry) -> PyResult<
     )?;
     dict.set_item("track_name", PyBytes::new(py, &entry.track_name))?;
     // 応答は未受信 (None) / TRACK_STATUS_OK / REQUEST_ERROR の 3 通りである
-    // (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
+    // (draft-ietf-moq-transport-23 §9.12 (TRACK_STATUS))。
     // draft 由来の値であり、将来の改訂で変更される可能性がある
     let (response, largest_location) = match &entry.response {
         None => ("pending", None),
-        Some(TrackStatusResponse::Ok { largest_location }) => {
+        Some(TrackStatusResponse::Ok {
+            largest_location,
+            expires_ms,
+        }) => {
+            dict.set_item("expires_ms", *expires_ms)?;
             ("ok", location_to_python(largest_location.as_ref()))
         }
+        Some(TrackStatusResponse::Unsupported) => ("unsupported", None),
         Some(TrackStatusResponse::Error) => ("error", None),
     };
     dict.set_item("response", response)?;
@@ -829,7 +847,7 @@ fn track_status_to_python(py: Python<'_>, entry: &TrackStatusEntry) -> PyResult<
     // 自側の送信方向が閉じたか。`false` の間は応答を送れる。
     // 自側が publisher (responder) のとき、応答を送る前に peer が cancel すると
     // response を持たないまま終端するため、回収の判断に要る
-    // (draft-ietf-moq-transport-22 §6.4.2.3 (Request Cancellation and Rejection))。
+    // (draft-ietf-moq-transport-23 §6.4.2.3 (Request Cancellation and Rejection))。
     dict.set_item("terminated", entry.terminated)?;
     Ok(dict.unbind())
 }
@@ -843,7 +861,7 @@ fn request_error_to_python(
     dict.set_item("error_code", error.error_code)?;
     dict.set_item("retry_interval", error.retry_interval)?;
     dict.set_item("reason", error.reason.as_str())?;
-    match &error.redirect {
+    match error.error_details.redirect() {
         Some(redirect) => {
             let value = PyDict::new(py);
             value.set_item("connect_uri", PyBytes::new(py, &redirect.connect_uri))?;
@@ -864,7 +882,7 @@ fn request_error_to_python(
 /// キーは Setup Option Type、値は偶数型なら `int`、奇数型なら `bytes` である。
 /// AUTHORIZATION_TOKEN (0x03) は Token 構造を持つため辞書になり、SETUP では
 /// 複数指定できるためリストで返す。
-/// (draft-ietf-moq-transport-22 §9.1 (SETUP) / §16.4 (Setup Options))
+/// (draft-ietf-moq-transport-23 §9.1 (SETUP) / §16.4 (Setup Options))
 ///
 /// `SetupOptions` は列挙 API を持たないため、エンコード結果を走査する。
 fn setup_options_to_python(py: Python<'_>, options: &SetupOptions) -> PyResult<Py<PyDict>> {
@@ -886,7 +904,7 @@ fn setup_options_to_python(py: Python<'_>, options: &SetupOptions) -> PyResult<P
     }
 
     // SETUP の本体は delta-key エンコードされた KVP 列である
-    // (draft-ietf-moq-transport-22 §9.1 (SETUP))。偶数型は varint、
+    // (draft-ietf-moq-transport-23 §9.1 (SETUP))。偶数型は varint、
     // 奇数型は長さ付きバイト列として読む
     let mut buf = Vec::new();
     options.encode(&mut buf).map_err(runtime_error)?;
@@ -933,9 +951,9 @@ fn setup_options_to_python(py: Python<'_>, options: &SetupOptions) -> PyResult<P
 /// Python 側の値から Setup Option の値を作る。
 ///
 /// 偶数型の Setup Option は varint、奇数型は長さ付きバイト列で表現する
-/// (draft-ietf-moq-transport-22 §16.4 (Setup Options))。AUTHORIZATION_TOKEN (0x03)
+/// (draft-ietf-moq-transport-23 §16.4 (Setup Options))。AUTHORIZATION_TOKEN (0x03)
 /// だけは Token 構造を持つ
-/// (draft-ietf-moq-transport-22 §9.1.4 (AUTHORIZATION TOKEN))。
+/// (draft-ietf-moq-transport-23 §9.1.4 (AUTHORIZATION TOKEN))。
 fn setup_option_value_from_python(
     option_type: u64,
     value: &Bound<'_, PyAny>,
@@ -954,7 +972,7 @@ fn setup_option_value_from_python(
 /// Python 側の値から AUTHORIZATION_TOKEN の Token 構造を作る。
 ///
 /// `kind` で種別を指定する辞書と、`(token_type, token_value)` のタプルを受け付ける。
-/// 種別は draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression) の
+/// 種別は draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression) の
 /// DELETE / REGISTER / USE_ALIAS / USE_VALUE である。
 ///
 /// 辞書が取るキーは種別ごとに異なる。
@@ -1124,23 +1142,6 @@ pub(crate) fn message_body_to_python(
                 message_parameters_to_python(py, &fetch.parameters)?,
             )?;
         }
-        ControlMessage::FetchOk(FetchOk {
-            end_of_track,
-            end_location,
-            parameters,
-            track_properties,
-        }) => {
-            dict.set_item("end_of_track", *end_of_track != 0)?;
-            dict.set_item(
-                "end_location",
-                (end_location.group_id, end_location.object_id),
-            )?;
-            dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
-            dict.set_item(
-                "track_properties",
-                track_properties_to_python(py, track_properties)?,
-            )?;
-        }
         ControlMessage::TrackStatus(TrackStatus {
             request_id,
             track_namespace,
@@ -1157,7 +1158,7 @@ pub(crate) fn message_body_to_python(
         }
         // 定義済みだが moqt-rs が実装しない制御メッセージ。本体は Length の後ろの
         // 生バイト列のまま公開し、Python 側で内容を解釈できるようにする
-        // (draft-ietf-moq-transport-22 §9 Table 5 / §1.6 (Modularity))。
+        // (draft-ietf-moq-transport-23 §9 Table 5 / §1.6 (Modularity))。
         ControlMessage::Unsupported {
             type_id,
             request_id,
@@ -1205,24 +1206,24 @@ pub(crate) struct CoreEvent {
     /// 受信したオブジェクトの Object Status (object イベントのみ)。
     ///
     /// ペイロード長 0 のオブジェクトだけが持ち、非 0 長では `None` になる
-    /// (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。
+    /// (draft-ietf-moq-transport-23 §11.1.1 (Object Status))。
     status: Option<u64>,
     /// 受信したオブジェクトの Properties の生バイト (object イベントのみ)。
     ///
     /// `Properties Length (varint) | Properties データ` の形である。データグラムと
     /// subgroup のどちらでも同じ形であり、アプリは `ObjectProperties.decode` で解釈する
-    /// (draft-ietf-moq-transport-22 §16.8 (Properties) Table 15)。
+    /// (draft-ietf-moq-transport-23 §16.8 (Properties) Table 15)。
     properties: Option<Vec<u8>>,
     /// 受信したデータストリームの Publisher Priority (object イベントのみ)。
     ///
     /// `None` は DEFAULT_PRIORITY bit が立ち、購読の優先度を継承することを示す
-    /// (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    /// (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     publisher_priority: Option<u8>,
     /// 受信したオブジェクトを含む subgroup の Subgroup ID (object イベントのみ)。
     ///
     /// ヘッダが Subgroup ID を最初の Object ID として決めるモードでも、最初の
     /// Object を受信した時点で確定した値が入る
-    /// (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    /// (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     subgroup_id: Option<u64>,
     /// 受信したメッセージのパラメータ。
     parameters: Option<Py<PyDict>>,
@@ -1231,7 +1232,7 @@ pub(crate) struct CoreEvent {
     /// 応答が Track Properties を運ぶ場合は型番号をキーにした辞書が入り、運ばない
     /// 応答では空の辞書になる。応答以外のメッセージでは `None` になる。表現は
     /// `moqt.moqt.Message.track_properties` と同じである
-    /// (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
+    /// (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))。
     track_properties: Option<Py<PyDict>>,
 }
 
@@ -1270,7 +1271,7 @@ impl CoreEvent {
     /// `parts` の `properties` はデータグラムと subgroup で同じ形にする。
     /// `publisher_priority` はデータグラムでは DEFAULT_PRIORITY bit が立っている場合だけ
     /// `None` になり、`subgroup_id` はデータグラムでは常に `None` になる
-    /// (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    /// (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     fn object(stream_id: Option<u64>, parts: ObjectEventParts) -> Self {
         Self {
             stream_id,
@@ -1336,7 +1337,7 @@ impl CoreEvent {
 /// 状態機械のイベントは応答の Track Properties を運ばないため、受信した生バイト列を
 /// デコードして取り出す。Track Properties を運ばないメッセージと、まだ本文全体が
 /// 揃っていないバイト列では `None` を返す。
-/// (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))
+/// (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))
 pub(crate) fn decode_track_properties_data(
     py: Python<'_>,
     data: &[u8],
@@ -1346,7 +1347,6 @@ pub(crate) fn decode_track_properties_data(
     };
     let properties = match message {
         ControlMessage::SubscribeOk(message) => Some(message.track_properties),
-        ControlMessage::FetchOk(message) => Some(message.track_properties),
         ControlMessage::RequestOk(message) => Some(message.track_properties),
         _ => None,
     };
@@ -1428,7 +1428,7 @@ impl CoreEvent {
     /// 受信したオブジェクトの Object Status (object イベントのみ)。
     ///
     /// ペイロード長 0 のオブジェクトだけが持ち、非 0 長では `None` になる。
-    /// (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
+    /// (draft-ietf-moq-transport-23 §11.1.1 (Object Status))
     #[getter]
     fn status(&self) -> Option<u64> {
         self.status
@@ -1457,7 +1457,7 @@ impl CoreEvent {
     ///
     /// ヘッダが Subgroup ID を最初の Object ID として決めるモードでも、最初の
     /// Object を受信した時点で確定した値が入る
-    /// (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    /// (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     #[getter]
     fn subgroup_id(&self) -> Option<u64> {
         self.subgroup_id
@@ -1503,7 +1503,7 @@ impl CoreEvent {
     ///
     /// 応答が Track Properties を運ぶ場合は型番号をキーにした辞書が入り、運ばない
     /// 応答では空の辞書になる。応答以外のメッセージでは `None` になる
-    /// (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
+    /// (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))。
     #[getter]
     fn track_properties(&self, py: Python<'_>) -> Option<Py<PyDict>> {
         self.track_properties
@@ -1520,7 +1520,7 @@ impl CoreEvent {
 ///
 /// MOQT の応答メッセージはワイヤに Request ID を含まないため、ストリームと
 /// Request ID の対応は I/O 層が保持する
-/// (draft-ietf-moq-transport-22 §9.4 (REQUEST_ERROR) の Request ID 省略)。
+/// (draft-ietf-moq-transport-23 §9.4 (REQUEST_ERROR) の Request ID 省略)。
 #[derive(Debug)]
 enum RequestStreamRole {
     /// 自側が開始した request のストリーム。応答はこの Request ID で処理する。
@@ -1536,7 +1536,7 @@ enum DataStreamDecoder {
     Subgroup(SubgroupStreamDecoder),
     Fetch(Box<FetchStreamDecoder>),
     /// padding stream はバイト列を読み捨てるだけである
-    /// (draft-ietf-moq-transport-22 §11.5.1 (Padding Streams))。
+    /// (draft-ietf-moq-transport-23 §11.5.1 (Padding Streams))。
     Padding,
 }
 
@@ -1623,11 +1623,13 @@ pub(crate) struct CoreSession {
     /// stream type を状態機械へ通知済みのデータストリームと、その種別。
     ///
     /// MOQT の単方向ストリームは先頭に stream type を持つ
-    /// (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams))。
+    /// (draft-ietf-moq-transport-23 §6.4.1 (Unidirectional Streams))。
     /// 種別はデコーダの作成にも使うため保持する。
     data_stream_types: HashMap<u64, DataStreamType>,
     /// ヘッダをデコード済みのデータストリーム。
     data_headers_decoded: HashSet<u64>,
+    /// fetch ストリーム ID から FETCH_HEADER が運んだ Request ID への対応。
+    fetch_stream_requests: HashMap<u64, u64>,
     /// 購読が確定していないために保留しているデータストリーム。
     pending_data_streams: HashSet<u64>,
     /// 購読と無関係な Track Alias 宛てのデータで以後無視するデータストリーム。
@@ -1645,7 +1647,7 @@ pub(crate) struct CoreSession {
 /// 区別して保持するため、QUIC へ丸めず QMux として伝える。状態機械は AUTHORITY と PATH を
 /// WebTransport に限って拒否するので、QMux を WebTransport に写すと SETUP が
 /// INVALID_AUTHORITY / INVALID_PATH で閉じられる
-/// (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+/// (draft-ietf-moq-transport-23 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
 fn transport_from_python(transport: &str) -> PyResult<Transport> {
     match transport {
         "quic" => Ok(Transport::Quic),
@@ -1677,7 +1679,7 @@ impl CoreSession {
 
         let mut options = SetupOptions::new();
         options.push(SetupOption {
-            // draft-ietf-moq-transport-22 §9.1.5 (MOQT IMPLEMENTATION)。
+            // draft-ietf-moq-transport-23 §9.1.5 (MOQT IMPLEMENTATION)。
             // draft 由来の値であり、将来の改訂で変更される可能性がある。
             option_type: SETUP_OPTION_MOQT_IMPLEMENTATION,
             value: SetupOptionValue::Bytes(implementation.as_bytes().to_vec()),
@@ -1710,7 +1712,7 @@ impl CoreSession {
 
         Ok(Self {
             session,
-            control_decoder: MessageDecoder::new(),
+            control_decoder: MessageDecoder::new(DEFAULT_MAX_CONTROL_MESSAGE_SIZE),
             peer_control_stream_type_received: false,
             request_buffers: StreamBuffers::default(),
             request_streams: HashMap::new(),
@@ -1723,6 +1725,7 @@ impl CoreSession {
             last_error: None,
             data_stream_types: HashMap::new(),
             data_headers_decoded: HashSet::new(),
+            fetch_stream_requests: HashMap::new(),
             pending_data_streams: HashSet::new(),
             ignored_data_streams: HashSet::new(),
             started: false,
@@ -1760,7 +1763,7 @@ impl CoreSession {
     /// FETCH 要求ごとに決まる。Group Order は Group ID の差分の解決方向と届いた
     /// Group の順序検証に使うため、ヘッダをデコードできるまでデコーダを作らない。
     /// ヘッダがまだ揃っていない場合は `None` を返し、続きの断片を待つ
-    /// (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
+    /// (draft-ietf-moq-transport-23 §9.19.8 (GROUP ORDER Parameter))。
     /// この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     fn create_data_decoder(
         &self,
@@ -1787,9 +1790,9 @@ impl CoreSession {
     ///
     /// FETCH_HEADER は Request ID だけを運ぶため、状態機械が保持する request から
     /// Group Order を引く。通常の FETCH 応答は fetch、fill fetch stream は起因した
-    /// subscription に紐づく (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
+    /// subscription に紐づく (draft-ietf-moq-transport-23 §3.4 (Fill Semantics))。
     /// 省略された要求では既定値 Ascending (0x1) になる
-    /// (draft-ietf-moq-transport-22 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
+    /// (draft-ietf-moq-transport-23 §10.5 (DEFAULT PUBLISHER GROUP ORDER))。
     /// ヘッダがまだ揃っていない場合は `None` を返し、呼び出し側は続きの断片を待つ。
     /// この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     fn resolve_fetch_group_order(&self, buffered: &[u8]) -> PyResult<Option<u8>> {
@@ -1817,9 +1820,9 @@ impl CoreSession {
     /// オブジェクトヘッダの途中・未消費ペイロードのいずれかが残っていれば
     /// `UnexpectedEof` を返す。ヘッダのみでオブジェクトを持たない空の Subgroup と
     /// 空の FETCH 応答は正常として受理する
-    /// (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams) /
+    /// (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams) /
     /// §9.11 (FETCH))。padding stream はバイト列を読み捨てるだけでオブジェクトを
-    /// 持たない (draft-ietf-moq-transport-22 §11.5.1 (Padding Streams))。
+    /// 持たない (draft-ietf-moq-transport-23 §11.5.1 (Padding Streams))。
     /// この節番号・規則は draft 由来であり将来の改訂で変更されうる。
     fn take_mid_object_fin(&mut self, stream_id: u64) -> bool {
         match self.data_decoders.remove(&stream_id) {
@@ -1871,7 +1874,7 @@ impl CoreSession {
         stream_type: DataStreamType,
     ) -> PyResult<(Vec<DecodedObjectInfo>, Vec<CoreEvent>)> {
         // 購読に紐づかないと確定したストリームは、以後バイト列を読み捨てる
-        // (draft-ietf-moq-transport-22 §3.1 (Subscriptions) のフィルタ再適用の結果)。
+        // (draft-ietf-moq-transport-23 §3.1 (Subscriptions) のフィルタ再適用の結果)。
         if self.ignored_data_streams.contains(&stream_id) {
             self.data_buffers.remove(stream_id);
             return Ok((Vec::new(), self.drain_events(py)?));
@@ -1903,7 +1906,7 @@ impl CoreSession {
                     // ヘッダを状態機械が受理したかを確かめる。購読がまだ確定して
                     // いなければデコーダを破棄し、受信バイト列を保持したまま保留する。
                     // 保留したストリームは購読の確定後に回し直す
-                    // (draft-ietf-moq-transport-22 §3.1.3 (Track Alias) は、購読が
+                    // (draft-ietf-moq-transport-23 §3.1.3 (Track Alias) は、購読が
                     // 確定する前に届いたオブジェクトを未知の Track Alias として
                     // 破棄することを要求していない)。
                     let acceptance = self
@@ -1936,7 +1939,7 @@ impl CoreSession {
                     // Subgroup ID を持たないモードではヘッダからは決まらない。Zero は 0、
                     // FirstObjectId は最初のオブジェクト ID になるため、ここでは `None`
                     // としてアプリへ渡す
-                    // (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+                    // (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
                     let subgroup_id = match header.subgroup_id {
                         SubgroupIdMode::Zero => Some(0),
                         SubgroupIdMode::Explicit(id) => Some(id),
@@ -1996,7 +1999,7 @@ impl CoreSession {
                     // Subgroup ID を最初の Object ID として決めるモードでは、最初の
                     // Object を受信した時点で確定する。ヘッダ受信直後は決まらないため
                     // `None` のままになる
-                    // (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+                    // (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
                     let subgroup_id = header
                         .and_then(|info| info.subgroup_id)
                         .or_else(|| decoder.resolved_subgroup_id());
@@ -2025,12 +2028,15 @@ impl CoreSession {
                         .recv_fetch_header(stream, &header)
                         .map_err(runtime_error)?;
                     self.data_headers_decoded.insert(stream_id);
+                    self.fetch_stream_requests
+                        .insert(stream_id, header.request_id);
                 }
                 // ヘッダが揃うまでエントリはデコードできない
                 if !self.data_headers_decoded.contains(&stream_id) {
                     events.extend(self.drain_events(py)?);
                     return Ok((objects, events));
                 }
+                let fetch_request_id = self.fetch_stream_requests.get(&stream_id).copied();
                 loop {
                     // ペイロードの到着を待っているエントリを先に処理する。
                     // デコーダがペイロード消費待ちの間は次のエントリを読めない
@@ -2056,7 +2062,7 @@ impl CoreSession {
                         _ => Vec::new(),
                     };
                     self.session
-                        .recv_fetch_entry(stream)
+                        .recv_fetch_entry(stream, &entry)
                         .map_err(runtime_error)?;
                     match entry {
                         DecodedFetchEntry::Object(object) => {
@@ -2073,17 +2079,18 @@ impl CoreSession {
                                 data: Some(payload),
                                 acceptance: Some("accepted"),
                                 // Object Status は FETCH で運ばれるオブジェクトには無い
-                                // (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
+                                // (draft-ietf-moq-transport-23 §11.1.1 (Object Status))
                                 status: None,
                                 // Properties は Flags の bit 0x20 が立つときだけ載る。
                                 // subgroup 経路と同じく
                                 // `Properties Length (varint) | Properties データ` の形で渡す
-                                // (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))
+                                // (draft-ietf-moq-transport-23 §11.4.1.1 (Flags))
                                 properties: object.properties_bytes.clone(),
                                 // FETCH のオブジェクトは Subgroup ID と Publisher Priority を
                                 // エントリ自身が運ぶ
                                 publisher_priority: Some(object.publisher_priority),
                                 subgroup_id: Some(object.subgroup_id),
+                                request_id: fetch_request_id,
                                 ..CoreEvent::simple("object")
                             });
                         }
@@ -2095,6 +2102,7 @@ impl CoreSession {
                             events.push(CoreEvent {
                                 group_id: Some(group_id),
                                 object_id: Some(object_id),
+                                request_id: fetch_request_id,
                                 ..CoreEvent::simple("end_of_non_existent_range")
                             });
                         }
@@ -2105,6 +2113,7 @@ impl CoreSession {
                             events.push(CoreEvent {
                                 group_id: Some(group_id),
                                 object_id: Some(object_id),
+                                request_id: fetch_request_id,
                                 ..CoreEvent::simple("end_of_unknown_range")
                             });
                         }
@@ -2115,7 +2124,33 @@ impl CoreSession {
                             events.push(CoreEvent {
                                 group_id: Some(group_id),
                                 object_id: Some(object_id),
+                                request_id: fetch_request_id,
                                 ..CoreEvent::simple("end_of_timed_out_range")
+                            });
+                        }
+                        DecodedFetchEntry::EndOfGoneRange {
+                            group_id,
+                            object_id,
+                        } => {
+                            events.push(CoreEvent {
+                                group_id: Some(group_id),
+                                object_id: Some(object_id),
+                                request_id: fetch_request_id,
+                                ..CoreEvent::simple("end_of_gone_range")
+                            });
+                        }
+                        DecodedFetchEntry::EndOfGroup { group_id } => {
+                            events.push(CoreEvent {
+                                group_id: Some(group_id),
+                                request_id: fetch_request_id,
+                                ..CoreEvent::simple("end_of_group")
+                            });
+                        }
+                        DecodedFetchEntry::EndOfTrack { group_id } => {
+                            events.push(CoreEvent {
+                                group_id: Some(group_id),
+                                request_id: fetch_request_id,
+                                ..CoreEvent::simple("end_of_track")
                             });
                         }
                     }
@@ -2159,7 +2194,9 @@ impl CoreSession {
     ) -> PyResult<CoreEvent> {
         match event {
             SessionEvent::SendControl(message) => {
-                let data = message.encode().map_err(runtime_error)?;
+                let data = message
+                    .encode(DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
+                    .map_err(runtime_error)?;
                 Ok(CoreEvent::send_control(data))
             }
             SessionEvent::SendRequest {
@@ -2168,7 +2205,9 @@ impl CoreSession {
             } => Ok(CoreEvent::with_message(
                 "send_request",
                 message_body_to_python(py, &message)?,
-                message.encode().map_err(runtime_error)?,
+                message
+                    .encode(DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
+                    .map_err(runtime_error)?,
                 Some(request_id),
                 None,
             )),
@@ -2181,7 +2220,9 @@ impl CoreSession {
                 ..CoreEvent::with_message(
                     "send_on_stream",
                     message_body_to_python(py, &message)?,
-                    message.encode().map_err(runtime_error)?,
+                    message
+                        .encode(DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
+                        .map_err(runtime_error)?,
                     Some(request_id),
                     None,
                 )
@@ -2215,16 +2256,30 @@ impl CoreSession {
             SessionEvent::FetchOkReceived {
                 request_id,
                 end_location,
-                end_of_track,
+                expires_ms,
             } => {
                 let body = PyDict::new(py);
-                body.set_item("end_of_track", end_of_track)?;
+                body.set_item("expires_ms", expires_ms)?;
                 body.set_item(
                     "end_location",
                     (end_location.group_id, end_location.object_id),
                 )?;
                 Ok(CoreEvent::with_message(
                     "fetch_ok",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    None,
+                ))
+            }
+            SessionEvent::TrackStatusUnsupported {
+                request_id,
+                unsupported_property_types,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item("unsupported_property_types", unsupported_property_types)?;
+                Ok(CoreEvent::with_message(
+                    "track_status_unsupported",
                     body.unbind(),
                     data.clone(),
                     Some(request_id),
@@ -2254,13 +2309,13 @@ impl CoreSession {
                 error_code,
                 retry_interval,
                 reason,
-                redirect,
+                error_details,
             } => {
                 let body = PyDict::new(py);
                 body.set_item("error_code", error_code)?;
                 body.set_item("retry_interval", retry_interval)?;
                 body.set_item("reason", reason.as_str())?;
-                match &redirect {
+                match error_details.redirect() {
                     Some(redirect) => {
                         let value = PyDict::new(py);
                         value.set_item("connect_uri", PyBytes::new(py, &redirect.connect_uri))?;
@@ -2428,7 +2483,7 @@ impl CoreSession {
             )),
             // 自側が送った GOAWAY の drain が完了したことを通知する。セッションを閉じるかは
             // アプリの判断であるため、I/O 層の処理は持たない
-            // (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
+            // (draft-ietf-moq-transport-23 §6.6.1 (Graceful Session Migration))。
             SessionEvent::GoawayDrainReady => Ok(CoreEvent::simple("goaway_drain_ready")),
         }
     }
@@ -2476,11 +2531,11 @@ impl CoreSession {
     /// `setup_options` は Setup Option Type をキーにした辞書である。偶数型は `int`、
     /// 奇数型は `bytes`、AUTHORIZATION_TOKEN は Token の辞書またはそのリストを渡す。
     /// MOQT_IMPLEMENTATION は `implementation` 引数が担うため指定できない
-    /// (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
+    /// (draft-ietf-moq-transport-23 §16.4 (Setup Options))。
     ///
     /// `transport` は `moqt.moq.Transport` の値である。QUIC 直接接続と QMux では
     /// AUTHORITY と PATH を SETUP に載せ、WebTransport では載せてはならない
-    /// (draft-ietf-moq-transport-22 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
+    /// (draft-ietf-moq-transport-23 §9.1.1 (AUTHORITY) / §9.1.2 (PATH))。
     /// QMux 上の MOQT は individual draft で扱われる
     /// (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。
     #[staticmethod]
@@ -2511,7 +2566,7 @@ impl CoreSession {
     /// キーは Setup Option Type、値は偶数型なら `int`、奇数型なら `bytes` である。
     /// AUTHORIZATION_TOKEN は Token の辞書のリストになる。SETUP を受信していない
     /// 場合は空の辞書を返す。
-    /// (draft-ietf-moq-transport-22 §9.1 (SETUP) / §16.4 (Setup Options))
+    /// (draft-ietf-moq-transport-23 §9.1 (SETUP) / §16.4 (Setup Options))
     fn peer_setup_options(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         match &self.peer_setup_options {
             Some(options) => setup_options_to_python(py, options),
@@ -2536,7 +2591,8 @@ impl CoreSession {
             }
             None => return Err(PyRuntimeError::new_err("initial SETUP event is missing")),
         };
-        let data = encode_control_stream_setup(&message).map_err(runtime_error)?;
+        let data = encode_control_stream_setup(&message, DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
+            .map_err(runtime_error)?;
         self.started = true;
         Ok(PyBytes::new(py, &data).unbind())
     }
@@ -2568,7 +2624,7 @@ impl CoreSession {
             .map_err(runtime_error)?
         {
             // peer の SETUP は状態機械がそのままは保持しないため、Python から
-            // 参照できるよう受信時に控える (draft-ietf-moq-transport-22 §9.1 (SETUP))
+            // 参照できるよう受信時に控える (draft-ietf-moq-transport-23 §9.1 (SETUP))
             if let ControlMessage::Setup(setup) = &message {
                 self.peer_setup_options = Some(setup.options.clone());
             }
@@ -2644,7 +2700,7 @@ impl CoreSession {
                         // Request ID は対象 request のものと一致しない。対象 request は
                         // 「同じ bidi stream 上で送る」ことで識別されるため、ストリームに
                         // 紐付けた Request ID を状態機械へ渡す
-                        // (draft-ietf-moq-transport-22 §6.4.2.1 (Request ID) / §9.5 (REQUEST_UPDATE))。
+                        // (draft-ietf-moq-transport-23 §6.4.2.1 (Request ID) / §9.5 (REQUEST_UPDATE))。
                         let stream_request_id = match self.request_streams.get(&stream_id) {
                             Some(RequestStreamRole::Peer { request_id }) => *request_id,
                             _ => message_request_id(&message).ok_or_else(|| {
@@ -2807,6 +2863,7 @@ impl CoreSession {
         self.pending_fetch_entries.remove(&stream_id);
         self.data_stream_types.remove(&stream_id);
         self.data_headers_decoded.remove(&stream_id);
+        self.fetch_stream_requests.remove(&stream_id);
         // 保留や無視の対象だったストリームは終端したため、保持している状態を捨てる。
         // 終端したストリームを再試行すると状態機械が未知の stream id として失敗する
         self.pending_data_streams.remove(&stream_id);
@@ -2821,7 +2878,7 @@ impl CoreSession {
             // 報告してセッションを閉じる。`report_mid_object_fin` は呼び出し自体が
             // セッションを閉じる判断であり、返るエラーは期待どおりの結果である。
             // 閉じるイベントは `drain_events` が取り出す
-            // (draft-ietf-moq-transport-22 §11.3 (Subgroup Streams))。
+            // (draft-ietf-moq-transport-23 §11.3 (Subgroup Streams))。
             let _ = self.session.report_mid_object_fin(DataStreamId(stream_id));
         }
         self.drain_events(py)
@@ -2872,7 +2929,7 @@ impl CoreSession {
                             // データグラムは subgroup ヘッダを持たないため Subgroup ID は入らない。
                             // Publisher Priority は Type Flags の DEFAULT_PRIORITY bit が
                             // 立っていれば `None`、立っていなければ明示値が入る
-                            // (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+                            // (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
                             // draft 由来の値であり、将来の改訂で変更される可能性がある
                             publisher_priority: datagram.publisher_priority,
                             subgroup_id: None,
@@ -2922,7 +2979,7 @@ impl CoreSession {
     ///
     /// 宣言が無い場合は 0 を返す。SETUP で受け取った値はキャッシュせず、状態機械から
     /// 都度取得する
-    /// (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+    /// (draft-ietf-moq-transport-23 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
     /// draft 由来の値であり、将来の改訂で変更される可能性がある。
     #[getter]
     fn peer_max_auth_token_cache_size(&self) -> u64 {
@@ -2931,7 +2988,7 @@ impl CoreSession {
 
     /// キャンセル済み peer publisher alias の保持期間 (ms) を返す。
     ///
-    /// draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する保持期間であり、
+    /// draft-ietf-moq-transport-23 §3.1.3 (Track Alias) の SHOULD に対応する保持期間であり、
     /// draft 由来の値であるため将来の改訂で変更される可能性がある。
     #[getter]
     fn peer_alias_retention_ms(&self) -> u64 {
@@ -2948,7 +3005,7 @@ impl CoreSession {
     /// 制御メッセージの応答待ちタイムアウト (ms) を返す。
     ///
     /// 無効の場合は `None` を返す
-    /// (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    /// (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     /// draft 由来の値であり、将来の改訂で変更される可能性がある。
     #[getter]
     fn control_message_timeout_ms(&self) -> Option<u64> {
@@ -2958,7 +3015,7 @@ impl CoreSession {
     /// データストリームの停止を検出するタイムアウト (ms) を返す。
     ///
     /// 無効の場合は `None` を返す
-    /// (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    /// (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     /// draft 由来の値であり、将来の改訂で変更される可能性がある。
     #[getter]
     fn data_stream_timeout_ms(&self) -> Option<u64> {
@@ -2971,7 +3028,7 @@ impl CoreSession {
     /// なるまで drain は完了しない。キーは
     /// `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
     /// `blocking_track_status_request_ids` であり、値は Request ID のリストである
-    /// (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
+    /// (draft-ietf-moq-transport-23 §6.6.1 (Graceful Session Migration) /
     /// §9.2 (GOAWAY))。draft 由来の仕様であり、将来の改訂で変更される可能性がある。
     fn goaway_drain_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let snapshot = self.session.goaway_drain_snapshot();
@@ -2994,7 +3051,7 @@ impl CoreSession {
     /// GOAWAY の drain が完了しているかを返す。
     ///
     /// drain を妨げる request が 1 件も無ければ `True` である
-    /// (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
+    /// (draft-ietf-moq-transport-23 §6.6.1 (Graceful Session Migration))。
     /// draft 由来の仕様であり、将来の改訂で変更される可能性がある。
     fn goaway_drain_ready(&self) -> bool {
         self.session.goaway_drain_ready()
@@ -3003,7 +3060,7 @@ impl CoreSession {
     /// 指定 subscription で open 中の送信 fill fetch stream 数を返す。
     ///
     /// 1 つの subscription に複数本の fill fetch stream が同時に開くことがある
-    /// (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。draft 由来の仕様であり、
+    /// (draft-ietf-moq-transport-23 §3.4 (Fill Semantics))。draft 由来の仕様であり、
     /// 将来の改訂で変更される可能性がある。
     fn open_outgoing_fill_stream_count(&self, request_id: u64) -> u64 {
         // Python の int へは u64 として渡す (既知の小さな本数なので桁落ちは起きない)
@@ -3014,7 +3071,7 @@ impl CoreSession {
     ///
     /// 戻り値は `(再オープン禁止かどうか, peer が載せたアプリケーションエラーコード)` の
     /// 組である。エラーコードが `None` の場合はコードを解釈できなかったことを表す
-    /// (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams) /
+    /// (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams) /
     /// §12.5 (Stream Reset Error Codes))。`subgroup_id` を省略した場合は FirstObjectId
     /// モードの未解決 subgroup を表す。draft 由来の仕様であり、将来の改訂で変更される
     /// 可能性がある。
@@ -3135,7 +3192,7 @@ impl CoreSession {
     /// 応答 (TRACK_STATUS_OK / REQUEST_ERROR) を受信する前の TRACK_STATUS と、保持して
     /// いない Request ID では破棄しない。応答前に request stream が終端した場合は
     /// REQUEST_ERROR として記録されるため破棄できる
-    /// (draft-ietf-moq-transport-22 §9.13 (TRACK_STATUS))。
+    /// (draft-ietf-moq-transport-23 §9.12 (TRACK_STATUS))。
     fn forget_track_status(&mut self, request_id: u64) -> bool {
         self.session.forget_track_status(request_id).is_some()
     }
@@ -3295,16 +3352,22 @@ impl CoreSession {
         redirect: Option<(Vec<u8>, Vec<Vec<u8>>, Vec<u8>)>,
     ) -> PyResult<Vec<CoreEvent>> {
         let reason = reason_from_python(reason)?;
-        let redirect = match redirect {
-            Some((connect_uri, namespace, track_name)) => Some(Redirect {
+        let mut error_details = ErrorDetails::new();
+        if let Some((connect_uri, namespace, track_name)) = redirect {
+            error_details.push(ErrorDetail::Redirect(Redirect {
                 connect_uri,
                 track_namespace: track_namespace_from_python(namespace)?,
                 track_name,
-            }),
-            None => None,
-        };
+            }));
+        }
         self.session
-            .send_request_error(request_id, error_code, retry_interval, reason, redirect)
+            .send_request_error(
+                request_id,
+                error_code,
+                retry_interval,
+                reason,
+                error_details,
+            )
             .map_err(runtime_error)?;
         self.drain_events(py)
     }
@@ -3370,29 +3433,22 @@ impl CoreSession {
     }
 
     /// FETCH_OK を送信する。
+    ///
+    /// draft-23 では FETCH_OK は REQUEST_OK に統合され、応答範囲の終端は状態機械が
+    /// 要求と LARGEST_OBJECT から確定する。アプリは EXPIRES / LARGEST_OBJECT などの
+    /// パラメータだけを指定する
+    /// (draft-ietf-moq-transport-23 §9.3 (REQUEST_OK) / §3.2 (Fetch))。
     fn send_fetch_ok(
         &mut self,
         py: Python<'_>,
         request_id: u64,
-        end_of_track: bool,
-        end_location: (u64, u64),
         parameters: &Bound<'_, PyAny>,
         track_properties: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<CoreEvent>> {
-        let end_location = Location {
-            group_id: end_location.0,
-            object_id: end_location.1,
-        };
         let parameters = message_parameters_from_python(parameters)?;
         let track_properties = track_properties_from_python(track_properties)?;
         self.session
-            .send_fetch_ok(
-                request_id,
-                u8::from(end_of_track),
-                end_location,
-                parameters,
-                track_properties,
-            )
+            .send_fetch_ok(request_id, parameters, track_properties)
             .map_err(runtime_error)?;
         self.drain_events(py)
     }
@@ -3453,7 +3509,7 @@ impl CoreSession {
 
     /// 自側が受け持つ subscription の応答を処理する。
     ///
-    /// REQUEST_UPDATE に対して FORWARD などを変更する場合に使う。
+    /// REQUEST_UPDATE に対して PAUSED などを変更する場合に使う。
     fn send_publish_done_for_subscription(
         &mut self,
         py: Python<'_>,
@@ -3479,7 +3535,7 @@ impl CoreSession {
     /// `subgroup_id_mode` は Subgroup ID のエンコードモードであり、`"zero"` /
     /// `"first_object_id"` / `"explicit"` のいずれかである。Subgroup ID を最初の
     /// Object ID として決めるモードでは `subgroup_id` を渡さない
-    /// (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    /// (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     #[pyo3(signature = (stream_id, request_id, track_alias, group_id, subgroup_id=None, subgroup_id_mode="zero", publisher_priority=None, has_properties=false, end_of_group=false, first_object=false))]
     #[allow(clippy::too_many_arguments)]
     fn send_subgroup_header(
@@ -3584,9 +3640,24 @@ impl CoreSession {
     }
 
     /// fetch ストリームへオブジェクトを書き込むことを通知する。
-    fn send_fetch_object(&mut self, py: Python<'_>, stream_id: u64) -> PyResult<Vec<CoreEvent>> {
+    ///
+    /// 書き込む Object の Location は状態機械が要求範囲との照合に使う
+    /// (draft-ietf-moq-transport-23 §11.4.1 (Fetch Header) / §3.2 (Fetch))。
+    fn send_fetch_object(
+        &mut self,
+        py: Python<'_>,
+        stream_id: u64,
+        group_id: u64,
+        object_id: u64,
+    ) -> PyResult<Vec<CoreEvent>> {
         self.session
-            .send_fetch_object(DataStreamId(stream_id))
+            .send_fetch_object(
+                DataStreamId(stream_id),
+                &Location {
+                    group_id,
+                    object_id,
+                },
+            )
             .map_err(runtime_error)?;
         self.drain_events(py)
     }
@@ -3641,7 +3712,7 @@ impl CoreSession {
     /// 送信済みのデータストリームを reset する。
     ///
     /// `reliable_size` を渡すと RESET_STREAM_AT になり、先頭 `reliable_size` バイトは
-    /// peer へ確実に届ける (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
+    /// peer へ確実に届ける (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams))。
     /// 省略した場合は RESET_STREAM になり、未達のデータは破棄される。
     #[pyo3(signature = (stream_id, error_code, reliable_size=None))]
     fn reset_outgoing_data_stream(
@@ -3718,7 +3789,7 @@ impl CoreSession {
     /// `end_of_group` は END_OF_GROUP bit を立てるかどうかを示す。同じ Group ID で
     /// この Object ID より大きい Object ID の Object が存在しないことを宣言する。
     /// STATUS との同時指定は状態機械がプロトコル違反として拒否する
-    /// (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    /// (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     #[pyo3(signature = (
         request_id,
         group_id,

@@ -42,7 +42,7 @@ AUDIO_TRACK_NAME = b"audio"
 CATALOG_TRACK_NAME = b"catalog"
 
 # Track Alias は publisher が Track ごとに決める
-# (draft-ietf-moq-transport-22 §3.1.3 (Track Alias))。
+# (draft-ietf-moq-transport-23 §3.1.3 (Track Alias))。
 VIDEO_TRACK_ALIAS = 1
 AUDIO_TRACK_ALIAS = 2
 CATALOG_TRACK_ALIAS = 3
@@ -253,7 +253,7 @@ async def test_relay_serves_the_msf_catalog_over_fetch() -> None:
     購読で object が relay へ届いたことを確かめてから FETCH する。relay が購読の確立前に
     届いた object を保持するとは限らないため、object を送る前に購読を確立しておく。
     FETCH は購読と同じ Track を対象にするが、届く経路は fetch stream である
-    (draft-ietf-moq-transport-22 §3.2 (Fetch))。
+    (draft-ietf-moq-transport-23 §3.2 (Fetch))。
     """
     catalog = msf.Catalog()
     catalog.add_track(msf.Track("video", "loc", True))
@@ -284,7 +284,7 @@ async def test_relay_delivers_dummy_audio_as_datagrams() -> None:
     """
     publisher が送ったダミー音声がデータグラムで subscriber へ届くことを確認する。
 
-    データグラムは再送されないため (draft-ietf-moq-transport-22 §11.2 (Datagrams))。
+    データグラムは再送されないため (draft-ietf-moq-transport-23 §11.2 (Datagrams))。
     同じサンプルを複数件送り、最初に届いた 1 件だけを確認する。受信側では
     データストリームを持たないため `MOQTObject.stream_id` が `None` になる。
     """
@@ -307,8 +307,8 @@ async def test_relay_accepts_a_native_quic_connection() -> None:
     """
     QUIC 直接接続 (native QUIC) で relay へ接続できることを確認する。
 
-    QUIC では AUTHORITY と PATH を SETUP で通知し、ALPN は `moqt-22` を使う
-    (draft-ietf-moq-transport-22 §6.2.2 (Native QUIC))。WebTransport と違い
+    QUIC では AUTHORITY と PATH を SETUP で通知し、ALPN は `moqt-23` を使う
+    (draft-ietf-moq-transport-23 §6.2.2 (Native QUIC))。WebTransport と違い
     ストリームの多重化に HTTP/3 を挟まないため、経路が別である。
     """
     client = Client(url=_require_uri(), transport=Transport.Quic, verify_peer=VERIFY_PEER)

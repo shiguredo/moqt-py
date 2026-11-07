@@ -6,17 +6,20 @@
 //!
 //! # 役割分担
 //!
-//! - Python 側: WebTransport のストリーム操作、イベントループ、公開 API の組み立て
-//! - Rust 側: MOQT / LOC / MSF の codec と、MOQT のプロトコル状態機械
+//! - Python 側: MOQT のイベントループ、スケジューリング、公開 API の組み立て
+//! - Rust 側: MOQT / LOC / MSF の codec、MOQT のプロトコル状態機械、
+//!   QUIC / WebTransport / QMux の I/O
 //!
-//! I/O は Python の webtransport-py が担当する。Rust 側は自側が送るべきバイト列を
-//! イベントとして返し、ストリームの実体には触れない。
+//! I/O 層は QUIC と WebTransport と QMux の接続・ストリーム・データグラムだけを
+//! 担当し、状態機械が生成したイベントを Python の asyncio へ配送する。
 
 mod c4m;
 mod codec;
 mod core;
 mod errors;
+mod fetch_encoder;
 mod grease;
+mod io;
 mod loc;
 mod message_parameters;
 mod msf;
@@ -38,28 +41,31 @@ mod _native {
         REQUEST_EXPIRED_AUTH_TOKEN, REQUEST_GOING_AWAY, REQUEST_INTERNAL_ERROR,
         REQUEST_INVALID_FILTER, REQUEST_INVALID_RANGE, REQUEST_MALFORMED_AUTH_TOKEN,
         REQUEST_MALFORMED_TRACK, REQUEST_NAMESPACE_TOO_LARGE, REQUEST_NOT_SUPPORTED,
-        REQUEST_PREFIX_OVERLAP, REQUEST_REDIRECT, REQUEST_TIMEOUT, REQUEST_UNAUTHORIZED,
-        REQUEST_UNINTERESTED, REQUEST_UNSUPPORTED_EXTENSION, SESSION_AUTH_TOKEN_CACHE_OVERFLOW,
-        SESSION_CONTROL_MESSAGE_TIMEOUT, SESSION_DATA_STREAM_TIMEOUT,
+        REQUEST_REDIRECT, REQUEST_TIMEOUT, REQUEST_UNAUTHORIZED, REQUEST_UNINTERESTED,
+        REQUEST_UNSUPPORTED_EXTENSION, SESSION_AUTH_TOKEN_CACHE_OVERFLOW,
+        SESSION_CLOSED_CONTROL_STREAM, SESSION_CONTROL_MESSAGE_TIMEOUT,
+        SESSION_DATA_STREAM_TIMEOUT, SESSION_DELTA_ENCODING_OVERFLOW,
         SESSION_DUPLICATE_AUTH_TOKEN_ALIAS, SESSION_DUPLICATE_TRACK_ALIAS,
-        SESSION_EXPIRED_AUTH_TOKEN, SESSION_GOAWAY_TIMEOUT, SESSION_INTERNAL_ERROR,
-        SESSION_INVALID_AUTHORITY, SESSION_INVALID_PATH, SESSION_INVALID_REQUEST_ID,
-        SESSION_KEY_VALUE_FORMATTING_ERROR, SESSION_LOCAL_DATAGRAM_TIMEOUT,
+        SESSION_EXPIRED_AUTH_TOKEN, SESSION_FIELD_LENGTH_EXCEEDED, SESSION_GOAWAY_TIMEOUT,
+        SESSION_INTERNAL_ERROR, SESSION_INVALID_AUTHORITY, SESSION_INVALID_FIELD,
+        SESSION_INVALID_OBJECT_STATUS, SESSION_INVALID_PARAMETER, SESSION_INVALID_PATH,
+        SESSION_INVALID_REQUEST_ID, SESSION_INVALID_STREAM_HEADER, SESSION_LOCAL_DATAGRAM_TIMEOUT,
         SESSION_LOCAL_FILTER_MISMATCH, SESSION_MALFORMED_AUTH_TOKEN, SESSION_MALFORMED_AUTHORITY,
+        SESSION_MALFORMED_KEY_VALUE, SESSION_MALFORMED_MESSAGE, SESSION_MALFORMED_OBJECT,
         SESSION_MALFORMED_PATH, SESSION_NO_ERROR, SESSION_PROTOCOL_VIOLATION,
-        SESSION_TOO_MANY_REQUEST_UPDATES, SESSION_UNAUTHORIZED, SESSION_UNKNOWN_AUTH_TOKEN_ALIAS,
+        SESSION_ROLE_VIOLATION, SESSION_TOO_MANY_REQUEST_UPDATES, SESSION_TRUNCATED_OBJECT,
+        SESSION_UNAUTHORIZED, SESSION_UNEXPECTED_MESSAGE, SESSION_UNKNOWN_AUTH_TOKEN_ALIAS,
         STREAM_CANCELLED, STREAM_DELIVERY_TIMEOUT, STREAM_EXCESSIVE_LOAD,
         STREAM_EXPIRED_AUTH_TOKEN, STREAM_GOING_AWAY, STREAM_INTERNAL_ERROR,
         STREAM_MALFORMED_TRACK, STREAM_SESSION_CLOSED, STREAM_TOO_FAR_BEHIND,
-        STREAM_UNKNOWN_OBJECT_STATUS,
     };
     use shiguredo_moqt::message_parameter::{
         PARAM_AUTHORIZATION_TOKEN, PARAM_EXPIRES, PARAM_FILL_PARAMETERS, PARAM_FILL_TIMEOUT,
-        PARAM_FORWARD, PARAM_GROUP_ORDER, PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT,
-        PARAM_LOCATION_FILTER, PARAM_NEW_GROUP_REQUEST, PARAM_OBJECT_DELIVERY_TIMEOUT,
-        PARAM_OBJECT_PROPERTY_FILTER, PARAM_OBJECTID_FILTER, PARAM_PRIORITY_FILTER,
-        PARAM_RENDEZVOUS_TIMEOUT, PARAM_SUBGROUP_DELIVERY_TIMEOUT, PARAM_SUBGROUP_FILTER,
-        PARAM_SUBSCRIBER_PRIORITY, PARAM_TRACK_NAMESPACE_PREFIX, PARAM_TRACK_PROPERTY_FILTER,
+        PARAM_GROUP_ORDER, PARAM_INCLUDE_PROPERTIES, PARAM_LARGEST_OBJECT, PARAM_LOCATION_FILTER,
+        PARAM_NEW_GROUP_REQUEST, PARAM_OBJECT_DELIVERY_TIMEOUT, PARAM_OBJECT_PROPERTY_FILTER,
+        PARAM_OBJECTID_FILTER, PARAM_PAUSED, PARAM_PRIORITY_FILTER, PARAM_RENDEZVOUS_TIMEOUT,
+        PARAM_SUBGROUP_DELIVERY_TIMEOUT, PARAM_SUBGROUP_FILTER, PARAM_SUBSCRIBER_PRIORITY,
+        PARAM_TRACK_NAMESPACE_PREFIX, PARAM_TRACK_PROPERTY_FILTER,
     };
     use shiguredo_moqt::parameter::{
         SETUP_OPTION_AUTHORITY, SETUP_OPTION_AUTHORIZATION_TOKEN,
@@ -82,6 +88,14 @@ mod _native {
         SUBGROUP_ID_MODE_EXPLICIT, SUBGROUP_ID_MODE_FIRST_OBJECT_ID, SUBGROUP_ID_MODE_ZERO,
     };
 
+    // I/O 層 (Python の asyncio と接続するトランスポート)
+    #[pymodule_export]
+    use crate::io::client::IoClient;
+    #[pymodule_export]
+    use crate::io::event::IoEvent;
+    #[pymodule_export]
+    use crate::io::server::IoServer;
+
     // MOQT のプロトコル層 (moqt.moqt)
     #[pymodule_export]
     use crate::codec::{
@@ -90,6 +104,8 @@ mod _native {
     };
     #[pymodule_export]
     use crate::core::{CoreEvent, CoreSession};
+    #[pymodule_export]
+    use crate::fetch_encoder::FetchEncoder;
 
     // GREASE のヘルパー (moqt.moqt)
     #[pymodule_export]
@@ -145,13 +161,13 @@ mod _native {
     /// モジュール定数を登録する。
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
-        // ストリーム種別 (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams) Table 2)
+        // ストリーム種別 (draft-ietf-moq-transport-23 §6.4.1 (Unidirectional Streams) Table 2)
         module.add("SETUP_STREAM_TYPE", SETUP_STREAM_TYPE)?;
         module.add("FETCH_HEADER_TYPE", FETCH_HEADER_TYPE)?;
         module.add("PADDING_STREAM_TYPE", PADDING_STREAM_TYPE)?;
         module.add("PADDING_DATAGRAM_TYPE", PADDING_DATAGRAM_TYPE)?;
 
-        // Message Parameters (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
+        // Message Parameters (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))
         module.add(
             "PARAM_OBJECT_DELIVERY_TIMEOUT",
             PARAM_OBJECT_DELIVERY_TIMEOUT,
@@ -165,7 +181,7 @@ mod _native {
         module.add("PARAM_EXPIRES", PARAM_EXPIRES)?;
         module.add("PARAM_LARGEST_OBJECT", PARAM_LARGEST_OBJECT)?;
         module.add("PARAM_FILL_TIMEOUT", PARAM_FILL_TIMEOUT)?;
-        module.add("PARAM_FORWARD", PARAM_FORWARD)?;
+        module.add("PARAM_PAUSED", PARAM_PAUSED)?;
         module.add("PARAM_SUBSCRIBER_PRIORITY", PARAM_SUBSCRIBER_PRIORITY)?;
         module.add("PARAM_LOCATION_FILTER", PARAM_LOCATION_FILTER)?;
         module.add("PARAM_GROUP_ORDER", PARAM_GROUP_ORDER)?;
@@ -179,7 +195,7 @@ mod _native {
         module.add("PARAM_TRACK_NAMESPACE_PREFIX", PARAM_TRACK_NAMESPACE_PREFIX)?;
         module.add("PARAM_INCLUDE_PROPERTIES", PARAM_INCLUDE_PROPERTIES)?;
 
-        // SETUP オプション (draft-ietf-moq-transport-22 §9.1 (SETUP))
+        // SETUP オプション (draft-ietf-moq-transport-23 §9.1 (SETUP))
         module.add("SETUP_OPTION_PATH", SETUP_OPTION_PATH)?;
         module.add("SETUP_OPTION_AUTHORITY", SETUP_OPTION_AUTHORITY)?;
         module.add(
@@ -203,7 +219,7 @@ mod _native {
             SETUP_OPTION_MOQT_IMPLEMENTATION,
         )?;
 
-        // REQUEST_ERROR のコード (draft-ietf-moq-transport-22 §16.11.2)
+        // REQUEST_ERROR のコード (draft-ietf-moq-transport-23 §12.3)
         module.add("REQUEST_INTERNAL_ERROR", REQUEST_INTERNAL_ERROR)?;
         module.add("REQUEST_UNAUTHORIZED", REQUEST_UNAUTHORIZED)?;
         module.add("REQUEST_TIMEOUT", REQUEST_TIMEOUT)?;
@@ -216,7 +232,6 @@ mod _native {
         module.add("REQUEST_INVALID_RANGE", REQUEST_INVALID_RANGE)?;
         module.add("REQUEST_MALFORMED_TRACK", REQUEST_MALFORMED_TRACK)?;
         module.add("REQUEST_UNINTERESTED", REQUEST_UNINTERESTED)?;
-        module.add("REQUEST_PREFIX_OVERLAP", REQUEST_PREFIX_OVERLAP)?;
         module.add("REQUEST_NAMESPACE_TOO_LARGE", REQUEST_NAMESPACE_TOO_LARGE)?;
         module.add(
             "REQUEST_UNSUPPORTED_EXTENSION",
@@ -226,7 +241,7 @@ mod _native {
         module.add("REQUEST_CONFLICTING_FILTERS", REQUEST_CONFLICTING_FILTERS)?;
         module.add("REQUEST_INVALID_FILTER", REQUEST_INVALID_FILTER)?;
 
-        // PUBLISH_DONE のコード (draft-ietf-moq-transport-22 §16.11.3)
+        // PUBLISH_DONE のコード (draft-ietf-moq-transport-23 §12.4)
         module.add("PUBLISH_DONE_INTERNAL_ERROR", PUBLISH_DONE_INTERNAL_ERROR)?;
         module.add("PUBLISH_DONE_UNAUTHORIZED", PUBLISH_DONE_UNAUTHORIZED)?;
         module.add("PUBLISH_DONE_TRACK_ENDED", PUBLISH_DONE_TRACK_ENDED)?;
@@ -237,19 +252,18 @@ mod _native {
         module.add("PUBLISH_DONE_EXCESSIVE_LOAD", PUBLISH_DONE_EXCESSIVE_LOAD)?;
         module.add("PUBLISH_DONE_MALFORMED_TRACK", PUBLISH_DONE_MALFORMED_TRACK)?;
 
-        // ストリーム reset のコード (draft-ietf-moq-transport-22 §16.11.4)
+        // ストリーム reset のコード (draft-ietf-moq-transport-23 §12.5)
         module.add("STREAM_INTERNAL_ERROR", STREAM_INTERNAL_ERROR)?;
         module.add("STREAM_CANCELLED", STREAM_CANCELLED)?;
         module.add("STREAM_DELIVERY_TIMEOUT", STREAM_DELIVERY_TIMEOUT)?;
         module.add("STREAM_SESSION_CLOSED", STREAM_SESSION_CLOSED)?;
         module.add("STREAM_GOING_AWAY", STREAM_GOING_AWAY)?;
         module.add("STREAM_TOO_FAR_BEHIND", STREAM_TOO_FAR_BEHIND)?;
-        module.add("STREAM_UNKNOWN_OBJECT_STATUS", STREAM_UNKNOWN_OBJECT_STATUS)?;
         module.add("STREAM_EXPIRED_AUTH_TOKEN", STREAM_EXPIRED_AUTH_TOKEN)?;
         module.add("STREAM_EXCESSIVE_LOAD", STREAM_EXCESSIVE_LOAD)?;
         module.add("STREAM_MALFORMED_TRACK", STREAM_MALFORMED_TRACK)?;
 
-        // Session Termination のコード (draft-ietf-moq-transport-22 §16.11.1)
+        // Session Termination のコード (draft-ietf-moq-transport-23 §12.2)
         module.add("SESSION_NO_ERROR", SESSION_NO_ERROR)?;
         module.add("SESSION_INTERNAL_ERROR", SESSION_INTERNAL_ERROR)?;
         module.add("SESSION_UNAUTHORIZED", SESSION_UNAUTHORIZED)?;
@@ -259,9 +273,33 @@ mod _native {
             "SESSION_DUPLICATE_TRACK_ALIAS",
             SESSION_DUPLICATE_TRACK_ALIAS,
         )?;
+        module.add("SESSION_MALFORMED_KEY_VALUE", SESSION_MALFORMED_KEY_VALUE)?;
         module.add(
-            "SESSION_KEY_VALUE_FORMATTING_ERROR",
-            SESSION_KEY_VALUE_FORMATTING_ERROR,
+            "SESSION_INVALID_OBJECT_STATUS",
+            SESSION_INVALID_OBJECT_STATUS,
+        )?;
+        module.add(
+            "SESSION_INVALID_STREAM_HEADER",
+            SESSION_INVALID_STREAM_HEADER,
+        )?;
+        module.add("SESSION_MALFORMED_OBJECT", SESSION_MALFORMED_OBJECT)?;
+        module.add("SESSION_TRUNCATED_OBJECT", SESSION_TRUNCATED_OBJECT)?;
+        module.add("SESSION_MALFORMED_MESSAGE", SESSION_MALFORMED_MESSAGE)?;
+        module.add("SESSION_INVALID_FIELD", SESSION_INVALID_FIELD)?;
+        module.add("SESSION_UNEXPECTED_MESSAGE", SESSION_UNEXPECTED_MESSAGE)?;
+        module.add("SESSION_ROLE_VIOLATION", SESSION_ROLE_VIOLATION)?;
+        module.add("SESSION_INVALID_PARAMETER", SESSION_INVALID_PARAMETER)?;
+        module.add(
+            "SESSION_CLOSED_CONTROL_STREAM",
+            SESSION_CLOSED_CONTROL_STREAM,
+        )?;
+        module.add(
+            "SESSION_DELTA_ENCODING_OVERFLOW",
+            SESSION_DELTA_ENCODING_OVERFLOW,
+        )?;
+        module.add(
+            "SESSION_FIELD_LENGTH_EXCEEDED",
+            SESSION_FIELD_LENGTH_EXCEEDED,
         )?;
         module.add("SESSION_INVALID_PATH", SESSION_INVALID_PATH)?;
         module.add("SESSION_MALFORMED_PATH", SESSION_MALFORMED_PATH)?;
@@ -300,11 +338,11 @@ mod _native {
             SESSION_LOCAL_DATAGRAM_TIMEOUT,
         )?;
 
-        // Object Status (draft-ietf-moq-transport-22 §11.1.1 (Object Status))
+        // Object Status (draft-ietf-moq-transport-23 §11.1.1 (Object Status))
         module.add("OBJECT_STATUS_END_OF_GROUP", OBJECT_STATUS_END_OF_GROUP)?;
         module.add("OBJECT_STATUS_END_OF_TRACK", OBJECT_STATUS_END_OF_TRACK)?;
 
-        // Subgroup ID のエンコードモード (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))
+        // Subgroup ID のエンコードモード (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))
         // SUBGROUP_ID_MODE は Type Flags の bits 1-2 (mask 0x06) の 2 bit である。
         // 0b11 は将来のために予約されている
         module.add("SUBGROUP_ID_MODE_ZERO", SUBGROUP_ID_MODE_ZERO)?;
@@ -325,7 +363,7 @@ mod _native {
             DEFAULT_PEER_ALIAS_RETENTION_MS,
         )?;
 
-        // GOAWAY の New Session URI の最大長 (draft-ietf-moq-transport-22 §9.2 (GOAWAY))
+        // GOAWAY の New Session URI の最大長 (draft-ietf-moq-transport-23 §9.2 (GOAWAY))
         // Rust 側はバイト列の長さなので usize である。Python の int へは u64 として渡す
         // (既知の小さな定数なので桁落ちは起きない)
         module.add(
@@ -334,7 +372,7 @@ mod _native {
         )?;
 
         // PUBLISH_DONE の STREAM_COUNT が不明であることを示す番兵
-        // (draft-ietf-moq-transport-22 §9.9 (PUBLISH_DONE))
+        // (draft-ietf-moq-transport-23 §9.9 (PUBLISH_DONE))
         module.add(
             "PUBLISH_DONE_STREAM_COUNT_UNKNOWN",
             PUBLISH_DONE_STREAM_COUNT_UNKNOWN,

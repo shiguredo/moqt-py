@@ -32,7 +32,7 @@ pub(crate) fn ec_curve_from_identifier(identifier: i64) -> PyResult<EcCurve> {
 
 /// COSE のアルゴリズム識別子からアルゴリズムを返す。
 ///
-/// draft-ietf-moq-c4m-01 付録 A のベクタが HMAC-SHA256 に使う `-4` も受理する。
+/// draft-ietf-moq-c4m-02 付録 A のベクタが HMAC-SHA256 に使う `-4` も受理する。
 pub(crate) fn algorithm_from_identifier(identifier: i64) -> PyResult<Algorithm> {
     Algorithm::from_identifier_with_c4m_draft_alias(identifier)
         .ok_or_else(|| PyValueError::new_err(format!("unsupported COSE algorithm: {identifier}")))
@@ -201,7 +201,7 @@ impl CoseKey {
 ///
 /// 対称鍵の場合は MAC を返す。EC2 / OKP の場合は COSE の固定長形式 (ECDSA は
 /// `r || s`) の署名を返す。`algorithm` は COSE のアルゴリズム識別子であり、
-/// draft-ietf-moq-c4m-01 付録 A のベクタが HMAC-SHA256 に使う `-4` も受理する。
+/// draft-ietf-moq-c4m-02 付録 A のベクタが HMAC-SHA256 に使う `-4` も受理する。
 ///
 /// 対応するアルゴリズムは HMAC 256/384/512、ES256/384/512、EdDSA (Ed25519) である。
 #[pyfunction]

@@ -29,7 +29,7 @@ use crate::errors::codec_error;
 /// DPoP proof の Authorization Context (draft-nandakumar-moq-generic-dpop-proof-00
 /// §4.2 / §5.1)。
 ///
-/// `tns` / `tn` は draft-ietf-moq-transport-22 §8.8 の正規シリアライズを使う。
+/// `tns` / `tn` は draft-ietf-moq-transport-23 §8.8 の正規シリアライズを使う。
 /// リテラルでないバイトは `.` と 16 進 2 桁へエスケープされるため、`tns` には
 /// `moqt.msf.serialize_namespace`、`tn` には `moqt.msf.serialize_track_name` の結果を
 /// 渡す。生の名前を渡すと `verify_target` などで一致しない。
@@ -106,7 +106,7 @@ impl AuthorizationContext {
 
     /// `tns` / `tn` が対象の Full Track Name と一致するかどうかを検証する。
     ///
-    /// `tn` が proof に無い場合は `ValueError` になる (draft-ietf-moq-c4m-01 §3.1.2 は
+    /// `tn` が proof に無い場合は `ValueError` になる (draft-ietf-moq-c4m-02 §3.1.2 は
     /// `tn` を必須としている)。
     fn verify_target(&self, namespace: Vec<Vec<u8>>, track_name: &[u8]) -> PyResult<()> {
         let namespace = crate::core::track_namespace_from_python(namespace)?;
@@ -118,7 +118,7 @@ impl AuthorizationContext {
     /// `resource` が指定されている場合に `tns` / `tn` と整合するかどうかを検証する。
     ///
     /// `resource` は `moqt://<relay-endpoint>?tns=<namespace>&tn=<track>` の形式
-    /// (draft-ietf-moq-c4m-01 §3.1.3) を前提とし、クエリパラメータを文字列として
+    /// (draft-ietf-moq-c4m-02 §3.1.3) を前提とし、クエリパラメータを文字列として
     /// 比較する。パーセントエンコーディングは解釈しない。
     fn verify_resource_consistency(&self) -> PyResult<()> {
         self.inner

@@ -1,6 +1,6 @@
 """C4M (Common Access Token for MoQ) の codec と認可。
 
-draft-ietf-moq-c4m-01 の `moqt` / `moqt-reval` クレームと、その基盤となる
+draft-ietf-moq-c4m-02 の `moqt` / `moqt-reval` クレームと、その基盤となる
 CBOR (RFC 8949) / COSE (RFC 9052) / CWT (RFC 8392) / CAT (CTA-5007-B) の
 トークンを扱う。JWK (RFC 7517) / JWS compact (RFC 7515) / DPoP proof
 (draft-nandakumar-moq-generic-dpop-proof-00) も公開する。
@@ -66,14 +66,14 @@ from moqt._native import (
     verify,
 )
 
-# `moqt` / `moqt-reval` の claim key (draft-ietf-moq-c4m-01 §2)
+# `moqt` / `moqt-reval` の claim key (draft-ietf-moq-c4m-02 §2)
 CLAIM_MOQT: int = _native.CLAIM_MOQT
 """`moqt` クレームの claim key (付録 A.5 のベクタが使う 327)。"""
 
 CLAIM_MOQT_REVAL: int = _native.CLAIM_MOQT_REVAL
 """`moqt-reval` クレームの claim key (付録 A.5 のベクタが使う 328)。"""
 
-# `bin-match` の match-type (draft-ietf-moq-c4m-01 §2.1)
+# `bin-match` の match-type (draft-ietf-moq-c4m-02 §2.1)
 MATCH_TYPE_PREFIX: int = _native.MATCH_TYPE_PREFIX
 """`bin-match` の前方一致を表す match-type。"""
 
@@ -111,7 +111,7 @@ HEADER_TYPE: int = _native.HEADER_TYPE
 """ヘッダパラメータ `typ` (16)。"""
 
 C4M_DRAFT_HMAC_SHA256_ALGORITHM_ID: int = _native.C4M_DRAFT_HMAC_SHA256_ALGORITHM_ID
-"""draft-ietf-moq-c4m-01 付録 A のベクタが HMAC-SHA256 に使う識別子 (-4)。
+"""draft-ietf-moq-c4m-02 付録 A のベクタが HMAC-SHA256 に使う識別子 (-4)。
 
 検証では HMAC-SHA256 として受理し、発行には使わない。
 """
@@ -195,9 +195,9 @@ CONFIRMATION_JWK_THUMBPRINT: int = _native.CONFIRMATION_JWK_THUMBPRINT
 """IANA 登録の `jkt` の confirmation key (323)。"""
 
 CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT: int = _native.CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT
-"""draft-ietf-moq-c4m-01 のベクタが使う `jkt` の confirmation key (3)。"""
+"""draft-ietf-moq-c4m-02 のベクタが使う `jkt` の confirmation key (3)。"""
 
-# MOQT の Auth Token Type (draft-ietf-moq-c4m-01 §7.1)
+# MOQT の Auth Token Type (draft-ietf-moq-c4m-02 §7.1)
 MOQT_AUTH_TOKEN_TYPE_CAT: int = _native.MOQT_AUTH_TOKEN_TYPE_CAT
 """CAT の Auth Token Type (0x01)。"""
 
@@ -213,7 +213,7 @@ MOQT_AUTHORIZATION_CONTEXT_TYPE: str = _native.MOQT_AUTHORIZATION_CONTEXT_TYPE
 
 
 class MoqtAction(enum.IntEnum):
-    """`moqt` クレームのアクション (draft-ietf-moq-c4m-01 §2.1 Table 1)。
+    """`moqt` クレームのアクション (draft-ietf-moq-c4m-02 §2.1 Table 1)。
 
     メンバー名は MOQT のメッセージ名と同じである。値は `moqt-actions` の識別子で
     あり、`MoqtScope.actions` と `CatClaims.authorize` にそのまま渡せる。

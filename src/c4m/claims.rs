@@ -1,6 +1,6 @@
 //! `moqt` クレームのアクション、マッチ、スコープ (`moqt.c4m`)。
 //!
-//! draft-ietf-moq-c4m-01 §2.1 の `moqt` クレームと `moqt-reval` (§2.2)、および
+//! draft-ietf-moq-c4m-02 §2.1 の `moqt` クレームと `moqt-reval` (§2.2)、および
 //! `catdpop` (§3.1.1) を公開する。`moqt` クレームのアクションとマッチの評価は
 //! バイト単位であり、正規化はしない。
 //!
@@ -19,14 +19,14 @@ use crate::c4m::cbor::CborValue;
 use crate::c4m::namespace_refs;
 use crate::errors::codec_error;
 
-/// アクションの識別子 (draft-ietf-moq-c4m-01 §2.1 Table 1) からアクションを返す。
+/// アクションの識別子 (draft-ietf-moq-c4m-02 §2.1 Table 1) からアクションを返す。
 ///
 /// 未知の識別子は `None` になる。認可判定では未知の識別子を「認可しない」として扱う。
 pub(crate) fn action_from_key(key: i64) -> Option<MoqtAction> {
     MoqtAction::from_key(key)
 }
 
-/// `bin-match` (draft-ietf-moq-c4m-01 §2.1)。
+/// `bin-match` (draft-ietf-moq-c4m-02 §2.1)。
 ///
 /// バイト文字列は完全一致、prefix / suffix は前方 / 後方一致を表す。マッチは
 /// バイト単位で行い、正規化はしない。
@@ -128,7 +128,7 @@ impl Match {
     }
 }
 
-/// `moqt-ns-match` (draft-ietf-moq-c4m-01 §2.1)。
+/// `moqt-ns-match` (draft-ietf-moq-c4m-02 §2.1)。
 ///
 /// 名前空間フィールドのマッチ ([`Match`]) と、名前空間の末尾にそれ以上のフィールドが
 /// 無いことを要求する `nil` のいずれかである。
@@ -189,7 +189,7 @@ impl NamespaceMatch {
     }
 }
 
-/// `moqt-scope` (draft-ietf-moq-c4m-01 §2.1)。
+/// `moqt-scope` (draft-ietf-moq-c4m-02 §2.1)。
 ///
 /// アクションの配列と、省略可能な名前空間マッチの配列 / トラック名マッチを持つ。
 /// 名前空間マッチ無しでトラック名マッチだけを持つスコープは encode できない。
@@ -217,7 +217,7 @@ impl MoqtScope {
         }
     }
 
-    /// アクションを追加する (draft-ietf-moq-c4m-01 §2.1 Table 1)。
+    /// アクションを追加する (draft-ietf-moq-c4m-02 §2.1 Table 1)。
     fn action(&mut self, action: i64) {
         self.inner.actions.push(action);
     }
@@ -325,7 +325,7 @@ impl MoqtScope {
     }
 }
 
-/// `moqt` クレーム (draft-ietf-moq-c4m-01 §2.1)。
+/// `moqt` クレーム (draft-ietf-moq-c4m-02 §2.1)。
 ///
 /// アクションスコープの配列を持つ。いずれかのスコープが認可すれば許可となり、評価順は
 /// 問わない (§2.1.2)。
@@ -418,7 +418,7 @@ impl MoqtClaim {
     }
 }
 
-/// `catdpop` クレーム (CTA-5007-B / draft-ietf-moq-c4m-01 §3.1.1)。
+/// `catdpop` クレーム (CTA-5007-B / draft-ietf-moq-c4m-02 §3.1.1)。
 ///
 /// DPoP proof の処理設定を持つ。label 0 が受理ウィンドウ (秒)、label 1 が jti による
 /// リプレイ保護を行うかどうかを表す。解釈しなかった設定は `raw` に保持する。
@@ -544,11 +544,11 @@ impl CatDpop {
 
 /// クレームとマッチの定数をモジュールへ登録する。
 pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // `moqt` / `moqt-reval` の claim key (draft-ietf-moq-c4m-01 §2)
+    // `moqt` / `moqt-reval` の claim key (draft-ietf-moq-c4m-02 §2)
     module.add("CLAIM_MOQT", CLAIM_MOQT)?;
     module.add("CLAIM_MOQT_REVAL", CLAIM_MOQT_REVAL)?;
 
-    // `bin-match` の match-type (draft-ietf-moq-c4m-01 §2.1)
+    // `bin-match` の match-type (draft-ietf-moq-c4m-02 §2.1)
     module.add("MATCH_TYPE_PREFIX", MATCH_TYPE_PREFIX)?;
     module.add("MATCH_TYPE_SUFFIX", MATCH_TYPE_SUFFIX)?;
     Ok(())

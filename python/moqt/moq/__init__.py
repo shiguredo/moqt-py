@@ -1,9 +1,12 @@
 """WebTransport 接続上で MOQT セッションを扱う client。
 
-`webtransport-py` の統一 API (`Client` / `Server` と `HTTPVersion`) が
-WebTransport over HTTP/3 / HTTP/2 と QUIC の I/O を担当し、
-`moqt._native` の MOQT 状態機械と接続する。下位層である `moqt.moqt` の codec や
-sans I/O 状態機械を直接扱う必要はない。
+`moqt._native` の I/O 層が WebTransport over HTTP/3 / HTTP/2、QUIC 直接接続、
+QMux の接続・ストリーム・データグラムを担当し、Python 側のランタイムが MOQT の
+状態機械と接続する。下位層である `moqt.moqt` の codec や sans I/O 状態機械を
+直接扱う必要はない。
+
+I/O 層は Rust の tobi-quic (QUIC / WebTransport over HTTP/3)、http2-rs
+(WebTransport over HTTP/2)、qmux-rs (QMux) を使う。
 
 公開 API:
 
@@ -37,7 +40,7 @@ from moqt.moq.transport import Transport
 
 # Subgroup Header の Subgroup ID エンコードモード。
 # `Publication.send_object` の `subgroup_id_mode` に渡す
-# (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+# (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
 SUBGROUP_ID_MODE_ZERO = "zero"
 SUBGROUP_ID_MODE_FIRST_OBJECT_ID = "first_object_id"
 SUBGROUP_ID_MODE_EXPLICIT = "explicit"

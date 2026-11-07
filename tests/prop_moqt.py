@@ -3,6 +3,7 @@
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from moqt import loc
 from moqt.moqt import (
     GREASE_BASE,
     GREASE_INTERVAL,
@@ -13,12 +14,12 @@ from moqt.moqt import (
     PARAM_EXPIRES,
     PARAM_FILL_PARAMETERS,
     PARAM_FILL_TIMEOUT,
-    PARAM_FORWARD,
     PARAM_GROUP_ORDER,
     PARAM_LARGEST_OBJECT,
     PARAM_LOCATION_FILTER,
     PARAM_NEW_GROUP_REQUEST,
     PARAM_OBJECT_DELIVERY_TIMEOUT,
+    PARAM_PAUSED,
     PARAM_SUBGROUP_DELIVERY_TIMEOUT,
     PARAM_SUBSCRIBER_PRIORITY,
     PARAM_TRACK_NAMESPACE_PREFIX,
@@ -26,6 +27,9 @@ from moqt.moqt import (
     PROP_DEFAULT_PUBLISHER_PRIORITY,
     PROP_DYNAMIC_GROUPS,
     PROP_IMMUTABLE_PROPERTIES,
+    PROP_MAX_CACHE_DURATION,
+    PROP_PRIOR_GROUP_ID_GAP,
+    PROP_PRIOR_OBJECT_ID_GAP,
     PUBLISHER_PRIORITY_DEFAULT,
     LocationFilter,
     MessageParameters,
@@ -38,7 +42,7 @@ from moqt.moqt import (
     is_grease,
 )
 
-# Object Status の Normal (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。
+# Object Status の Normal (draft-ietf-moq-transport-23 §11.1.1 (Object Status))。
 OBJECT_STATUS_NORMAL = 0x0
 
 # 購読で使う Track Alias と Group ID。
@@ -57,14 +61,14 @@ REQUEST_STREAM_ID = 0
 # プロパティの型番号と varint 値として生成する値の上限。
 #
 # varint は 8 バイト表現で 62 bit まで運べる
-# (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers))。
+# (draft-ietf-moq-transport-23 §8.1 (Variable-Length Integers))。
 MAX_PROPERTY_TYPE = 2**62 - 1
 MAX_PROPERTY_VALUE = 2**62 - 1
 
 # バイト列型プロパティの長さの上限。
 #
 # draft の値長上限は 2^16-1 バイトである
-# (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。ここでは
+# (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))。ここでは
 # テストの実行時間を抑えるため十分に小さい値にする。
 MAX_PROPERTY_BYTES = 64
 
@@ -72,7 +76,7 @@ MAX_PROPERTY_BYTES = 64
 MAX_PROPERTY_ENTRIES = 8
 
 # 値域が仕様で固定されている Track Property の型番号
-# (draft-ietf-moq-transport-22 §10.4 (DEFAULT PUBLISHER PRIORITY) /
+# (draft-ietf-moq-transport-23 §10.4 (DEFAULT PUBLISHER PRIORITY) /
 # §10.5 (DEFAULT PUBLISHER GROUP ORDER) / §10.6 (DYNAMIC GROUPS))。
 VALUE_CONSTRAINED_TRACK_TYPES = (
     PROP_DEFAULT_PUBLISHER_PRIORITY,
@@ -85,10 +89,31 @@ def _is_mandatory_track_type(prop_type: int) -> bool:
     """必須 Track Property の範囲 (0x4000-0x7FFF) の型番号かどうかを返す。
 
     この範囲の型番号は Track scope では正当だが、この実装が認識していない値を受信すると
-    購読が成立しない (draft-ietf-moq-transport-22 §3.7 (Mandatory to Understand Track Properties))。
+    購読が成立しない (draft-ietf-moq-transport-23 §3.7 (Mandatory to Understand Track Properties))。
     Object scope では malformed になる。
     """
     return MANDATORY_TRACK_PROPERTY_MIN <= prop_type <= MANDATORY_TRACK_PROPERTY_MAX
+
+
+# draft-23 では既知の Property の許可スコープが Track / Object で分かれる
+# (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))。
+# 既知の単一スコープ Property を逆側のスコープへ入れると encode が拒否するため、
+# 生成対象から外す。
+TRACK_ONLY_PROPERTY_TYPES = {
+    PROP_MAX_CACHE_DURATION,
+    PROP_DEFAULT_PUBLISHER_PRIORITY,
+    PROP_DEFAULT_PUBLISHER_GROUP_ORDER,
+    PROP_DYNAMIC_GROUPS,
+}
+OBJECT_ONLY_PROPERTY_TYPES = {
+    PROP_PRIOR_GROUP_ID_GAP,
+    PROP_PRIOR_OBJECT_ID_GAP,
+    loc.TIMESCALE,
+    loc.VIDEO_FRAME_MARKING,
+    loc.AUDIO_LEVEL,
+    loc.VIDEO_CONFIG,
+    loc.AUDIO_CONFIG,
+}
 
 
 def _is_generatable_track_type(prop_type: int) -> bool:
@@ -101,13 +126,18 @@ def _is_generatable_track_type(prop_type: int) -> bool:
     return (
         prop_type != PROP_IMMUTABLE_PROPERTIES
         and prop_type not in VALUE_CONSTRAINED_TRACK_TYPES
+        and prop_type not in OBJECT_ONLY_PROPERTY_TYPES
         and not _is_mandatory_track_type(prop_type)
     )
 
 
 def _is_generatable_object_type(prop_type: int) -> bool:
     """任意の値で生成してよい Object Property の型番号かどうかを返す。"""
-    return prop_type != PROP_IMMUTABLE_PROPERTIES and not _is_mandatory_track_type(prop_type)
+    return (
+        prop_type != PROP_IMMUTABLE_PROPERTIES
+        and prop_type not in TRACK_ONLY_PROPERTY_TYPES
+        and not _is_mandatory_track_type(prop_type)
+    )
 
 
 # 生成対象の Object Property / Track Property の型番号。
@@ -124,7 +154,7 @@ def _track_properties(draw: st.DrawFn) -> list[tuple[int, int | bytes]]:
     """型番号が重複しない任意の Track Property 列を生成する。
 
     偶数型は varint、奇数型はバイト列である
-    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))。
     """
     prop_types = draw(
         st.lists(
@@ -150,7 +180,7 @@ def _object_properties(draw: st.DrawFn) -> list[tuple[int, int | bytes]]:
     """型番号が重複しない任意の Object Property 列を生成する。
 
     偶数型は varint、奇数型はバイト列である
-    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))。
     """
     prop_types = draw(
         st.lists(
@@ -230,7 +260,7 @@ def _subgroup_stream(
     """subgroup ストリームのバイト列を組み立てる。
 
     Subgroup ID を明示し、Object ID は差分で表現する
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     # bit 4 は常に 1。SUBGROUP_ID_MODE = 0b10 (bits 1-2) は Subgroup ID の明示、
     # bit 0 は Properties の存在を表す。
@@ -386,7 +416,7 @@ def prop_object_properties_round_trip(
     encoded = original.encode()
 
     # Properties Length (vi64) が先頭に付く
-    # (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))
+    # (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))
     decoded, consumed = ObjectProperties.decode(encoded)
 
     assert consumed == len(encoded)
@@ -405,7 +435,7 @@ def prop_track_properties_round_trip(
     任意の Track Property 列が encode / decode で元の内容へ戻ることを確認する。
 
     Track Properties には長さプレフィックスが無く、セッションが運ぶ KVP 列そのものが
-    encode 結果になる (draft-ietf-moq-transport-22 §8.4 (Track and Object Properties))。
+    encode 結果になる (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))。
     列挙の順はワイヤ上と同じ型番号の昇順になる。
     """
     original = _track_properties_from_list(properties)
@@ -429,7 +459,7 @@ def prop_track_properties_encode_matches_session_output(
     Track Properties の encode 結果がセッションの送出する PUBLISH と一致することを確認する。
 
     properties ブロックは制御メッセージの末尾にそのまま埋め込まれる
-    (draft-ietf-moq-transport-22 §9.8 (PUBLISH))。したがって同じ型番号と値の組を
+    (draft-ietf-moq-transport-23 §9.8 (PUBLISH))。したがって同じ型番号と値の組を
     辞書で渡した場合と `TrackProperties` で組み立てた場合とで、ワイヤ上の
     properties ブロックは同じバイト列になる。
     """
@@ -460,19 +490,18 @@ def prop_track_properties_encode_matches_session_output(
 
 # Message Parameter の型番号と値の上限。
 #
-# vi64 は 62 bit まで運べる (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers))。
+# vi64 は 62 bit まで運べる (draft-ietf-moq-transport-23 §8.1 (Variable-Length Integers))。
 MAX_MESSAGE_PARAMETER_VALUE = 2**62 - 1
 
-# 値が vi64 のパラメータ型 (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
+# 値が vi64 のパラメータ型 (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))。
 VARINT_PARAMETER_TYPES = (
     PARAM_OBJECT_DELIVERY_TIMEOUT,
     PARAM_SUBGROUP_DELIVERY_TIMEOUT,
     PARAM_FILL_TIMEOUT,
     PARAM_EXPIRES,
-    PARAM_NEW_GROUP_REQUEST,
 )
 
-# LOCATION_FILTER の種別 (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
+# LOCATION_FILTER の種別 (draft-ietf-moq-transport-23 §9.19.9 (LOCATION FILTER Parameter))。
 LOCATION_FILTER_KINDS = (
     "none",
     "relative_group",
@@ -510,7 +539,7 @@ def _location_filters(draw: st.DrawFn) -> LocationFilter:
 def _message_parameters(draw: st.DrawFn) -> dict[int, object]:
     """型ごとの Python 表現で任意の Message Parameter の辞書を生成する。
 
-    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))
+    (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))
     """
     parameters: dict[int, object] = {}
     for param_type in draw(
@@ -524,8 +553,11 @@ def _message_parameters(draw: st.DrawFn) -> dict[int, object]:
             st.integers(min_value=0, max_value=MAX_MESSAGE_PARAMETER_VALUE)
         )
     if draw(st.booleans()):
-        # FORWARD は 0 または 1 である
-        parameters[PARAM_FORWARD] = draw(st.integers(min_value=0, max_value=1))
+        # PAUSED は 0 または 1 である
+        parameters[PARAM_PAUSED] = draw(st.integers(min_value=0, max_value=1))
+    if draw(st.booleans()):
+        # NEW_GROUP_REQUEST も 0 または 1 である
+        parameters[PARAM_NEW_GROUP_REQUEST] = draw(st.integers(min_value=0, max_value=1))
     if draw(st.booleans()):
         # GROUP_ORDER は 1 (Ascending) または 2 (Descending) である
         parameters[PARAM_GROUP_ORDER] = draw(st.integers(min_value=1, max_value=2))
@@ -574,7 +606,7 @@ def prop_message_parameters_round_trip(parameters: dict[int, object]) -> None:
 
     `to_dict()` は `Event.parameters` / `Message.parameters` と同じ形式の辞書を返し、
     その辞書から構築し直した集合は元と一致する
-    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
+    (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))。
     """
     built = MessageParameters(parameters)
 
@@ -590,7 +622,7 @@ def prop_location_filter_round_trip(location_filter: LocationFilter) -> None:
     LOCATION_FILTER が wire 形式のバイト列と往復することを確認する。
 
     先頭の Location Filter Type が後続フィールドを定める
-    (draft-ietf-moq-transport-22 §9.20.9 (LOCATION FILTER Parameter))。
+    (draft-ietf-moq-transport-23 §9.19.9 (LOCATION FILTER Parameter))。
     """
     encoded = location_filter.encode()
 
@@ -612,7 +644,7 @@ def prop_grease_round_trip(sequence: int) -> None:
     範囲内の連番から生成した GREASE 値を `is_grease` が受理することを確認する。
 
     値の並びは `0x7F * N + 0x9D` で上限は `GREASE_MAX` である
-    (draft-ietf-moq-transport-22 §13 (Grease))。乱数源を渡して連番を固定するため、
+    (draft-ietf-moq-transport-23 §13 (Grease))。乱数源を渡して連番を固定するため、
     生成される値も固定される。
     """
     # 乱数源は `stop` を受け取る呼び出し可能オブジェクトである

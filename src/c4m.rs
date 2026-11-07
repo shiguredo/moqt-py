@@ -1,6 +1,6 @@
 //! C4M (Common Access Token for MoQ) の codec (`moqt.c4m`)。
 //!
-//! draft-ietf-moq-c4m-01 の `moqt` / `moqt-reval` クレームと、その基盤となる
+//! draft-ietf-moq-c4m-02 の `moqt` / `moqt-reval` クレームと、その基盤となる
 //! CBOR (RFC 8949) / COSE (RFC 9052) / CWT (RFC 8392) / CAT (CTA-5007-B) の
 //! トークンを Python から扱う。JWK (RFC 7517) / JWS compact (RFC 7515) /
 //! DPoP proof (draft-nandakumar-moq-generic-dpop-proof-00) も公開する。

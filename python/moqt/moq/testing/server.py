@@ -3,15 +3,13 @@
 import asyncio
 import contextlib
 import logging
-import ssl
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from webtransport import HTTPVersion, Session, qmux, quic
-from webtransport import Server as WebTransportServer
-
 from moqt import moqt
+from moqt.moq._io import ServerSession as IoServerSession
+from moqt.moq._io import ServerTransport
 from moqt.moq._runtime import (
     TICK_INTERVAL,
     MessageBody,
@@ -23,7 +21,7 @@ from moqt.moq._runtime import (
 )
 from moqt.moq.client import PeerGoaway
 from moqt.moq.publisher import Publication
-from moqt.moq.transport import MOQT_PROTOCOL, Transport
+from moqt.moq.transport import Transport
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -32,52 +30,12 @@ logger = logging.getLogger(__name__)
 
 # 接続を識別する context。`RuntimeEvents.bind` がコールバックの第 1 引数に渡す。
 #
-# 接続方式によらず (peer address, session ID) の組で識別する。統一 API の
-# `webtransport.Session` はコールバックのたびに作られるため同一性では識別できない。
-# session ID は接続ごとに振られるため、address と組にして初めて一意になる。
-#
-# QUIC 直接接続には WebTransport session が無いため、session ID は常に
-# `QUIC_SESSION_ID` を使い、address だけで接続を識別する。
-ConnectionContext = tuple[tuple[str, int], int]
+# I/O 層が接続ごとに振る ID を使う。WebTransport の session ID は接続方式によっては
+# 存在しないため、識別子には使わない。
+ConnectionContext = int
 
 # QUIC 直接接続に WebTransport session が無いことを示す session ID。
 QUIC_SESSION_ID = 0
-
-
-def _quic_context(address: tuple[str, int]) -> ConnectionContext:
-    """QUIC 接続の address から接続の識別子を作る。"""
-    return (address, QUIC_SESSION_ID)
-
-
-def _session_context(session: Session) -> ConnectionContext:
-    """セッションハンドルから接続の識別子を作る。
-
-    address を取得できない場合は `("", 0)` にする。
-    """
-    address = session.addr
-    return (address if address is not None else ("", 0), session.session_id)
-
-
-def _qmux_context(session: qmux.Session) -> ConnectionContext:
-    """QMux の接続を識別する context を作る。
-
-    QMux には WebTransport session が無く、`session_id` はサーバーが接続ごとに振る
-    連番である (draft-ietf-quic-qmux-02 (QMux))。address を取得できない場合は
-    `("", 0)` にする。
-    """
-    address = session.peer_address
-    return (address if address is not None else ("", 0), session.session_id)
-
-
-def _create_qmux_server_ssl_context(*, certfile: str, keyfile: str) -> ssl.SSLContext:
-    """QMux over TLS のサーバー設定を作る。
-
-    QMux を TLS で使う場合は ALPN が必須であり、受け入れる値は呼び出し側が設定する
-    (draft-ietf-quic-qmux-02 §8.1 (Protocol Negotiation))。
-    """
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(certfile, keyfile)
-    return context
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +60,7 @@ class ServerSession:
         `new_session_uri` は移行先のセッション URI である。Server はこれで移行先を
         通知でき、Client は空の URI しか送れない。`MAX_NEW_SESSION_URI_LENGTH` を
         超える値は送信せずに `MOQTError` になる
-        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
         """
         await self.runtime.send_goaway(timeout, new_session_uri)
 
@@ -111,7 +69,7 @@ class ServerSession:
         """peer が SETUP で宣言した MAX_AUTH_TOKEN_CACHE_SIZE を返す。
 
         宣言が無い場合は 0 である
-        (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+        (draft-ietf-moq-transport-23 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
         """
         return self.runtime.peer_max_auth_token_cache_size
 
@@ -119,7 +77,7 @@ class ServerSession:
     def peer_alias_retention_ms(self) -> int:
         """キャンセル済み peer publisher alias の保持期間 (ms) を返す。
 
-        draft-ietf-moq-transport-22 §3.1.3 (Track Alias) の SHOULD に対応する
+        draft-ietf-moq-transport-23 §3.1.3 (Track Alias) の SHOULD に対応する
         保持期間である。
         """
         return self.runtime.peer_alias_retention_ms
@@ -137,7 +95,7 @@ class ServerSession:
 
         GOAWAY を送った後、購読や fetch の終了を待ってからセッションを閉じる
         判断に使う
-        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration))。
+        (draft-ietf-moq-transport-23 §6.6.1 (Graceful Session Migration))。
         """
         return self.runtime.goaway_drain_ready
 
@@ -146,7 +104,7 @@ class ServerSession:
 
         キーは `blocking_subscription_request_ids` / `blocking_fetch_request_ids` /
         `blocking_track_status_request_ids` である
-        (draft-ietf-moq-transport-22 §6.6.1 (Graceful Session Migration) /
+        (draft-ietf-moq-transport-23 §6.6.1 (Graceful Session Migration) /
         §9.2 (GOAWAY))。
         """
         return self.runtime.goaway_drain_snapshot()
@@ -230,7 +188,7 @@ class SubscriptionRequest:
         返る `Publication` は送った SUBSCRIBE_OK のパラメータと Track Properties を
         保持する。publisher が購読条件を確定する値 (EXPIRES / LARGEST_OBJECT /
         GROUP_ORDER / DEFAULT_PUBLISHER_PRIORITY) はここで通知した値である
-        (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters))。
+        (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters))。
         """
         await self.runtime.send_subscribe_ok(
             self.request_id, track_alias, parameters, track_properties
@@ -271,17 +229,18 @@ class FetchRequest:
 
     async def respond(
         self,
-        end_location: tuple[int, int],
         *,
-        end_of_track: bool = False,
         parameters: dict[int, object] | None = None,
         track_properties: dict[int, object] | None = None,
     ) -> FetchResponse:
-        """FETCH_OK を返して応答ストリームを開く。"""
+        """FETCH_OK を返して応答ストリームを開く。
+
+        draft-23 では応答範囲の終端は状態機械が要求と LARGEST_OBJECT から確定する。
+        `parameters` には EXPIRES / LARGEST_OBJECT などを指定する
+        (draft-ietf-moq-transport-23 §9.3 (REQUEST_OK) / §3.2 (Fetch))。
+        """
         await self.runtime.send_fetch_ok(
             self.request_id,
-            end_location,
-            end_of_track=end_of_track,
             parameters=parameters,
             track_properties=track_properties,
         )
@@ -325,16 +284,16 @@ class FetchResponse:
 
         オブジェクトは `GROUP_ORDER` で要求された向きの順に送る。逆向きの Group を
         送ろうとすると `MOQTError` になる
-        (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter))。
+        (draft-ietf-moq-transport-23 §9.19.8 (GROUP ORDER Parameter))。
 
         `properties_data` には `moqt.moqt.ObjectProperties` の encode 結果を渡す。
         `Properties Length` を含む生バイト列であり、宣言長と実データ長が一致しない
         場合は `MOQTError` になる
-        (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
+        (draft-ietf-moq-transport-23 §11.1.2 (Object Properties))。
 
         `datagram_origin` を真にすると、もともとデータグラムで届いたオブジェクトで
         あることを示す。この場合 Subgroup ID は wire に載らず、受信側では 0 として
-        解決される (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))。
+        解決される (draft-ietf-moq-transport-23 §11.4.1.1 (Flags))。
         """
         await self.runtime.send_fetch_stream_object(
             self.stream_id,
@@ -351,7 +310,7 @@ class FetchResponse:
         """要求された範囲にオブジェクトが存在しないことを通知する。
 
         `group_id` と `object_id` は存在しない範囲の終端である。
-        (draft-ietf-moq-transport-22 §11.4.1.2 (End of Range))
+        (draft-ietf-moq-transport-23 §11.4.2 (End of Range))
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_non_existent_range", group_id, object_id
@@ -361,21 +320,45 @@ class FetchResponse:
         """要求された範囲のオブジェクトが不明であることを通知する。
 
         `group_id` と `object_id` は不明な範囲の終端である。
-        (draft-ietf-moq-transport-22 §11.4.1.2 (End of Range))
+        (draft-ietf-moq-transport-23 §11.4.2 (End of Range))
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_unknown_range", group_id, object_id
+        )
+
+    async def send_end_of_gone_range(self, group_id: int, object_id: int) -> None:
+        """要求された範囲のオブジェクトが Gone であることを通知する。
+
+        `group_id` と `object_id` は Gone の範囲の終端である。
+        (draft-ietf-moq-transport-23 §11.4.2 (End of Range))
+        """
+        await self.runtime.send_fetch_end_of_range(
+            self.stream_id, "end_of_gone_range", group_id, object_id
         )
 
     async def send_end_of_timed_out_range(self, group_id: int, object_id: int) -> None:
         """要求された範囲のオブジェクトが期限切れで取得できなかったことを通知する。
 
         `group_id` と `object_id` は期限切れの範囲の終端である。
-        (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8)
+        (draft-ietf-moq-transport-23 §11.4.1 (Fetch Header) Table 8)
         """
         await self.runtime.send_fetch_end_of_range(
             self.stream_id, "end_of_timed_out_range", group_id, object_id
         )
+
+    async def send_end_of_group(self) -> None:
+        """直前のオブジェクトが Group の最終オブジェクトであることを通知する。
+
+        (draft-ietf-moq-transport-23 §11.4.2.2 (Prior Object Fields))
+        """
+        await self.runtime.send_fetch_end_marker(self.stream_id, "end_of_group")
+
+    async def send_end_of_track(self) -> None:
+        """直前のオブジェクトが Track の最終オブジェクトであることを通知する。
+
+        (draft-ietf-moq-transport-23 §11.4.2.2 (Prior Object Fields))
+        """
+        await self.runtime.send_fetch_end_marker(self.stream_id, "end_of_track")
 
     async def close(self) -> None:
         """fetch stream を終了する。"""
@@ -413,7 +396,7 @@ class PublisherRequest:
 
         PUBLISH の応答は REQUEST_OK であり、SUBSCRIBE_OK とは異なり Track Alias を
         運ばない。peer が通知した Track Alias をそのまま使う
-        (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK))。
+        (draft-ietf-moq-transport-23 §9.3 (REQUEST_OK))。
 
         返る `Publication` は送った REQUEST_OK のパラメータと Track Properties を
         保持する。
@@ -465,80 +448,43 @@ class Server:
         `transport` は接続方式である。`Transport.Quic` では WebTransport session が無いため、
         接続は address 単位になり、`ServerSession.session_id` は `QUIC_SESSION_ID` (0) に
         なる。`Transport.Qmux` では接続ごとにサーバーが振るセッション ID を使う。
-        `allowed_origins` は WebTransport の Origin 検査で使うため、`Transport.Quic` と
-        `Transport.Qmux` では指定できない。
+        `allowed_origins` は WebTransport over HTTP/2 の Origin 検査で使う。
+        Origin を運ぶ仕組みが無い `Transport.Quic` / `Transport.Qmux` と、Rust の
+        WebTransport over HTTP/3 サーバーが Origin ヘッダーを取得できない
+        `Transport.WebTransportOverHTTP3` では指定できない。
 
         `control_message_timeout` と `data_stream_timeout` は peer の停止を検出する
         期限 (秒) である。省略した場合は期限を設けない。設定すると期限切れで
         セッションが終了する
-        (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+        (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
 
         `setup_options` は SETUP で送る Setup Option である。キーは Setup Option Type、
         値は偶数型なら `int`、奇数型なら `bytes`、AUTHORIZATION_TOKEN なら Token の
         辞書またはそのリストである。MOQT_IMPLEMENTATION は `implementation` 引数が
         担うため指定できない
-        (draft-ietf-moq-transport-22 §16.4 (Setup Options))。
+        (draft-ietf-moq-transport-23 §16.4 (Setup Options))。
         """
         if transport in {Transport.Quic, Transport.Qmux} and allowed_origins is not None:
             raise ValueError("allowed_origins is not supported for QUIC and QMux")
+        if transport is Transport.WebTransportOverHTTP3 and allowed_origins is not None:
+            raise ValueError("allowed_origins is not supported for WebTransport over HTTP/3")
         self.transport = transport
-        self._transport: WebTransportServer | qmux.Server | quic.Server
-        if transport is Transport.Qmux:
-            # QMux では TCP/TLS 上で MOQT を運ぶ。ALPN は native QUIC と同じ値を
-            # 受け入れる (draft-nandakumar-moq-qmux-moqt-00 §3.2 (ALPN Identification))。
-            self._transport = qmux.Server(
-                host=host,
-                port=port,
-                ssl=_create_qmux_server_ssl_context(certfile=certfile, keyfile=keyfile),
-                alpn_protocols=[MOQT_PROTOCOL],
-            )
-            # QMux には WebTransport session が無いため、接続の確立と終了は
-            # セッションハンドル単位のコールバックで扱う
-            self._transport.on_session_ready(self._on_qmux_session_ready)
-            self._transport.on_session_closed(self._on_qmux_session_closed)
-            self._transport.on_stream_data(self._on_qmux_stream_data)
-            self._transport.on_stream_reset(self._on_qmux_stream_reset)
-            self._transport.on_stop_sending(self._on_qmux_stop_sending)
-        elif transport is Transport.Quic:
-            # QUIC 直接接続では MOQT の ALPN を提示する
-            # (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
-            self._transport = quic.Server(
-                host=host,
-                port=port,
-                certfile=certfile,
-                keyfile=keyfile,
-                alpn_protocols=[MOQT_PROTOCOL],
-            )
-            # QUIC には WebTransport session が無いため、接続の確立と終了は
-            # address 単位のコールバックで扱う
-            self._transport.on_stream_data(self._on_quic_stream_data)
-            self._transport.on_datagram(self._on_quic_datagram)
-            self._transport.on_stream_reset(self._on_quic_stream_reset)
-            self._transport.on_stop_sending(self._on_quic_stop_sending)
-            self._transport.on_connection_closed(self._on_quic_connection_closed)
-        else:
-            # 統一 API の Server を HTTPVersion で選ぶ。コールバックは接続方式に
-            # よらず Session ハンドルを受け取る
-            self._transport = WebTransportServer(
-                host=host,
-                port=port,
-                http_version=(
-                    HTTPVersion.HTTP2
-                    if transport is Transport.WebTransportOverHTTP2
-                    else HTTPVersion.HTTP3
-                ),
-                certfile=certfile,
-                keyfile=keyfile,
-                allowed_origins=allowed_origins,
-            )
-            self._transport.on_session_ready(self._on_session_ready)
-            self._transport.on_session_closed(self._on_session_closed)
-            self._transport.on_stream_data(self._on_stream_data)
-            self._transport.on_stream_reset(self._on_stream_reset)
-            self._transport.on_datagram(self._on_datagram)
-            # ピアがストリームの送信停止を求めたことを状態機械へ渡す。統一 API の Server は
-            # HTTP/2 と HTTP/3 の両方で `(session, stream_id, error_code)` を通知する
-            self._transport.on_stop_sending(self._on_stop_sending)
+        # 接続方式によらず同じトランスポートを使う。証明書の読み込みと ALPN の設定は
+        # Rust 側の I/O 層が行う
+        self._transport = ServerTransport(
+            transport,
+            host=host,
+            port=port,
+            certfile=certfile,
+            keyfile=keyfile,
+            allowed_origins=allowed_origins,
+        )
+        self._transport.on_session_ready(self._on_session_ready)
+        self._transport.on_session_closed(self._on_session_closed)
+        self._transport.on_stream_data(self._on_stream_data)
+        self._transport.on_stream_reset(self._on_stream_reset)
+        self._transport.on_stop_sending(self._on_stop_sending)
+        self._transport.on_datagram(self._on_datagram)
         self._implementation = implementation
         self._control_message_timeout = control_message_timeout
         self._data_stream_timeout = data_stream_timeout
@@ -561,7 +507,7 @@ class Server:
 
     @property
     def actual_port(self) -> int:
-        """実際にバインドしている UDP ポート番号。"""
+        """実際に待ち受けているポート番号。"""
         return self._transport.actual_port
 
     def on_session_established(
@@ -620,7 +566,7 @@ class Server:
         引数は GOAWAY を受信した session と、その内容である。GOAWAY の受信後は
         状態機械がその peer への新規 request の送信を拒否する。移行先が通知された
         場合は、アプリが新しいセッションへ接続し直す
-        (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+        (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
         """
         self._goaway_callback = callback
 
@@ -647,7 +593,7 @@ class Server:
         過去のオブジェクトを補充するには `runtime.send_fetch_stream_object` を使う。
         fill fetch stream は購読の成立に必須ではないため、コールバックが未登録でも
         ストリームは開かれる
-        (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。
+        (draft-ietf-moq-transport-23 §3.4 (Fill Semantics))。
         """
         self._fill_fetch_callback = callback
 
@@ -675,19 +621,28 @@ class Server:
 
     # ─── 内部 ───────────────────────────────────────────────
 
-    def _transport_ops(self, session: Session) -> TransportOps:
-        """1 本の session に対応するトランスポート操作を組み立てる。"""
+    def _transport_ops(self, session: IoServerSession) -> TransportOps:
+        """1 本の session に対応するトランスポート操作を組み立てる。
+
+        WebTransport は server 起点の双方向ストリームを規定していないため、
+        双方向ストリームの開設は `MOQTError` にする。QUIC 直接接続と QMux では
+        開設できる。
+        """
 
         async def open_bidi_stream() -> int:
-            # WebTransport は server 起点の双方向ストリームを規定していない
-            raise MOQTError(
-                "the server cannot open a bidirectional stream; "
-                "server-initiated requests are not available over WebTransport"
-            )
+            if self.transport in (
+                Transport.WebTransportOverHTTP2,
+                Transport.WebTransportOverHTTP3,
+            ):
+                raise MOQTError(
+                    "the server cannot open a bidirectional stream; "
+                    "server-initiated requests are not available over WebTransport"
+                )
+            return await session.open_stream(unidirectional=False)
 
-        # STOP_SENDING とセッションの終了は接続方式によらず統一 API の Session が持つ。
+        # STOP_SENDING とセッションの終了は接続方式によらず同じ API で扱う。
         # 終了は MOQT の終了コードと理由をそのまま渡し、peer が失敗を検知できるようにする
-        # (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+        # (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
         return TransportOps(
             open_uni_stream=lambda: session.open_stream(unidirectional=True),
             open_bidi_stream=open_bidi_stream,
@@ -865,252 +820,101 @@ class Server:
         )
         await self._on_subscribe(request)
 
-    async def _open_connection(
-        self,
-        context: ConnectionContext,
-        *,
-        address: tuple[str, int],
-        session_id: int,
-        ops: TransportOps,
-    ) -> _Connection:
+    async def _open_connection(self, session: IoServerSession) -> _Connection:
         """1 本の接続で server role の MOQT Session を開始する。"""
+        context = session.connection_id
         if context in self._connections:
-            raise RuntimeError(f"duplicate connection: session={session_id} from {address}")
-
+            raise RuntimeError(
+                f"duplicate connection: id={session.connection_id} from {session.addr}"
+            )
         runtime = Runtime(
             client=False,
             implementation=self._implementation,
-            ops=ops,
+            ops=self._transport_ops(session),
             events=self._runtime_events(context),
             transport=self.transport,
             control_message_timeout=self._control_message_timeout,
             data_stream_timeout=self._data_stream_timeout,
             setup_options=self._setup_options,
         )
-        connection = _Connection(runtime=runtime, address=address, session_id=session_id)
+        connection = _Connection(
+            runtime=runtime,
+            address=session.addr if session.addr is not None else ("", 0),
+            session_id=session.session_id,
+        )
         self._connections[context] = connection
         await runtime.start()
         return connection
 
-    async def _on_session_ready(self, session: Session) -> None:
-        """WebTransport session の確立で MOQT Session を開始する。"""
-        address, session_id = _session_context(session)
-        await self._open_connection(
-            (address, session_id),
-            address=address,
-            session_id=session_id,
-            ops=self._transport_ops(session),
-        )
+    async def _on_session_ready(self, session: IoServerSession) -> None:
+        """接続の確立で MOQT Session を開始する。
 
-    async def _on_session_closed(self, session: Session) -> None:
-        """閉じた session の MOQT 状態を破棄する。"""
-        self._connections.pop(_session_context(session), None)
-
-    async def _quic_connection(self, address: tuple[str, int]) -> _Connection:
-        """QUIC 接続の address から接続を引く。無ければ MOQT Session を開始する。
-
-        QUIC 直接接続には WebTransport session が無く、確立を通知するコールバックも
-        無いため、最初のデータ受信で MOQT Session を開始する。
+        QUIC 直接接続と QMux には WebTransport session が無いが、I/O 層は
+        どちらも接続の確立を通知するため、接続方式による分岐は要らない。
         """
-        connection = self._connections.get(_quic_context(address))
-        if connection is not None:
-            return connection
-        return await self._open_connection(
-            _quic_context(address),
-            address=address,
-            session_id=QUIC_SESSION_ID,
-            ops=self._quic_transport_ops(address),
-        )
+        await self._open_connection(session)
 
-    def _quic_transport_ops(self, address: tuple[str, int]) -> TransportOps:
-        """QUIC 直接接続のトランスポート操作を組み立てる。
+    async def _on_session_closed(self, session: IoServerSession) -> None:
+        """閉じた接続の MOQT 状態を破棄する。"""
+        self._connections.pop(session.connection_id, None)
 
-        QUIC には WebTransport session が無いため、すべての操作が address を伴う。
-        server 起点の双方向ストリームも開ける
-        (draft-ietf-moq-transport-22 §6.2 (Session establishment))。
-        """
-        transport = self._transport
-        if not isinstance(transport, quic.Server):
-            raise RuntimeError("the QUIC server is missing")
-        return TransportOps(
-            open_uni_stream=lambda: transport.open_stream(address, bidirectional=False),
-            open_bidi_stream=lambda: transport.open_stream(address, bidirectional=True),
-            send_stream_data=lambda stream_id, data, fin: transport.send_stream_data(
-                address, stream_id, data, fin
-            ),
-            reset_stream=lambda stream_id, error_code: transport.reset_stream(
-                address, stream_id, error_code
-            ),
-            stop_sending=lambda stream_id, error_code: transport.stop_sending(
-                address, stream_id, error_code
-            ),
-            send_datagram=lambda data: transport.send_datagram(address, data),
-            # MOQT の終了コードと理由をそのまま渡し、peer が失敗を検知できるようにする
-            # (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
-            close=lambda code, reason: transport.close(address, code, reason),
-        )
-
-    async def _on_quic_stream_data(
-        self, stream_id: int, data: bytes, fin: bool, address: tuple[str, int]
+    async def _on_stream_data(
+        self,
+        session: IoServerSession,
+        stream_id: int,
+        data: bytes,
+        fin: bool,
     ) -> None:
-        """QUIC のストリームデータを受信する。
+        """受信データを状態機械へ渡す。
 
-        QUIC の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
-        QUIC の FIN はリセットではないため `reset=False` で通知する。
+        FIN はリセットではないため `reset=False` で通知する。
         """
-        connection = await self._quic_connection(address)
-        await self._receive_stream(_quic_context(address), stream_id, data)
-        if fin:
-            await connection.runtime.receive_stream_closed(stream_id, reset=False, error_code=None)
-
-    async def _on_quic_stream_reset(
-        self, stream_id: int, error_code: int, address: tuple[str, int]
-    ) -> None:
-        """QUIC のストリームリセットを状態機械へ通知する。
-
-        QUIC の RESET_STREAM は MOQT のエラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
-        """
-        connection = self._connections.get(_quic_context(address))
-        if connection is not None:
-            await connection.runtime.receive_stream_closed(
-                stream_id, reset=True, error_code=error_code
-            )
-
-    async def _on_quic_datagram(self, data: bytes, address: tuple[str, int]) -> None:
-        """QUIC のデータグラムを状態機械へ渡す。"""
-        connection = await self._quic_connection(address)
-        await connection.runtime.receive_datagram(data)
-
-    async def _on_quic_stop_sending(
-        self, stream_id: int, error_code: int, address: tuple[str, int]
-    ) -> None:
-        """QUIC の STOP_SENDING を状態機械へ通知する。
-
-        QUIC の STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
-        """
-        connection = self._connections.get(_quic_context(address))
-        if connection is not None:
-            await connection.runtime.receive_stop_sending(stream_id, error_code)
-
-    async def _on_quic_connection_closed(self, address: tuple[str, int]) -> None:
-        """QUIC 接続の終了で MOQT 状態を破棄する。"""
-        self._connections.pop(_quic_context(address), None)
-
-    async def _on_qmux_session_ready(self, session: qmux.Session) -> None:
-        """QMux 接続の確立で MOQT Session を開始する。"""
-        address, session_id = _qmux_context(session)
-        await self._open_connection(
-            (address, session_id),
-            address=address,
-            session_id=session_id,
-            ops=self._qmux_transport_ops(session),
-        )
-
-    async def _on_qmux_session_closed(self, session: qmux.Session) -> None:
-        """閉じた QMux 接続の MOQT 状態を破棄する。"""
-        self._connections.pop(_qmux_context(session), None)
-
-    def _qmux_transport_ops(self, session: qmux.Session) -> TransportOps:
-        """QMux 接続のトランスポート操作を組み立てる。
-
-        QMux では MOQT のストリームがそのまま QMux のストリームへ対応する
-        (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping))。ストリームの
-        reset / STOP_SENDING は webtransport-py の qmux が送出 API を公開している。
-        データグラムは dwnx が実装していないため、呼ばれたら理由の分かるエラーにする
-        (draft-ietf-quic-qmux-02 §9.1 (Unreliable Datagram Extension))。
-        """
-
-        async def unsupported_datagram(_data: bytes) -> None:
-            raise MOQTError("the QMux transport does not support datagrams")
-
-        return TransportOps(
-            open_uni_stream=lambda: session.open_stream(unidirectional=True),
-            open_bidi_stream=lambda: session.open_stream(unidirectional=False),
-            send_stream_data=session.send_stream_data,
-            reset_stream=session.reset_stream,
-            stop_sending=session.stop_sending,
-            send_datagram=unsupported_datagram,
-            close=lambda code, reason: session.close(code, reason),
-        )
-
-    async def _on_qmux_stream_data(
-        self, session: qmux.Session, stream_id: int, data: bytes, fin: bool
-    ) -> None:
-        """QMux のストリームデータを受信する。
-
-        QMux の受信コールバックは FIN を運ぶため、ストリームの終端もここで通知する。
-        QMux の FIN はリセットではないため `reset=False` で通知する
-        (draft-ietf-quic-qmux-02 §4 (QUIC Frames))。
-        """
-        context = _qmux_context(session)
-        connection = self._connections.get(context)
-        if connection is None:
+        await self._receive_stream(session.connection_id, stream_id, data)
+        if not fin:
             return
-        await self._receive_stream(context, stream_id, data)
-        if fin:
+        connection = self._connections.get(session.connection_id)
+        if connection is not None:
             await connection.runtime.receive_stream_closed(stream_id, reset=False, error_code=None)
-
-    async def _on_qmux_stream_reset(
-        self, session: qmux.Session, stream_id: int, error_code: int
-    ) -> None:
-        """QMux のストリームリセットを状態機械へ通知する。
-
-        QMux の RESET_STREAM は MOQT のエラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
-        """
-        connection = self._connections.get(_qmux_context(session))
-        if connection is not None:
-            await connection.runtime.receive_stream_closed(
-                stream_id, reset=True, error_code=error_code
-            )
-
-    async def _on_qmux_stop_sending(
-        self, session: qmux.Session, stream_id: int, error_code: int
-    ) -> None:
-        """QMux の STOP_SENDING を状態機械へ通知する。"""
-        connection = self._connections.get(_qmux_context(session))
-        if connection is not None:
-            await connection.runtime.receive_stop_sending(stream_id, error_code)
-
-    async def _on_stream_data(self, session: Session, stream_id: int, data: bytes) -> None:
-        """受信データを状態機械へ渡す。"""
-        await self._receive_stream(_session_context(session), stream_id, data)
 
     async def _on_stream_reset(
-        self, session: Session, stream_id: int, error_code: int | None
+        self,
+        session: IoServerSession,
+        stream_id: int,
+        error_code: int | None,
     ) -> None:
         """ストリームリセットを状態機械へ通知する。
 
         WT-H3 で `error_code` が `None` の場合は「アプリケーションエラーコード無しの
         リセット」である (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         WT-H2 では WT_RESET_STREAM が MOQT のエラーコードをそのまま運ぶため常に
-        コードがある (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。
+        コードがある (draft-ietf-moq-transport-23 §12.5 (Stream Reset Error Codes))。
         """
-        connection = self._connections.get(_session_context(session))
+        connection = self._connections.get(session.connection_id)
         if connection is not None:
             await connection.runtime.receive_stream_closed(
                 stream_id, reset=True, error_code=error_code
             )
 
-    async def _on_datagram(self, session: Session, data: bytes) -> None:
+    async def _on_datagram(self, session: IoServerSession, data: bytes) -> None:
         """データグラムを状態機械へ渡す。"""
-        connection = self._connections.get(_session_context(session))
-        if connection is not None:
+        connection = self._connections.get(session.connection_id)
+        if connection is not None and not connection.runtime.closed:
             await connection.runtime.receive_datagram(data)
 
     async def _on_stop_sending(
-        self, session: Session, stream_id: int, error_code: int | None
+        self,
+        session: IoServerSession,
+        stream_id: int,
+        error_code: int | None,
     ) -> None:
         """ピアからの STOP_SENDING を状態機械へ通知する。
 
         WT-H2 の WT_STOP_SENDING は MOQT のエラーコードをそのまま運ぶ
-        (draft-ietf-moq-transport-22 §12.5 (Stream Reset Error Codes))。WT-H3 では
+        (draft-ietf-moq-transport-23 §12.5 (Stream Reset Error Codes))。WT-H3 では
         WT_APPLICATION_ERROR レンジ外のコードが「アプリケーションエラーコード無し」と
         して `None` で届く (draft-ietf-webtrans-http3-16 §4.4 (Resetting Data Streams))。
         """
-        connection = self._connections.get(_session_context(session))
+        connection = self._connections.get(session.connection_id)
         if connection is not None:
             await connection.runtime.receive_stop_sending(stream_id, error_code)
 
@@ -1128,7 +932,10 @@ class Server:
         """
         connection = self._connections.get(context)
         if connection is None:
-            raise RuntimeError(f"unknown WebTransport session: {context[1]} from {context[0]}")
+            # セッション終了と受信イベントの配送が競合した場合である。接続は
+            # 既に無いため、届いたデータは状態機械へ渡さない
+            logger.debug("MOQT stream data arrived for a closed connection: %s", context)
+            return
         try:
             await connection.runtime.receive_stream(stream_id, data)
         except Exception as error:

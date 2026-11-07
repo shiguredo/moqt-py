@@ -14,15 +14,11 @@ authors = [{ name = "Shiguredo Inc.", email = "contact+pypi@shiguredo.jp" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Programming Language :: Python :: Free Threading :: 2 - Beta",
   "Programming Language :: Rust",
 ]
-dependencies = [
-  # WebTransport (HTTP/3 / HTTP/2) と QUIC と QMux の asyncio I/O。
-  # 統一 API (webtransport.Client / webtransport.Server + HTTPVersion) と、
-  # 統一 Client の STOP_SENDING が必要なため dev30 以上の最新へ追従する
-  "webtransport-py>=2026.1.0.dev30,<2026.2",
-]
+dependencies = []
 
 [project.optional-dependencies]
 # 他プロジェクトのテストから moqt.moq.testing の server と fixture を使うための依存

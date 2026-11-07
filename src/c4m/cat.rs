@@ -1,6 +1,6 @@
 //! CAT (Common Access Token) のクレームとトークン (`moqt.c4m`)。
 //!
-//! CTA-5007-B の CAT を CWT (RFC 8392) のクレームとして扱い、draft-ietf-moq-c4m-01
+//! CTA-5007-B の CAT を CWT (RFC 8392) のクレームとして扱い、draft-ietf-moq-c4m-02
 //! の `moqt` / `moqt-reval` を加えたトークンの発行と検証を公開する。
 //!
 //! 直列化は compact 形式 (`base64url(protected).base64url(claims).base64url(signature)`)
@@ -34,7 +34,7 @@ use crate::errors::codec_error;
 
 /// `cnf` (confirmation) クレーム (RFC 8747 / CTA-5007-B)。
 ///
-/// IANA 登録の `jkt` (confirmation key 323) と、draft-ietf-moq-c4m-01 のベクタが
+/// IANA 登録の `jkt` (confirmation key 323) と、draft-ietf-moq-c4m-02 のベクタが
 /// 使う `jkt` (confirmation key 3) を分けて保持する。検証は 323 を優先する。
 #[derive(PartialEq)]
 #[pyclass(name = "Confirmation", eq)]
@@ -68,8 +68,8 @@ impl Confirmation {
     }
 
     /// `cnf` を CBOR のデータ項目へエンコードする。
-    fn encode(&self) -> CborValue {
-        cbor::wrap(self.inner.encode())
+    fn encode(&self) -> PyResult<CborValue> {
+        self.inner.encode().map(cbor::wrap).map_err(codec_error)
     }
 
     /// IANA 登録の `jkt` (confirmation key 323) の値。
@@ -84,7 +84,7 @@ impl Confirmation {
         self.inner.jwk_thumbprint = value;
     }
 
-    /// draft-ietf-moq-c4m-01 のベクタが使う `jkt` (confirmation key 3) の値。
+    /// draft-ietf-moq-c4m-02 のベクタが使う `jkt` (confirmation key 3) の値。
     #[getter]
     fn c4m_draft_jwk_thumbprint(&self) -> Option<Vec<u8>> {
         self.inner.c4m_draft_jwk_thumbprint.clone()
@@ -324,7 +324,7 @@ impl CatClaims {
         self.inner.confirmation = value.map(Confirmation::inner);
     }
 
-    /// `moqt` クレーム (draft-ietf-moq-c4m-01 §2.1)。
+    /// `moqt` クレーム (draft-ietf-moq-c4m-02 §2.1)。
     #[getter]
     fn moqt(&self) -> Option<MoqtClaim> {
         self.inner.moqt.clone().map(MoqtClaim::from_inner)
@@ -336,7 +336,7 @@ impl CatClaims {
         self.inner.moqt = value.map(MoqtClaim::inner);
     }
 
-    /// `moqt-reval` (再検証間隔、秒) (draft-ietf-moq-c4m-01 §2.2)。
+    /// `moqt-reval` (再検証間隔、秒) (draft-ietf-moq-c4m-02 §2.2)。
     ///
     /// このライブラリは Sans-I/O のため再検証を実行しない。拒否の判断は利用側が
     /// 行う。
@@ -351,7 +351,7 @@ impl CatClaims {
         self.inner.moqt_reval = value;
     }
 
-    /// `catdpop` (draft-ietf-moq-c4m-01 §3.1.1)。
+    /// `catdpop` (draft-ietf-moq-c4m-02 §3.1.1)。
     #[getter]
     fn catdpop(&self) -> Option<CatDpop> {
         self.inner.catdpop.clone().map(CatDpop::from_inner)
@@ -561,7 +561,7 @@ impl CatToken {
     }
 
     /// MOQT の Auth Token Type と Token Value からデコードする
-    /// (draft-ietf-moq-c4m-01 §7.1)。
+    /// (draft-ietf-moq-c4m-02 §7.1)。
     ///
     /// Token Type が `MOQT_AUTH_TOKEN_TYPE_CAT` (0x01) 以外の場合は `ValueError` に
     /// なる。`value` には `bytes` と `str` のどちらも渡せる。
@@ -745,7 +745,7 @@ impl CatTokenBuilder {
         confirmation.jwk_thumbprint = Some(thumbprint);
     }
 
-    /// `cnf` の `jkt` を draft-ietf-moq-c4m-01 のベクタが使う key 3 で設定する。
+    /// `cnf` の `jkt` を draft-ietf-moq-c4m-02 のベクタが使う key 3 で設定する。
     fn c4m_draft_jwk_thumbprint(&mut self, thumbprint: Vec<u8>) {
         let confirmation = self
             .inner
@@ -831,7 +831,7 @@ impl CatTokenBuilder {
         self.inner.claims = value.inner();
     }
 
-    /// compact 形式 (draft-ietf-moq-c4m-01 付録 A) のトークンを発行する。
+    /// compact 形式 (draft-ietf-moq-c4m-02 付録 A) のトークンを発行する。
     ///
     /// HMAC-SHA256 のアルゴリズム識別子は RFC 9053 の HMAC 256/256 (5) を使う。
     /// ドラフト付録 A のベクタは -4 を使うが、IANA の COSE Algorithms レジストリでは
@@ -933,7 +933,7 @@ pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
         CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT,
     )?;
 
-    // MOQT の Auth Token Type (draft-ietf-moq-c4m-01 §7.1)
+    // MOQT の Auth Token Type (draft-ietf-moq-c4m-02 §7.1)
     module.add("MOQT_AUTH_TOKEN_TYPE_CAT", MOQT_AUTH_TOKEN_TYPE_CAT)?;
 
     // CAT の COSE ヘッダの `typ` の値

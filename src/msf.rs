@@ -1727,7 +1727,7 @@ pub(crate) fn parse_msf_fragment(py: Python<'_>, fragment: &str) -> PyResult<Par
 }
 
 /// MSF の Track 識別子 (`namespace--track` 形式) を namespace と Track 名へ分解する
-/// (draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names))。
+/// (draft-ietf-moq-transport-23 §8.8 (Representing Namespace and Track Names))。
 ///
 /// 分解できない場合は `ValueError` を送出する。メッセージには moqt-rs の
 /// `NameParseError` の `Display` 表現 (失敗した規則の説明) をそのまま使う。
@@ -1746,7 +1746,7 @@ pub(crate) fn serialize_name(namespace: Vec<Vec<u8>>, track_name: &[u8]) -> PyRe
     Ok(name::serialize_name(&namespace, track_name))
 }
 
-/// namespace を draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names)
+/// namespace を draft-ietf-moq-transport-23 §8.8 (Representing Namespace and Track Names)
 /// の正規表現へ変換する。
 ///
 /// 各フィールドを `-` で連結し、リテラル (`a-z` / `A-Z` / `0-9` / `_`) でないバイトは
@@ -1761,7 +1761,7 @@ pub(crate) fn serialize_namespace(namespace: Vec<Vec<u8>>) -> PyResult<String> {
 
 /// namespace の正規表現をタプルへパースする。
 ///
-/// `serialize_namespace` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+/// `serialize_namespace` の逆変換であり、§8.8 (Representing Namespace and Track Names) の MUST を
 /// 適用する。空文字列は 0 フィールドの namespace になる。パースできない場合は
 /// `ValueError` を送出し、メッセージには moqt-rs の `NameParseError` の `Display` 表現を
 /// そのまま使う。
@@ -1772,7 +1772,7 @@ pub(crate) fn parse_namespace(py: Python<'_>, text: &str) -> PyResult<Py<PyList>
     track_namespace_to_python(py, &namespace)
 }
 
-/// Track 名を draft-ietf-moq-transport-22 §8.8 (Representing Namespace and Track Names)
+/// Track 名を draft-ietf-moq-transport-23 §8.8 (Representing Namespace and Track Names)
 /// の正規表現へ変換する。
 ///
 /// 単体の Track 名を表す関数であり、Full Track Name の長さ制約 (§8.7) は適用しない。
@@ -1786,7 +1786,7 @@ pub(crate) fn serialize_track_name(track_name: &[u8]) -> String {
 
 /// Track 名の正規表現をバイト列へパースする。
 ///
-/// `serialize_track_name` の逆変換であり、§8.8.1 (Parsing Serialized Names) の MUST を
+/// `serialize_track_name` の逆変換であり、§8.8 (Representing Namespace and Track Names) の MUST を
 /// 適用する。パースできない場合は `ValueError` を送出し、メッセージには moqt-rs の
 /// `NameParseError` の `Display` 表現をそのまま使う。
 #[pyfunction]

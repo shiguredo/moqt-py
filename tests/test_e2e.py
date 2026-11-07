@@ -1,4 +1,4 @@
-"""webtransport-py と moqt-rs を接続する実通信テスト。"""
+"""moqt-py の I/O 層と moqt-rs を接続する実通信テスト。"""
 
 import asyncio
 import contextlib
@@ -21,6 +21,7 @@ from moqt.moq import (
     Subscription,
     Transport,
 )
+from moqt.moq._io import TransportClosedError
 from moqt.moq._runtime import (
     GROUP_ORDER_DESCENDING,
     MOQTError,
@@ -39,13 +40,6 @@ from moqt.moq.testing import (
     collect_objects,
     wait_until,
 )
-from webtransport.h2.exceptions import (
-    WebTransportSessionClosedError as H2SessionClosedError,
-)
-from webtransport.h3.exceptions import (
-    WebTransportSessionClosedError as H3SessionClosedError,
-)
-from webtransport.quic.exceptions import QuicApplicationError
 
 # テストで使う Track
 NAMESPACE = [b"moqt-py", b"test"]
@@ -143,11 +137,11 @@ def _range_filter(
     `SetID (8 bits) | [Property Type (vi64)] | Start Delta (vi64) | End Delta (vi64)`
     の形である。Property Type を持つのは OBJECT_PROPERTY_FILTER と
     TRACK_PROPERTY_FILTER だけである
-    (draft-ietf-moq-transport-22 §3.3.2 (Range Filters))。
+    (draft-ietf-moq-transport-23 §3.3.2 (Range Filters))。
 
     パラメータの値は長さプレフィックスを含むエンコード済みの形なので、本体の前に
     Length (vi64) を付けて返す
-    (draft-ietf-moq-transport-22 §8.3 (Key-Value-Pair Structure))。
+    (draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure))。
     """
     body = bytes([set_id])
     if property_type is not None:
@@ -180,7 +174,7 @@ async def test_client_and_server_exchange_setup(
         assert moq_pair.session.session_id >= 0
     assert moq_pair.session.address[0] == "127.0.0.1"
     # peer が SETUP で宣言した Setup Option が client と server の両方から見える
-    # (draft-ietf-moq-transport-22 §16.4 (Setup Options))
+    # (draft-ietf-moq-transport-23 §16.4 (Setup Options))
     assert moq_pair.client.peer_setup_options[moqt.SETUP_OPTION_MOQT_IMPLEMENTATION] == b"moqt-py"
     assert (
         moq_pair.session.runtime.peer_setup_options[moqt.SETUP_OPTION_MOQT_IMPLEMENTATION]
@@ -195,8 +189,8 @@ async def test_object_property_filter_selects_objects_by_property(
     OBJECT_PROPERTY_FILTER を満たすオブジェクトだけが送信されることを確認する。
 
     publisher は Range Filter を評価し、条件を満たさないオブジェクトを送らない
-    (draft-ietf-moq-transport-22 §3.3.3 (Combining Filters))。評価には
-    Object Properties が要る (§11.1.3 (Object Properties))。
+    (draft-ietf-moq-transport-23 §3.3.3 (Combining Filters))。評価には
+    Object Properties が要る (§11.1.2 (Object Properties))。
     subscriber が Range Filter を送るには publisher が SETUP で MAX_FILTER_RANGES を
     宣言している必要がある (§9.1.6 (MAX FILTER RANGES))。
     """
@@ -254,7 +248,7 @@ async def test_subscribe_carries_all_authorization_token_kinds(
     """
     AUTHORIZATION_TOKEN の 4 種が購読パラメータとして往復することを確認する。
 
-    種別は draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression) の
+    種別は draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression) の
     DELETE / REGISTER / USE_ALIAS / USE_VALUE である。同じメッセージ内の Token は
     alias 解決後の (Token Type, Token Value) が一意でなければならないため、
     USE_ALIAS は直前のメッセージで REGISTER した alias を参照する。既存の
@@ -263,7 +257,7 @@ async def test_subscribe_carries_all_authorization_token_kinds(
     certfile, keyfile = moq_certificates
     # REGISTER を受ける側は MAX_AUTH_TOKEN_CACHE_SIZE を宣言しなければ REGISTER を
     # 受理できない。上限は Token 1 件あたり 16 バイト + Token Value のバイト数で
-    # 数える (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
+    # 数える (draft-ietf-moq-transport-23 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE))。
     server = Server(
         host="127.0.0.1",
         port=0,
@@ -291,7 +285,7 @@ async def test_subscribe_carries_all_authorization_token_kinds(
 
         # 同一メッセージ内の AUTHORIZATION_TOKEN は、alias 解決後の (Token Type,
         # Token Value) が一意でなければならない
-        # (draft-ietf-moq-transport-22 §8.9 (Authorization Token Compression))。
+        # (draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression))。
         # 同じメッセージで REGISTER した alias を USE_ALIAS で参照すると解決後の値が
         # 重複するため、USE_ALIAS は次のメッセージで送る。
         tokens: list[dict[str, object]] = [
@@ -390,7 +384,7 @@ async def test_objects_in_a_second_group_are_delivered(moq_pair: MOQTPair) -> No
 
     subgroup ストリームの最初のオブジェクトの Object ID は絶対値であり、直前の Group の
     Object ID を基準にした差分ではない
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
 
@@ -492,7 +486,7 @@ async def test_subgroup_properties_must_be_consistent(moq_pair: MOQTPair) -> Non
 
     PROPERTIES bit は Subgroup Header で固定されるため、subgroup 内の全オブジェクトが
     Properties を持つか、1 つも持たないかのどちらかでなければならない
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
 
@@ -535,7 +529,7 @@ async def test_datagram_object_properties_are_delivered(moq_pair: MOQTPair) -> N
     データグラムは subgroup ヘッダを持たないため `subgroup_id` は `None` のままである。
     Publisher Priority を指定していないため DEFAULT_PRIORITY bit が立ち、
     `publisher_priority` も `None` になる
-    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     """
     published: list[Publication] = []
 
@@ -570,7 +564,7 @@ async def test_datagram_properties_reject_an_empty_block(moq_pair: MOQTPair) -> 
 
     データグラムの Properties は `Properties Length | Key-Value-Pairs` の生バイト列で
     あり、長さ 0 はプロトコル違反である
-    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     空の `ObjectProperties` をエンコードした結果がそのまま長さ 0 のブロックになる。
     """
     published: list[Publication] = []
@@ -597,7 +591,7 @@ async def test_properties_reject_a_length_mismatch(moq_pair: MOQTPair) -> None:
 
     Properties は `Properties Length | Key-Value-Pairs` であり、宣言長は後続の
     バイト数と一致しなければならない
-    (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
+    (draft-ietf-moq-transport-23 §11.1.2 (Object Properties))。
     長さを書き直して送ると、呼び出し側が渡したバイト列と wire が食い違う。
     """
     published: list[Publication] = []
@@ -626,7 +620,7 @@ async def test_datagram_properties_reject_a_non_normal_status(moq_pair: MOQTPair
     非 Normal の Object Status に Properties を付けたデータグラムを拒否することを確認する。
 
     Properties を持てるのは Normal status のオブジェクトだけである
-    (draft-ietf-moq-transport-22 §11.1.2 (Object Properties))。
+    (draft-ietf-moq-transport-23 §11.1.2 (Object Properties))。
     拒否したデータグラムは送られないため、購読側には何も届かない。
     """
     published: list[Publication] = []
@@ -664,7 +658,7 @@ async def test_datagram_publisher_priority_is_delivered(moq_pair: MOQTPair) -> N
     DEFAULT_PRIORITY bit が立っていないデータグラムは Publisher Priority を明示して
     おり、その値が `MOQTObject.publisher_priority` に入る。bit が立っている
     データグラムは購読を確立した制御メッセージの優先度を継承するため `None` になる
-    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     """
     published: list[Publication] = []
 
@@ -725,7 +719,7 @@ async def test_session_timeouts_can_be_configured(
     セッションのタイムアウトを設定しても通常の通信が成立することを確認する。
 
     タイムアウトは peer の停止を検出する期限であり、既定では無効である
-    (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     """
     client = await moq_client_factory(
         control_message_timeout=5.0,
@@ -746,7 +740,7 @@ async def test_data_stream_timeout_sends_stop_sending(
     状態機械は open な受信ストリームで新しい Object を待つ期限に達すると、購読を
     生かしたままそのストリームへ STOP_SENDING を送る。DATA_STREAM_TIMEOUT (0x12) の
     期限切れに対する措置は STOP_SENDING か購読の終了であり、他の Group のストリームは
-    通常どおり受信する (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes) /
+    通常どおり受信する (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes) /
     §11.3.2 (Closing Subgroup Streams))。STOP_SENDING のコードは DATA_STREAM_TIMEOUT に
     対応するストリームリセットコードが無いため CANCELLED (0x1) になる
     (§12.5 (Stream Reset Error Codes))。
@@ -802,11 +796,11 @@ async def test_qmux_data_stream_timeout_sends_stop_sending(
     止めることを確認する。
 
     状態機械は open な受信ストリームで新しい Object を待つ期限に達すると、そのストリームへ
-    STOP_SENDING を送る。QMux では webtransport-py の qmux が公開する `stop_sending` を
-    使う。RESET_STREAM と STOP_SENDING は QMux でも QUIC のフレームとして規定されており、
+    STOP_SENDING を送る。QMux では qmux-rs のストリーム API が RESET_STREAM と
+    STOP_SENDING を扱う。両者は QMux でも QUIC のフレームとして規定されており、
     MOQT のストリームはそのまま対応する
     (draft-nandakumar-moq-qmux-moqt-00 §4.1 (Stream Mapping) /
-    draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     """
     certfile, keyfile = moq_certificates
     server = Server(
@@ -890,9 +884,9 @@ async def test_received_stop_sending_marks_the_subgroup_stopped(
     再オープン禁止として記録することを確認する。
 
     ピアからの STOP_SENDING は接続方式によらず状態機械へ渡される。subgroup stream への
-    STOP_SENDING は再オープン禁止として記録され、Forward State が 0 から 1 へ変わる
+    STOP_SENDING は再オープン禁止として記録され、PAUSED を解除する
     REQUEST_UPDATE が受理されるまで解除されない
-    (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
+    (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams))。
     """
     certfile, keyfile = moq_certificates
     server = Server(
@@ -982,7 +976,7 @@ async def test_received_stop_sending_terminates_the_fetch(
     fetch stream への STOP_SENDING は、仕様が bidi request stream と uni data stream の
     reset を MUST と定める経路である。状態機械は受信した cancel を fetch の終端として
     扱い、request stream の reset を指示する
-    (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     """
     certfile, keyfile = moq_certificates
     server = Server(
@@ -1005,7 +999,7 @@ async def test_received_stop_sending_terminates_the_fetch(
 
         async def on_fetch(request: FetchRequest) -> None:
             # 応答は閉じない。購読者の送信停止要求で終端させる
-            response = await request.respond((9, 9), end_of_track=False)
+            response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (5, 0)})
             await response.send_object(5, 0, b"fetched")
 
         server.on_session_established(on_session_established)
@@ -1053,7 +1047,7 @@ async def test_session_state_accessors_report_the_live_session(
 
     peer が SETUP で宣言した値はキャッシュせず状態機械から都度取得する。購読と fetch の
     状態は Request ID をキーにした辞書で返り、GOAWAY の drain を妨げている request も
-    参照できる (draft-ietf-moq-transport-22 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE) /
+    参照できる (draft-ietf-moq-transport-23 §9.1.3 (MAX_AUTH_TOKEN_CACHE_SIZE) /
     §6.6.1 (Graceful Session Migration))。
     """
     certfile, keyfile = moq_certificates
@@ -1081,7 +1075,7 @@ async def test_session_state_accessors_report_the_live_session(
             published.append(await request.subscribe_ok(TRACK_ALIAS))
 
         async def on_fetch(request: FetchRequest) -> None:
-            response = await request.respond((1, 1), end_of_track=True)
+            response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (0, 0)})
             await response.close()
             fetched.set()
 
@@ -1120,7 +1114,7 @@ async def test_session_state_accessors_report_the_live_session(
         assert entry["namespace"] == NAMESPACE
         assert entry["track_name"] == TRACK_NAME
         assert entry["my_role"] == "subscriber"
-        assert entry["forward"] is True
+        assert entry["paused"] is False
         assert client.subscriptions() == {subscription.request_id: entry}
         # 保持していない Request ID は取得できない
         assert client.subscription_state(subscription.request_id + 100) is None
@@ -1187,7 +1181,7 @@ async def test_server_goaway_carries_a_new_session_uri(moq_pair: MOQTPair) -> No
 
     セッションを閉じる側は `new_session_uri` で移行先を通知でき、受け取った側は
     `Client.peer_goaway` から URI を復元する
-    (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+    (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
     """
     received: list[PeerGoaway] = []
 
@@ -1213,7 +1207,7 @@ async def test_goaway_rejects_a_new_session_uri_beyond_the_length_limit(
     長さ上限を超える new session URI を GOAWAY が送信前に拒否することを確認する。
 
     上限は `MAX_NEW_SESSION_URI_LENGTH` であり、上限ちょうどの URI は送信できる
-    (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+    (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
     """
     received: list[PeerGoaway] = []
 
@@ -1258,9 +1252,9 @@ async def test_request_update_is_accepted_by_the_peer(moq_pair: MOQTPair) -> Non
     subscription = await moq_pair.client.subscribe(NAMESPACE, TRACK_NAME)
     await wait_until(lambda: bool(published))
 
-    # FORWARD (varint) を付けた更新を送り、応答が返ることを確認する
+    # PAUSED (uint8) を付けた更新を送り、応答が返ることを確認する
     await asyncio.wait_for(
-        subscription.request_update({moqt.PARAM_FORWARD: 1}),
+        subscription.request_update({moqt.PARAM_PAUSED: 1}),
         timeout=OBJECT_TIMEOUT,
     )
 
@@ -1334,10 +1328,10 @@ async def test_subgroup_object_payload_length_boundaries(
 
     vi64 は先頭バイトの leading-1-bits が長さを決めるため、1 バイトで表せるのは
     0-127、2 バイトで表せるのは 0-16383 である
-    (draft-ietf-moq-transport-22 §8.1 (Variable-Length Integers) Table 3)。
+    (draft-ietf-moq-transport-23 §8.1 (Variable-Length Integers) Table 3)。
 
     ペイロード長 0 のオブジェクトは Object Status を明示する必要がある
-    (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。境界をまたぐ長さで
+    (draft-ietf-moq-transport-23 §11.1.1 (Object Status))。境界をまたぐ長さで
     subgroup オブジェクトを送り、受信側が同じバイト列を得られることを検証する。
     """
     published: list[Publication] = []
@@ -1391,7 +1385,7 @@ async def test_subgroup_header_variants_are_delivered(
     subgroup ヘッダの各フィールドの組み合わせでオブジェクトが配送されることを確認する。
 
     Subgroup ID を明示する場合は SUBGROUP_ID_MODE を 0b10 にしなければならない
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。Publisher Priority を
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。Publisher Priority を
     省略するかどうかと End of Group の有無も含めて、受信側が同じペイロードを
     得られることを検証する。
     """
@@ -1453,7 +1447,7 @@ async def test_datagram_with_an_empty_payload_is_delivered(moq_pair: MOQTPair) -
 
     データグラムはペイロード長を持たないため、ペイロードが無い場合は STATUS bit を
     立てて Object Status を明示しなければならない
-    (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     """
     published: list[Publication] = []
 
@@ -1495,7 +1489,7 @@ async def test_object_status_is_delivered(
     Object Status を付けたオブジェクトが受信側で同じ status として観測されることを確認する。
 
     ペイロード長 0 のオブジェクトは Object Status を明示する
-    (draft-ietf-moq-transport-22 §11.1.1 (Object Status))。subgroup とデータグラムの
+    (draft-ietf-moq-transport-23 §11.1.1 (Object Status))。subgroup とデータグラムの
     どちらの経路でも status が保たれることを検証する。
     """
     published: list[Publication] = []
@@ -1522,7 +1516,7 @@ async def test_object_status_rejects_a_payload(moq_pair: MOQTPair, send: str) ->
     """
     Normal 以外の Object Status にペイロードを付けた場合に拒否することを確認する。
 
-    draft-ietf-moq-transport-22 §11.1.1 (Object Status): "An Object MUST have an
+    draft-ietf-moq-transport-23 §11.1.1 (Object Status): "An Object MUST have an
     empty payload unless its Object Status value is registered as permitting a
     payload in the Object Status registry"。
     """
@@ -1545,7 +1539,7 @@ async def test_object_status_rejects_an_unknown_value(moq_pair: MOQTPair, send: 
     """
     未知の Object Status を拒否することを確認する。
 
-    draft-ietf-moq-transport-22 §11.1.1 (Object Status): "Any other value SHOULD be
+    draft-ietf-moq-transport-23 §11.1.1 (Object Status): "Any other value SHOULD be
     treated as a protocol error"。
     """
     published: list[Publication] = []
@@ -1573,7 +1567,7 @@ async def test_datagram_size_is_reported_before_sending(
     経路に依存せず運べる大きさを超えるデータグラムを送信前に警告することを確認する。
 
     上限を超えたデータグラムは経路によっては通知なく破棄され、送信側からは検知
-    できない (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。受信待ちで
+    できない (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。受信待ちで
     止まる前に原因が分かるよう、送信時に警告を記録する。
     """
     published: list[Publication] = []
@@ -1605,7 +1599,7 @@ async def test_server_keeps_serving_after_a_client_closes(
 
     接続の終了時には、トランスポートの後始末として制御ストリームや要求ストリームの
     終端が server へ届く。制御ストリームは session の生存中に閉じてはならないため
-    (draft-ietf-moq-transport-22 §6.4.1 (Unidirectional Streams))、これらを状態機械が
+    (draft-ietf-moq-transport-23 §6.4.1 (Unidirectional Streams))、これらを状態機械が
     プロトコル違反として拒否しても server は動き続けなければならない。
     """
     first = await moq_client_factory()
@@ -1628,14 +1622,14 @@ async def test_fetch_receives_objects(moq_pair: MOQTPair) -> None:
 
     fetch stream の Group ID と Object ID は直前のオブジェクトを基準に差分で
     表現されるため、同じ Group 内の 2 件目と Group をまたぐ 3 件目を含める
-    (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))。ペイロード長 0 の
+    (draft-ietf-moq-transport-23 §11.4.1.1 (Flags))。ペイロード長 0 の
     オブジェクトも扱う。
     """
     responded = False
 
     async def on_fetch(request: FetchRequest) -> None:
         nonlocal responded
-        response = await request.respond((9, 9), end_of_track=False)
+        response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (6, 1)})
         await response.send_object(5, 10, b"fetched-1")
         await response.send_object(5, 11, b"fetched-2")
         await response.send_object(6, 0, b"fetched-3")
@@ -1647,7 +1641,7 @@ async def test_fetch_receives_objects(moq_pair: MOQTPair) -> None:
 
     fetch = await moq_pair.client.fetch(NAMESPACE, TRACK_NAME)
     assert fetch.end_of_track is False
-    assert fetch.end_location == (9, 9)
+    assert fetch.end_location == (6, 1)
     await wait_until(lambda: responded)
 
     received = await _take_fetch_objects(fetch, 4)
@@ -1667,13 +1661,13 @@ async def test_fetch_responds_in_a_descending_group_order(moq_pair: MOQTPair) ->
 
     fetch ストリームの Group ID は差分で表現され、その解決方向は要求された
     GROUP_ORDER で決まる。要求と逆向きの Group は差分で表現できないため拒否する
-    (draft-ietf-moq-transport-22 §9.20.8 (GROUP ORDER Parameter) /
+    (draft-ietf-moq-transport-23 §9.19.8 (GROUP ORDER Parameter) /
     §11.4.1.1 (Flags))。
     """
     responses: list[FetchResponse] = []
 
     async def on_fetch(request: FetchRequest) -> None:
-        response = await request.respond((0, 0), end_of_track=False)
+        response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (8, 1)})
         responses.append(response)
         # Descending の要求なので Group を降順に送る
         await response.send_object(8, 1, b"group-8")
@@ -1704,29 +1698,31 @@ async def test_fetch_response_reports_end_of_range(moq_pair: MOQTPair) -> None:
 
     End of Range は要求された範囲にオブジェクトが無い場合や不明な場合に送る。
     種類は Serialization Flags の特殊値で表し、Group ID と Object ID を絶対値で運ぶ
-    (draft-ietf-moq-transport-22 §11.4.1 (Fetch Header) Table 8 /
-    §11.4.1.2 (End of Range))。
+    (draft-ietf-moq-transport-23 §11.4.1 (Fetch Header) Table 8 /
+    §11.4.2 (End of Range))。
     """
 
     async def on_fetch(request: FetchRequest) -> None:
-        response = await request.respond((0, 0), end_of_track=False)
+        response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (7, 3)})
         await response.send_end_of_non_existent_range(3, 7)
         # End of Range の後は Group ID と Object ID の基準が End of Range の値になる
         await response.send_object(4, 0, b"after-end-of-range")
         await response.send_end_of_unknown_range(5, 1)
         await response.send_end_of_timed_out_range(6, 2)
+        await response.send_end_of_gone_range(7, 3)
         await response.close()
 
     moq_pair.server.on_fetch(on_fetch)
 
     fetch = await moq_pair.client.fetch(NAMESPACE, TRACK_NAME)
-    ranges = await _take_fetch_ranges(fetch, 3)
+    ranges = await _take_fetch_ranges(fetch, 4)
     objects = await _take_fetch_objects(fetch, 1)
 
     assert ranges == [
         ("end_of_non_existent_range", 3, 7),
         ("end_of_unknown_range", 5, 1),
         ("end_of_timed_out_range", 6, 2),
+        ("end_of_gone_range", 7, 3),
     ]
     assert [(item.group_id, item.object_id, item.payload) for item in objects] == [
         (4, 0, b"after-end-of-range")
@@ -1742,19 +1738,19 @@ async def test_fetch_response_carries_properties_and_datagram_origin(
     Properties は Object Properties の生バイト列であり、フラグの bit 5 を立てて
     Publisher Priority の後ろに置く。datagram 起源のオブジェクトはフラグの bit 6 を
     立て、Subgroup ID を wire に載せない
-    (draft-ietf-moq-transport-22 §11.4.1.1 (Flags) / §11.1.3 (Object Properties))。
+    (draft-ietf-moq-transport-23 §11.4.1.1 (Flags) / §11.1.2 (Object Properties))。
     """
     properties = moqt.ObjectProperties()
     properties.add(moqt.PROP_PRIOR_GROUP_ID_GAP, 2)
 
     async def on_fetch(request: FetchRequest) -> None:
-        response = await request.respond((0, 0), end_of_track=False)
+        response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (9, 1)})
         # PRIOR_GROUP_ID_GAP は現在の Group ID を超えられないため、Group 9 から始める
         await response.send_object(9, 0, b"with-properties", properties_data=properties.encode())
         # 同じ Group / Subgroup で Publisher Priority を変える。datagram 起源の
         # オブジェクトは Subgroup 単位の Priority 一貫性検査の対象外であり、
         # bit 6 が立っていなければ受信側がプロトコル違反として拒否する
-        # (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))
+        # (draft-ietf-moq-transport-23 §11.4.1.1 (Flags))
         await response.send_object(
             9, 1, b"datagram-origin", publisher_priority=200, datagram_origin=True
         )
@@ -1773,7 +1769,7 @@ async def test_fetch_response_carries_properties_and_datagram_origin(
 
     # 送信側が指定した Properties は受信側の `MOQTObject.properties` から参照できる。
     # 表現は subgroup 経路と同じ `Properties Length (varint) | Properties データ` である
-    # (draft-ietf-moq-transport-22 §11.4.1.1 (Flags))
+    # (draft-ietf-moq-transport-23 §11.4.1.1 (Flags))
     properties_bytes = received[0].properties
     assert properties_bytes is not None
     assert properties_bytes == properties.encode()
@@ -1823,7 +1819,7 @@ async def test_reset_subgroup_allows_a_new_subgroup_on_the_same_track(
     subgroup を reset した後も同じ Track で配信を続けられることを確認する。
 
     reset は送信済みのデータを破棄し
-    (draft-ietf-moq-transport-22 §16.11.4 (Stream Reset Error Codes))、次のオブジェクトは
+    (draft-ietf-moq-transport-23 §12.5 (Stream Reset Error Codes))、次のオブジェクトは
     新しい subgroup ストリームで送る。
     """
     published: list[Publication] = []
@@ -1854,7 +1850,7 @@ async def test_reset_subgroup_at_keeps_the_connection_usable(moq_pair: MOQTPair)
     RESET_STREAM_AT で subgroup を reset してもセッションが壊れないことを確認する。
 
     先頭 `reliable_size` バイトは peer へ届き、残りは破棄される
-    (draft-ietf-moq-transport-22 §11.3.2 (Closing Subgroup Streams))。
+    (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams))。
     どのバイトまで届くかはトランスポートの実装に依存するため、ここでは API が
     受理され、その後の配信が続くことだけを確認する。
     """
@@ -1884,7 +1880,7 @@ async def test_fill_parameters_open_a_fill_fetch_stream(moq_pair: MOQTPair) -> N
     FILL_PARAMETERS 付きの購読で fill fetch stream が開かれることを確認する。
 
     peer が過去のオブジェクトの補充を求めた場合、publisher は fill fetch stream を
-    開いて応答する (draft-ietf-moq-transport-22 §3.4 (Fill Semantics))。開く契機の
+    開いて応答する (draft-ietf-moq-transport-23 §3.4 (Fill Semantics))。開く契機の
     イベントには、起因した subscription の Request ID と解決済みの fill range が載る。
     """
     opened: list[tuple[int, int]] = []
@@ -1937,7 +1933,7 @@ async def test_publish_state_notify_is_delivered_to_the_subscriber(moq_pair: MOQ
     PUBLISH_STATE_NOTIFY が購読側のコールバックへ届くことを確認する。
 
     通知は publisher が自分の request で送り、subscriber が応答せずに受理する。
-    購読のクレジットも消費しない (draft-ietf-moq-transport-22 §9.10
+    購読のクレジットも消費しない (draft-ietf-moq-transport-23 §9.10
     (PUBLISH_STATE_NOTIFY))。
     """
     published: list[Publication] = []
@@ -1978,7 +1974,7 @@ async def test_client_goaway_is_notified_to_the_server(moq_pair: MOQTPair) -> No
 
     受信した GOAWAY は、その session と移行先の情報としてアプリへ通知される。
     GOAWAY の受信後、状態機械はその peer への新規 request の送信を拒否する
-    (draft-ietf-moq-transport-22 §9.2 (GOAWAY))。
+    (draft-ietf-moq-transport-23 §9.2 (GOAWAY))。
     """
     received: list[tuple[ServerSession, PeerGoaway]] = []
 
@@ -2000,7 +1996,7 @@ async def test_datagram_priority_mismatch_cancels_the_subscription(moq_pair: MOQ
     """
     同じ Location の重複 Object の Priority が食い違うと購読が取り消されることを確認する。
 
-    draft-ietf-moq-transport-22 §12.1 (Malformed Tracks): "When a subscriber detects a
+    draft-ietf-moq-transport-23 §12.1 (Malformed Tracks): "When a subscriber detects a
     Malformed Track, it MUST cancel any corresponding subscription or fetches for that
     Track from that publisher, and SHOULD deliver an error to the application."
     セッションは閉じず、取り消された購読のオブジェクトが届かなくなる。
@@ -2036,7 +2032,7 @@ async def test_datagram_priority_mismatch_cancels_all_subscriptions_for_the_trac
     """
     同じ Track の他の購読も Malformed Track で取り消されることを確認する。
 
-    draft-ietf-moq-transport-22 §12.1 (Malformed Tracks): "When a subscriber detects a
+    draft-ietf-moq-transport-23 §12.1 (Malformed Tracks): "When a subscriber detects a
     Malformed Track, it MUST cancel any corresponding subscription or fetches for that
     Track from that publisher." 取り消す対象は malformed を検出した購読だけでなく、
     同じ Track の全購読である。セッションは閉じない。
@@ -2075,7 +2071,7 @@ async def test_datagram_end_of_group_ends_the_group(moq_pair: MOQTPair) -> None:
     END_OF_GROUP を宣言したデータグラムで Group の終端が伝わることを確認する。
 
     END_OF_GROUP bit は「同じ Group ID で、この Object ID より大きい Object ID の Object は
-    存在しない」ことを宣言する (draft-ietf-moq-transport-22 §11.2.1 (Object Datagram))。
+    存在しない」ことを宣言する (draft-ietf-moq-transport-23 §11.2.1 (Object Datagram))。
     受信側は宣言位置を Group の終端として記録し、それより後ろの Object を Malformed Track
     として扱う (§12.1 (Malformed Tracks))。セッションは閉じず、購読が取り消される。
 
@@ -2124,7 +2120,7 @@ async def test_subscribe_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
 
     EXPIRES と LARGEST_OBJECT は publisher が購読条件を確定するために返す値であり、
     subscriber がこれを読めないと購読の有効期限や配信済みの範囲を判断できない
-    (draft-ietf-moq-transport-22 §9.20 (Control Message Parameters) /
+    (draft-ietf-moq-transport-23 §9.19 (Control Message Parameters) /
     §8.4 (Track and Object Properties))。
     """
     # LARGEST_OBJECT と Track Properties を付けた SUBSCRIBE_OK を返す
@@ -2144,7 +2140,7 @@ async def test_subscribe_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
 
     # LARGEST_OBJECT は (Group ID, Object ID) を表すエンコード済みバイト列として届く。
     # LARGEST_OBJECT の Value は Group ID と Object ID の 2 つの vi64 である
-    # (draft-ietf-moq-transport-22 §9.20.17 (LARGEST OBJECT Parameter))。
+    # (draft-ietf-moq-transport-23 §9.19.17 (LARGEST OBJECT Parameter))。
     assert moqt.PARAM_LARGEST_OBJECT in subscription.parameters
     encoded = subscription.parameters[moqt.PARAM_LARGEST_OBJECT]
     assert isinstance(encoded, bytes)
@@ -2162,12 +2158,12 @@ async def test_request_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
 
     PUBLISH への応答は REQUEST_OK であり、publisher が返す EXPIRES は配信の有効期限を
     表す。配信側がこれを読めないと、いつ配信を終えるかを判断できない
-    (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK) /
-    §9.20 (Control Message Parameters))。
+    (draft-ietf-moq-transport-23 §9.3 (REQUEST_OK) /
+    §9.19 (Control Message Parameters))。
     """
     # REQUEST_OK に EXPIRES を載せて受け入れる。REQUEST_OK が Track Properties を
     # 運べるのは TRACK_STATUS への応答だけで、PUBLISH への応答では空でなければならない
-    # (draft-ietf-moq-transport-22 §9.3 (REQUEST_OK))
+    # (draft-ietf-moq-transport-23 §9.3 (REQUEST_OK))
     expires_ms = 30_000
 
     async def on_publish(request: PublisherRequest) -> None:
@@ -2178,7 +2174,7 @@ async def test_request_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
     publication = await moq_pair.client.publish(NAMESPACE, TRACK_NAME, TRACK_ALIAS)
 
     # EXPIRES はミリ秒単位の vi64 として届く
-    # (draft-ietf-moq-transport-22 §9.20.16 (EXPIRES Parameter))
+    # (draft-ietf-moq-transport-23 §9.19.16 (EXPIRES Parameter))
     assert moqt.PARAM_EXPIRES in publication.parameters
     encoded = publication.parameters[moqt.PARAM_EXPIRES]
     assert isinstance(encoded, bytes)
@@ -2195,7 +2191,7 @@ async def test_terminated_subscription_is_removed_from_the_session(moq_pair: MOQ
     状態機械は request ごとに購読状態と送受信ストリームの簿記を保持するため、終了した
     購読を回収しないと長時間動くセッションでメモリ使用量が増え続ける。回収できるのは
     Terminated になり、drain が満了し、open 中の受信 stream が無くなった時点である
-    (draft-ietf-moq-transport-22 §3.1.2 (Subscription State Management))。
+    (draft-ietf-moq-transport-23 §3.1.2 (Subscription State Management))。
     """
     published: list[Publication] = []
 
@@ -2228,14 +2224,15 @@ async def test_cancelled_fetch_is_removed_from_the_session(
 
     fetch は cancel すると fetch stream が reset され、Request ID の照会からも
     消える。回収しないと fetch の簿記がセッション内に残り続ける
-    (draft-ietf-moq-transport-22 §3.2.4 (Fetch State Management))。
+    (draft-ietf-moq-transport-23 §3.2.4 (Fetch State Management))。
     """
     responded = False
 
     async def on_fetch(request: FetchRequest) -> None:
         nonlocal responded
-        response = await request.respond((0, 0), end_of_track=True)
+        response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (1, 0)})
         await response.send_object(1, 0, b"fetched")
+        await response.send_end_of_track()
         responded = True
 
     moq_pair.server.on_fetch(on_fetch)
@@ -2261,7 +2258,7 @@ async def test_subgroup_id_mode_first_object_id_is_delivered(moq_pair: MOQTPair)
     このモードのヘッダは Subgroup ID フィールドを持たないため、受信側は最初の
     オブジェクトを受信した時点で Subgroup ID を確定する。2 件目以降のオブジェクトでも
     同じ Subgroup ID が載る
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
 
@@ -2301,7 +2298,7 @@ async def test_subgroup_id_mode_cannot_change_within_a_group(moq_pair: MOQTPair)
 
     SUBGROUP_ID_MODE はヘッダで固定されるため、同じ subgroup の途中で違うモードを
     指定すると送信側が `MOQTError` で拒否する
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
 
@@ -2337,7 +2334,7 @@ async def test_subgroup_id_modes_are_resolved_on_the_sending_side(moq_pair: MOQT
 
     モードを省略した場合は `subgroup_id` を渡せば明示モード、渡さなければ 0 固定モードに
     なる。モードと値が食い違う送信は wire と状態機械が食い違うため、送信前に拒否する
-    (draft-ietf-moq-transport-22 §11.3.1 (Subgroup Header))。
+    (draft-ietf-moq-transport-23 §11.3.1 (Subgroup Header))。
     """
     published: list[Publication] = []
 
@@ -2388,7 +2385,7 @@ async def test_state_machine_session_close_reaches_the_peer(
     プロトコル違反で状態機械がセッションを閉じても WebTransport session が開いたままだと、
     peer は失敗に気づかず期限まで待ち続ける。MOQT の終了コードと理由をそのまま
     WebTransport session の終了として伝える
-    (draft-ietf-moq-transport-22 §12.2 (Session Termination Codes))。
+    (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     """
     closed: list[tuple[int, str]] = []
 
@@ -2403,26 +2400,22 @@ async def test_state_machine_session_close_reaches_the_peer(
     stream_id = await moq_pair.client.open_stream()
     await moq_pair.client.send_stream_data(stream_id, b"\x00" + bytes(8), fin=True)
 
-    # サーバー側の状態機械はプロトコル違反と理由を伴って終了する
+    # サーバー側の状態機械は不正な stream type と理由を伴って終了する
+    # (draft-ietf-moq-transport-23 §12.2 (Session Termination Codes))。
     await wait_until(lambda: bool(closed))
-    assert closed[0][0] == moqt.SESSION_PROTOCOL_VIOLATION
+    assert closed[0][0] == moqt.SESSION_INVALID_STREAM_HEADER
     assert closed[0][1]
 
     # peer は MOQT セッションの終了として観測する
     await wait_until(lambda: not moq_pair.client.established)
 
     # peer のトランスポートは終了コードと理由を保持している。受信ループは終端で
-    # これを送出するため、close() でも観測できる
-    with pytest.raises((H2SessionClosedError, H3SessionClosedError, QuicApplicationError)) as info:
+    # これを送出するため、close() でも観測できる。接続方式によらず、状態機械が
+    # 通知した終了コードと理由がそのまま届く
+    with pytest.raises(TransportClosedError) as info:
         await moq_pair.client.close()
-    assert info.value.error_code == moqt.SESSION_PROTOCOL_VIOLATION
-    assert info.value.reason
-    if moq_transport is not Transport.WebTransportOverHTTP3:
-        # WT-H2 と QUIC はピアが送った終了コードと理由をそのまま保持する。WT-H3 は
-        # webtransport-py の h3 層が CONNECT ストリーム終了時の SESSION_CLOSED に理由を
-        # 空で渡すため、MOQT の状態機械がコントロールストリームのリセットに当てる文言
-        # (`peer control stream reset`) になる
-        assert info.value.reason == closed[0][1]
+    assert info.value.error_code == moqt.SESSION_INVALID_STREAM_HEADER
+    assert info.value.reason == closed[0][1]
 
 
 def test_quic_server_rejects_allowed_origins(moq_certificates: tuple[str, str]) -> None:
@@ -2442,6 +2435,63 @@ def test_quic_server_rejects_allowed_origins(moq_certificates: tuple[str, str]) 
             transport=Transport.Quic,
             allowed_origins=["https://example.com"],
         )
+
+
+def test_wt_h3_server_rejects_allowed_origins(moq_certificates: tuple[str, str]) -> None:
+    """
+    WT-H3 では Origin 検査を使えないため、指定を拒否することを確認する。
+
+    Rust の WebTransport over HTTP/3 サーバーは CONNECT 要求の Origin ヘッダーを
+    アプリケーションへ公開しない。検査しないまま受け入れると、指定した許可元以外の
+    接続を黙って通してしまうため、指定自体を拒否する。
+    """
+    certfile, keyfile = moq_certificates
+    with pytest.raises(ValueError, match="allowed_origins is not supported for WebTransport"):
+        Server(
+            host="127.0.0.1",
+            port=0,
+            certfile=certfile,
+            keyfile=keyfile,
+            transport=Transport.WebTransportOverHTTP3,
+            allowed_origins=["https://example.com"],
+        )
+
+
+async def test_wt_h2_server_rejects_a_disallowed_origin(
+    moq_certificates: tuple[str, str],
+) -> None:
+    """
+    WT-H2 の server が許可していない Origin の接続を拒否することを確認する。
+
+    Origin は WebTransport の CONNECT 要求で運ばれ、server は許可元と照合する
+    (draft-ietf-webtrans-http2-16 Section 3.2)。拒否は HTTP/2 の 403 応答で伝わる。
+    """
+    certfile, keyfile = moq_certificates
+    server = Server(
+        host="127.0.0.1",
+        port=0,
+        certfile=certfile,
+        keyfile=keyfile,
+        transport=Transport.WebTransportOverHTTP2,
+        allowed_origins=["https://allowed.example"],
+    )
+    await server.start()
+    run_task = asyncio.create_task(server.run())
+    client = Client(
+        url=f"moqt://127.0.0.1:{server.actual_port}/webtransport",
+        transport=Transport.WebTransportOverHTTP2,
+        origin="https://denied.example",
+        verify_peer=False,
+    )
+    try:
+        with pytest.raises(ConnectionError):
+            await client.connect(timeout=5.0)
+    finally:
+        await client.close()
+        await server.stop()
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
 
 
 async def test_qmux_delivers_objects_to_the_subscriber(
@@ -2527,7 +2577,7 @@ async def test_qmux_fetches_objects(moq_certificates: tuple[str, str]) -> None:
 
         async def on_fetch(request: FetchRequest) -> None:
             nonlocal responded
-            response = await request.respond((9, 9), end_of_track=False)
+            response = await request.respond(parameters={moqt.PARAM_LARGEST_OBJECT: (5, 10)})
             await response.send_object(5, 10, b"fetched-over-qmux")
             await response.close()
             responded = True

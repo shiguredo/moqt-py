@@ -120,7 +120,7 @@ async def test_malformed_track_cancels_the_subscription_without_failing_the_conn
 ) -> None:
     """Malformed Track の cancel が接続エラーにならず、購読単位の終了として届くことを確認する。
 
-    draft-ietf-moq-transport-22 §12.1 (Malformed Tracks) は、購読者が Malformed Track を
+    draft-ietf-moq-transport-23 §12.1 (Malformed Tracks) は、購読者が Malformed Track を
     検出したら該当の subscription を取り消す (MUST) が、セッションは閉じないと定める。
     状態機械は request を終端したうえでエラーを返すため、I/O 層はエラーだけを見て接続の
     失敗として扱わず、積まれた終端のイベントを処理する必要がある。

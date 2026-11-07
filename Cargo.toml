@@ -2,7 +2,7 @@
 name = "moqt-py"
 version = "2026.0.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.95"
 description = "moqt-py is a Sans-IO MOQT/LOC/MSF/C4M library with a WebTransport/QUIC client, using moqt-rs."
 readme = "README.md"
 repository = "https://github.com/shiguredo/moqt-py"
@@ -16,6 +16,37 @@ crate-type = ["cdylib"]
 [dependencies]
 # Python バインディングと型スタブ生成用の introspection
 pyo3 = { version = "0.29", features = ["extension-module", "experimental-inspect"] }
+# QUIC と WebTransport over HTTP/3 の接続確立とストリーム・データグラムの I/O
+#
+# crates.io に公開されている版は開発リポジトリより遅れるため、公開スナップショットの
+# main を追従する。実際にビルドしたコミットは Cargo.lock が固定する
+tobi_quic = { git = "https://github.com/shiguredo/tobi-quic", branch = "main" }
+# WebTransport over HTTP/3 のセッションとストリーム (tobi-quic と http3-rs を使う)
+tobi_webtransport = { git = "https://github.com/shiguredo/tobi-quic", branch = "main" }
+# WebTransport over HTTP/2 の HTTP/2 と Capsule Protocol (Sans I/O)
+shiguredo_http2 = "2026.1.0-canary.17"
+# 非同期ランタイム (I/O 層のタスクとタイマー)
+tokio = { version = "1.54", features = [
+  "rt-multi-thread",
+  "net",
+  "io-util",
+  "sync",
+  "time",
+  "macros",
+] }
+# QUIC / WebTransport over HTTP/2 / QMux の TLS
+rustls = "0.23"
+# サーバーの証明書と鍵 (PEM) の読み込み
+rustls-pemfile = "2"
+# 証明書検証を有効にしたときに使う Mozilla のルート証明書
+webpki-roots = "1"
+# TCP + TLS の非同期統合 (QMux と WebTransport over HTTP/2)
+tokio-rustls = "0.26"
+# QMux (draft-ietf-quic-qmux-02) の Sans I/O 実装と tokio ラッパー
+#
+# crates.io に公開されておらずタグも無いため、moqt-rs と同じコミットで固定する
+shiguredo_qmux = { git = "https://github.com/shiguredo/qmux-rs", rev = "aedb7001415a9387c6b01d25624316a4aad50521" }
+shiguredo_tokio_qmux = { git = "https://github.com/shiguredo/qmux-rs", rev = "aedb7001415a9387c6b01d25624316a4aad50521" }
 # MOQT の Sans I/O codec とセッション状態機械
 # 公開リポジトリにタグ付けされたリリースがまだ存在しないため develop ブランチを
 # 追従する。実際にビルドしたコミットは Cargo.lock が固定する。最新へ更新するときは
