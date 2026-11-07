@@ -102,10 +102,15 @@ class ClientTransport:
     ) -> None:
         self.transport = transport
         """接続方式。"""
-        self.url = f"https://{authority}{path}" if transport in (
-            Transport.WebTransportOverHTTP2,
-            Transport.WebTransportOverHTTP3,
-        ) else f"moqt://{authority}{path}"
+        self.url = (
+            f"https://{authority}{path}"
+            if transport
+            in (
+                Transport.WebTransportOverHTTP2,
+                Transport.WebTransportOverHTTP3,
+            )
+            else f"moqt://{authority}{path}"
+        )
         """接続先の URL。"""
         self._host = host
         self._port = port
