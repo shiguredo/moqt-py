@@ -1,7 +1,7 @@
 # TEST_MOQT_URI を使った relay の E2E テストを充実させる
 
 - Created: 2026-11-08
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/relay-e2e-tests
 - Polished:
 
@@ -49,3 +49,13 @@ pytest の収集と skip、ruff / ty / prek で確認する。
 2026-11-08 に `TEST_MOQT_URI` を設定した環境で
 `tests/test_connect.py` / `tests/test_relay.py` の 13 テストがすべて通ることを確認した。
 全体では 669 passed である。
+
+## 解決方法
+
+`TEST_MOQT_URI` を使う relay E2E に、複数 Track の同時購読、複数 Group と
+End of Group、32 KiB の object、PUBLISH_DONE、PAUSED による停止と再開、
+Group 範囲を指定した FETCH と cancel、再接続を追加した。
+
+実 relay で 13 テストが通った。その過程で、終端済みの fetch への `Fetch.cancel`
+を no-op にし、3.15t の PBT が既知の LOC Property の値域・UTF-8 制約に当たる
+問題も修正した。全体のテストは 3.14 / 3.15 / 3.15t で 669 passed である。
