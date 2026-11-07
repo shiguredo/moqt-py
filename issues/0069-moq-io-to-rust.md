@@ -1,7 +1,7 @@
 # moqt.moq の I/O を Rust の tobi-quic / http2-rs / http3-rs / qmux-rs へ移行する
 
 - Created: 2026-11-07
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/rust-moq-io
 - Polished:
 
@@ -55,6 +55,21 @@ asyncio と C の I/O を前提とし、接続方式ごとに API の非対称�
 - [x] `allowed_origins` は WT-H2 のみで受け付け、QUIC / QMux / WT-H3 では
       `ValueError` にする
 - [ ] 上流の修正が入ったら H3 の回避策 (下記) を削除する
+
+## 解決方法
+
+`moqt.moq` の I/O を Rust の `src/io/` へ移し、Python 側は
+`python/moqt/moq/_io.py` の adapter を経由するようにした。接続、ストリーム、
+データグラム、セッション終了を tokio のタスクが所有し、asyncio とは Future と
+イベントで接続する。
+
+- QUIC / WebTransport over HTTP/3: tobi-quic / tobi-webtransport
+- WebTransport over HTTP/2: `shiguredo_http2` の Sans I/O を直接駆動する
+- QMux: qmux-rs
+
+`pyproject.toml` から `webtransport-py` を削除し、E2E を WT-H3 / WT-H2 / QUIC /
+QMux の 4 経路で通した。上流の未実装機能に対する回避策は「上流への申し送り」に
+残している。
 
 ## 上流への申し送り
 
