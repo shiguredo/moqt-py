@@ -36,7 +36,28 @@ async def test_connect_and_close() -> None:
 
     await client.connect(timeout=CONNECT_TIMEOUT)
     try:
-        # SETUP の交換が完了していれば established になる
+        # SETUP の交換が完了していれば established になり、peer の Setup Option を
+        # 参照できる (draft-ietf-moq-transport-23 §9.1 (SETUP))
         assert client.established
+        assert client.peer_setup_options is not None
     finally:
         await client.close()
+
+
+@pytest.mark.skipif(not TEST_MOQT_URI, reason="TEST_MOQT_URI が設定されていないため")
+@pytest.mark.timeout(30)
+async def test_reconnect_after_close() -> None:
+    """
+    同じ relay へ接続、close、再接続できることを確認する。
+
+    close の後も relay が新しい接続を受け付け、SETUP の交換が完了することを確認する。
+    実 relay の接続状態がテストの後始末で残らないことを確認する。
+    """
+    assert TEST_MOQT_URI is not None
+    for _ in range(2):
+        client = Client(url=TEST_MOQT_URI, verify_peer=VERIFY_PEER)
+        await client.connect(timeout=CONNECT_TIMEOUT)
+        try:
+            assert client.established
+        finally:
+            await client.close()

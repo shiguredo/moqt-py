@@ -293,6 +293,13 @@ class Fetch:
         runtime = self._runtime
         if runtime is None:
             raise MOQTError("fetch has no runtime")
+        # relay が取得範囲を返し終えて fetch stream を閉じた場合、状態機械では
+        # fetch が既に終端している。終端済みの fetch への STOP_SENDING は
+        # プロトコル違反になるため、完了済みの cancel は no-op にする
+        # (draft-ietf-moq-transport-23 §3.2.4 (Fetch State Management))。
+        entry = runtime.session.fetch(self.request_id)
+        if entry is None or entry.get("state") == "terminated":
+            return
         await runtime.send_fetch_stop_sending(self.request_id)
 
     def _push(self, item: MOQTObject) -> None:

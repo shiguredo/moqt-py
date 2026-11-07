@@ -59,9 +59,11 @@ UV_PROJECT_ENVIRONMENT=.venv-315t uv run --python 3.15t pytest
 
 ## 実 relay への E2E テスト
 
-`tests/test_connect.py` は環境変数 `TEST_MOQT_URI` が指す MOQT サーバーへ接続するテストです。`tests/test_relay.py` は同じ接続先へ publisher と subscriber の 2 つの client を張り、relay を挟んだ object の配送を確認します。映像と音声は実コーデックで符号化せず、LOC のプロパティを付けた固定のダミーペイロードを使います。
+`tests/test_connect.py` は環境変数 `TEST_MOQT_URI` が指す MOQT サーバーへ接続し、close 後の再接続も確認します。`tests/test_relay.py` は同じ接続先へ publisher と subscriber の 2 つの client を張り、relay を挟んだ object の配送を確認します。映像と音声は実コーデックで符号化せず、LOC のプロパティを付けた固定のダミーペイロードを使います。
 
 いずれも `TEST_MOQT_URI` が未設定の場合は skip します。GitHub Actions の `e2e-test` ワークフローでは repository secrets の `TEST_MOQT_URI` を環境変数として渡します。
+
+接続先や証明書検証の設定は `.env` に書いて `uv run --env-file .env` で読み込めます。`.env` は秘密情報を含みうるため `.gitignore` で無視しています。
 
 ```bash
 TEST_MOQT_URI=moqt://<host>/ uv run pytest tests/test_connect.py tests/test_relay.py
@@ -79,3 +81,8 @@ TEST_MOQT_URI=moqt://127.0.0.1:4433/ TEST_MOQT_VERIFY_PEER=0 uv run pytest tests
 - 音声の subgroup stream 配送と LOC の TIMESTAMP / TIMESCALE / AUDIO_LEVEL
 - 音声のデータグラム配送 (データグラムは再送されないため、複数件のうち 1 件の到達を確認する)
 - MSF カタログの購読と FETCH による取得
+- 複数 Track の同時購読と、Track ごとに独立した object の配送
+- 複数 Group、End of Group の status、32 KiB の object の配送
+- PUBLISH_DONE の購読側への伝播
+- PAUSED による配送の停止と、解除後の再開
+- Group 範囲を指定した FETCH と cancel

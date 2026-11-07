@@ -3,13 +3,10 @@
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from moqt import loc
 from moqt.moqt import (
     GREASE_BASE,
     GREASE_INTERVAL,
     GREASE_MAX,
-    MANDATORY_TRACK_PROPERTY_MAX,
-    MANDATORY_TRACK_PROPERTY_MIN,
     PARAM_AUTHORIZATION_TOKEN,
     PARAM_EXPIRES,
     PARAM_FILL_PARAMETERS,
@@ -23,13 +20,6 @@ from moqt.moqt import (
     PARAM_SUBGROUP_DELIVERY_TIMEOUT,
     PARAM_SUBSCRIBER_PRIORITY,
     PARAM_TRACK_NAMESPACE_PREFIX,
-    PROP_DEFAULT_PUBLISHER_GROUP_ORDER,
-    PROP_DEFAULT_PUBLISHER_PRIORITY,
-    PROP_DYNAMIC_GROUPS,
-    PROP_IMMUTABLE_PROPERTIES,
-    PROP_MAX_CACHE_DURATION,
-    PROP_PRIOR_GROUP_ID_GAP,
-    PROP_PRIOR_OBJECT_ID_GAP,
     PUBLISHER_PRIORITY_DEFAULT,
     LocationFilter,
     MessageParameters,
@@ -58,11 +48,10 @@ SUBGROUP_STREAM_TYPE = 0x10
 # 購読の要求と応答を載せる双方向ストリームの ID。
 REQUEST_STREAM_ID = 0
 
-# プロパティの型番号と varint 値として生成する値の上限。
+# varint 値として生成する値の上限。
 #
 # varint は 8 バイト表現で 62 bit まで運べる
 # (draft-ietf-moq-transport-23 §8.1 (Variable-Length Integers))。
-MAX_PROPERTY_TYPE = 2**62 - 1
 MAX_PROPERTY_VALUE = 2**62 - 1
 
 # バイト列型プロパティの長さの上限。
@@ -75,77 +64,20 @@ MAX_PROPERTY_BYTES = 64
 # 生成するプロパティ列の最大件数。
 MAX_PROPERTY_ENTRIES = 8
 
-# 値域が仕様で固定されている Track Property の型番号
-# (draft-ietf-moq-transport-23 §10.4 (DEFAULT PUBLISHER PRIORITY) /
-# §10.5 (DEFAULT PUBLISHER GROUP ORDER) / §10.6 (DYNAMIC GROUPS))。
-VALUE_CONSTRAINED_TRACK_TYPES = (
-    PROP_DEFAULT_PUBLISHER_PRIORITY,
-    PROP_DEFAULT_PUBLISHER_GROUP_ORDER,
-    PROP_DYNAMIC_GROUPS,
-)
-
-
-def _is_mandatory_track_type(prop_type: int) -> bool:
-    """必須 Track Property の範囲 (0x4000-0x7FFF) の型番号かどうかを返す。
-
-    この範囲の型番号は Track scope では正当だが、この実装が認識していない値を受信すると
-    購読が成立しない (draft-ietf-moq-transport-23 §3.7 (Mandatory to Understand Track Properties))。
-    Object scope では malformed になる。
-    """
-    return MANDATORY_TRACK_PROPERTY_MIN <= prop_type <= MANDATORY_TRACK_PROPERTY_MAX
-
-
-# draft-23 では既知の Property の許可スコープが Track / Object で分かれる
+# PBT では未知の Property 型だけを生成する。既知の型は値域・UTF-8・スコープなどの
+# 制約を持ち、型ごとの単体テストで扱う
 # (draft-ietf-moq-transport-23 §8.4 (Track and Object Properties))。
-# 既知の単一スコープ Property を逆側のスコープへ入れると encode が拒否するため、
-# 生成対象から外す。
-TRACK_ONLY_PROPERTY_TYPES = {
-    PROP_MAX_CACHE_DURATION,
-    PROP_DEFAULT_PUBLISHER_PRIORITY,
-    PROP_DEFAULT_PUBLISHER_GROUP_ORDER,
-    PROP_DYNAMIC_GROUPS,
-}
-OBJECT_ONLY_PROPERTY_TYPES = {
-    PROP_PRIOR_GROUP_ID_GAP,
-    PROP_PRIOR_OBJECT_ID_GAP,
-    loc.TIMESCALE,
-    loc.VIDEO_FRAME_MARKING,
-    loc.AUDIO_LEVEL,
-    loc.VIDEO_CONFIG,
-    loc.AUDIO_CONFIG,
-}
-
-
-def _is_generatable_track_type(prop_type: int) -> bool:
-    """任意の値で生成してよい Track Property の型番号かどうかを返す。
-
-    IMMUTABLE_PROPERTIES は中身の KVP 列が別途正しい必要があり、値域が固定された
-    3 つの型番号は任意の varint を受け付けない。必須 Track Property の範囲は
-    未知の値を送ると購読が成立しない。これらを生成対象から外す。
-    """
-    return (
-        prop_type != PROP_IMMUTABLE_PROPERTIES
-        and prop_type not in VALUE_CONSTRAINED_TRACK_TYPES
-        and prop_type not in OBJECT_ONLY_PROPERTY_TYPES
-        and not _is_mandatory_track_type(prop_type)
-    )
-
-
-def _is_generatable_object_type(prop_type: int) -> bool:
-    """任意の値で生成してよい Object Property の型番号かどうかを返す。"""
-    return (
-        prop_type != PROP_IMMUTABLE_PROPERTIES
-        and prop_type not in TRACK_ONLY_PROPERTY_TYPES
-        and not _is_mandatory_track_type(prop_type)
-    )
-
+GENERATABLE_PROPERTY_TYPE_MIN = 0x1000
+GENERATABLE_PROPERTY_TYPE_MAX = 0x3FFF
 
 # 生成対象の Object Property / Track Property の型番号。
-TRACK_PROPERTY_TYPES = st.integers(min_value=0, max_value=MAX_PROPERTY_TYPE).filter(
-    _is_generatable_track_type
+TRACK_PROPERTY_TYPES = st.integers(
+    min_value=GENERATABLE_PROPERTY_TYPE_MIN,
+    max_value=GENERATABLE_PROPERTY_TYPE_MAX,
 )
-OBJECT_PROPERTY_TYPES = st.integers(min_value=0, max_value=MAX_PROPERTY_TYPE).filter(
-    _is_generatable_object_type
+OBJECT_PROPERTY_TYPES = st.integers(
+    min_value=GENERATABLE_PROPERTY_TYPE_MIN,
+    max_value=GENERATABLE_PROPERTY_TYPE_MAX,
 )
 
 
