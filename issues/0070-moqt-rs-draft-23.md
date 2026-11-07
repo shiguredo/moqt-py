@@ -1,7 +1,7 @@
 # moqt-rs の draft-ietf-moq-transport-23 追従
 
 - Created: 2026-11-07
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/moqt-rs-draft-23
 - Polished:
 
@@ -109,3 +109,5 @@ draft-22 から draft-23 への変更で、moqt-py の公開 API とワイヤの
 - `python/moqt/_native.pyi` は `uv run maturin develop --generate-stubs` で再生成した
 - 仕様参照は draft-23 の本文の見出しと突き合わせ、名前付き引用の節番号の食い違いが
   0 件であることを確認した
+
+実装とテストは完了し、develop へコミット済みである。
