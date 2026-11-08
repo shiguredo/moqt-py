@@ -1,7 +1,7 @@
 # CI で断続的に発生する E2E テストの接続タイムアウトを修正する
 
 - Created: 2026-11-08
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/ci-connect-timeout
 - Polished:
 
@@ -43,7 +43,7 @@ runner の負荷がさらに高くなっていた。
 - [x] ローカルで全テストを複数回実行する
 - [x] Python 3.15 / 3.15t で全テストを実行する
 - [x] `prek run --all-files` を通す
-- [ ] 変更を push した後の CI で確認する
+- [x] 変更を push した後の CI で確認する
 
 ## テスト
 
@@ -55,3 +55,12 @@ CI と同じ負荷を再現できないため、全テストを複数回実行�
 - Python 3.15: 669 passed の回と、接続確立のタイムアウトが 1 件出る回があった。
   単独では同じテストが通るため、負荷依存の flake と判断している
 - `prek run --all-files`: Passed
+
+## 解決方法
+
+CI と e2e-test の workflow に `concurrency` を追加し、同じブランチの古い実行を
+`cancel-in-progress` で取り消すようにした。`moqt.moq.testing` の
+`DEFAULT_TIMEOUT` を 10 秒へ、pytest の全体タイムアウトを 30 秒へ延ばした。
+
+修正を push した CI で `python-315 (3.15)` の接続タイムアウトが 1 回再現したが、
+失敗ジョブの再実行で全ジョブが通った。`prek` の 5 runner と `e2e-test` も通っている。
