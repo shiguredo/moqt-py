@@ -1,7 +1,7 @@
 # TLS の PEM 読み込みとルート証明書を現在の crate へ移行する
 
 - Created: 2026-11-08
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/tls-modern-crates
 - Polished:
 
@@ -54,3 +54,14 @@
 - `prek run --all-files`: 成功
 - `ca_file` を使った接続テスト: 3 接続方式で成功
 - Python 3.14 / 3.15 / 3.15t: 672 passed
+
+## 解決方法
+
+`rustls-pemfile` を削除し、`rustls-pki-types` の `PemObject` API へ移行した。
+`webpki-roots` を削除し、`rustls-platform-verifier` の OS 証明書ストアと失効確認を
+使うようにした。`ca_file` は `Verifier::new_with_extra_roots` で追加のルート証明書と
+して渡す。
+
+macOS の platform verifier がテスト用自己署名証明書の EKU を検査するため、
+テスト証明書に serverAuth の EKU を追加した。CI と e2e-test が通り、
+Python 3.14 / 3.15 / 3.15t で 672 passed を確認した。
