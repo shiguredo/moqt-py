@@ -36,10 +36,10 @@ tokio = { version = "1.54", features = [
 ] }
 # QUIC / WebTransport over HTTP/2 / QMux の TLS
 rustls = "0.23"
-# サーバーの証明書と鍵 (PEM) の読み込み
-rustls-pemfile = "2"
-# 証明書検証を有効にしたときに使う Mozilla のルート証明書
-webpki-roots = "1"
+# 証明書と鍵 (PEM) の読み込み
+rustls-pki-types = { version = "1.15", features = ["std"] }
+# 証明書検証を有効にしたときに使う OS のルート証明書
+rustls-platform-verifier = "0.7"
 # TCP + TLS の非同期統合 (QMux と WebTransport over HTTP/2)
 tokio-rustls = "0.26"
 # QMux (draft-ietf-quic-qmux-02) の Sans I/O 実装と tokio ラッパー

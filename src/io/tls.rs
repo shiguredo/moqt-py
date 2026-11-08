@@ -5,42 +5,59 @@
 
 use std::sync::Arc;
 
+use rustls_pki_types::CertificateDer;
+use rustls_pki_types::PrivateKeyDer;
+use rustls_pki_types::pem::PemObject;
+use rustls_platform_verifier::Verifier;
+
 use crate::io::client::ClientConfig;
 use crate::io::command::IoError;
+
+/// CA 証明書ファイルを読み、追加で信頼するルート証明書を返す。
+fn read_extra_roots(path: &str) -> Result<Vec<CertificateDer<'static>>, IoError> {
+    let iterator = CertificateDer::pem_file_iter(path).map_err(|error| {
+        IoError::connection(format!(
+            "failed to open the CA certificate file '{path}': {error}"
+        ))
+    })?;
+    let mut roots = Vec::new();
+    for certificate in iterator {
+        roots.push(certificate.map_err(|error| {
+            IoError::connection(format!(
+                "failed to read the CA certificate file '{path}': {error}"
+            ))
+        })?);
+    }
+    Ok(roots)
+}
+
 /// クライアント TLS 設定を作る。
 ///
-/// `verify_peer` が偽の場合は証明書の検証を無効にする。`ca_file` を指定した場合は
-/// Mozilla のルート証明書に加えてその証明書を信頼する。ALPN は `config.alpn` を使う。
+/// `verify_peer` が偽の場合は証明書の検証を無効にする。真の場合は OS の
+/// 証明書ストアを使い、`ca_file` を指定した場合はその証明書も追加で信頼する。
+/// ALPN は `config.alpn` を使う。
 pub(crate) fn build_client_tls(
     config: &ClientConfig,
 ) -> Result<Arc<rustls::ClientConfig>, IoError> {
     let mut tls = if config.verify_peer {
-        let mut roots = rustls::RootCertStore::empty();
-        // 既定の信頼ストアに CA 証明書を追加する。Python の ssl モジュールで
-        // load_verify_locations を呼んだときと同じ扱いにする。
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        if let Some(path) = &config.ca_file {
-            let file = std::fs::File::open(path).map_err(|error| {
-                IoError::connection(format!(
-                    "failed to open the CA certificate file '{path}': {error}"
-                ))
-            })?;
-            let mut reader = std::io::BufReader::new(file);
-            for certificate in rustls_pemfile::certs(&mut reader) {
-                let certificate = certificate.map_err(|error| {
-                    IoError::connection(format!(
-                        "failed to read the CA certificate file '{path}': {error}"
-                    ))
-                })?;
-                roots.add(certificate).map_err(|error| {
-                    IoError::connection(format!(
-                        "failed to add the CA certificate '{path}': {error}"
-                    ))
-                })?;
-            }
-        }
+        let extra_roots = match &config.ca_file {
+            Some(path) => read_extra_roots(path)?,
+            None => Vec::new(),
+        };
+        // OS の証明書ストアと失効確認を使う。Linux では rustls-native-certs で
+        // システムの CA バンドルを読み込む。
+        let verifier = Verifier::new_with_extra_roots(
+            extra_roots,
+            Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        )
+        .map_err(|error| {
+            IoError::connection(format!(
+                "failed to build the platform certificate verifier: {error}"
+            ))
+        })?;
         rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth()
     } else {
         rustls::ClientConfig::builder()
@@ -60,15 +77,14 @@ pub(crate) fn build_server_tls(
     keyfile: &str,
     alpn: &[Vec<u8>],
 ) -> Result<Arc<rustls::ServerConfig>, IoError> {
-    let file = std::fs::File::open(certfile).map_err(|error| {
-        IoError::runtime(format!(
-            "failed to open the certificate file '{}': {error}",
-            certfile
-        ))
-    })?;
-    let mut reader = std::io::BufReader::new(file);
-    let certificates = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, std::io::Error>>()
+    let certificates = CertificateDer::pem_file_iter(certfile)
+        .map_err(|error| {
+            IoError::runtime(format!(
+                "failed to open the certificate file '{}': {error}",
+                certfile
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
             IoError::runtime(format!(
                 "failed to read the certificate file '{}': {error}",
@@ -81,26 +97,12 @@ pub(crate) fn build_server_tls(
             certfile
         )));
     }
-    let file = std::fs::File::open(keyfile).map_err(|error| {
+    let key = PrivateKeyDer::from_pem_file(keyfile).map_err(|error| {
         IoError::runtime(format!(
-            "failed to open the private key file '{}': {error}",
+            "failed to read the private key file '{}': {error}",
             keyfile
         ))
     })?;
-    let mut reader = std::io::BufReader::new(file);
-    let key = rustls_pemfile::private_key(&mut reader)
-        .map_err(|error| {
-            IoError::runtime(format!(
-                "failed to read the private key file '{}': {error}",
-                keyfile
-            ))
-        })?
-        .ok_or_else(|| {
-            IoError::runtime(format!(
-                "the private key file '{}' contains no private key",
-                keyfile
-            ))
-        })?;
     let mut tls = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certificates, key)

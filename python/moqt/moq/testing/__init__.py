@@ -79,6 +79,7 @@ class ClientFactory(Protocol):
         url: str | None = None,
         control_message_timeout: float | None = None,
         data_stream_timeout: float | None = None,
+        ca_file: str | None = None,
     ) -> Client:
         """接続を確立した `Client` を返す。
 
@@ -88,6 +89,7 @@ class ClientFactory(Protocol):
             url: 接続先。省略した場合は `moq_server` の待ち受け先を使う。
             control_message_timeout: 制御メッセージの応答待ちの期限 (秒)。
             data_stream_timeout: データストリームの停止を検出する期限 (秒)。
+            ca_file: 追加で信頼する CA 証明書のファイル。
         """
         ...
 
@@ -263,6 +265,7 @@ async def moq_client_factory(
         url: str | None = None,
         control_message_timeout: float | None = None,
         data_stream_timeout: float | None = None,
+        ca_file: str | None = None,
     ) -> Client:
         target = url or f"moqt://127.0.0.1:{moq_server.actual_port}/webtransport"
         client = Client(
@@ -271,6 +274,7 @@ async def moq_client_factory(
             verify_peer=verify_peer,
             control_message_timeout=control_message_timeout,
             data_stream_timeout=data_stream_timeout,
+            ca_file=ca_file,
         )
         await client.connect(timeout=timeout)
         clients.append(client)

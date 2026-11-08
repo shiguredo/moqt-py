@@ -2184,6 +2184,16 @@ async def test_request_ok_metadata_is_exposed(moq_pair: MOQTPair) -> None:
     assert publication.track_properties == {}
 
 
+async def test_client_verifies_server_with_ca_file(
+    moq_client_factory: ClientFactory,
+    moq_certificates: tuple[str, str],
+) -> None:
+    """`ca_file` に指定した証明書でサーバーを検証できることを確認する。"""
+    certfile, _ = moq_certificates
+    client = await moq_client_factory(verify_peer=True, ca_file=certfile)
+    assert client.established is True
+
+
 async def test_terminated_subscription_is_removed_from_the_session(moq_pair: MOQTPair) -> None:
     """
     終了した購読が状態機械から回収されることを確認する。
