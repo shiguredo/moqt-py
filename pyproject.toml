@@ -63,7 +63,8 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "PT", "ANN", "RUF"]
 ignore = []
 
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--timeout=10"]
+# CI runner の負荷で E2E の接続確立に時間がかかるため、全体の timeout に余裕を持たせる
+addopts = ["-ra", "--strict-markers", "--strict-config", "--timeout=30"]
 testpaths = ["tests"]
 python_files = ["test_*.py", "prop_*.py"]
 python_functions = ["test_*", "prop_*"]

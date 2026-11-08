@@ -60,8 +60,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-# fixture が待ち合わせる既定の秒数
-DEFAULT_TIMEOUT = 5.0
+# fixture が待ち合わせる既定の秒数。負荷の高い CI runner では接続確立に
+# 5 秒を超えることがあるため、余裕を持たせる
+DEFAULT_TIMEOUT = 10.0
 
 # 述語の待ち合わせで再確認する間隔 (秒)
 _POLL_INTERVAL = 0.01

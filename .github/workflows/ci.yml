@@ -26,6 +26,12 @@ on:
 permissions:
   contents: read
 
+# 同じブランチへの連続 push で CI が同時に走り、runner の負荷で
+# 接続テストがタイムアウトするのを防ぐ
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   prek:
     strategy:
