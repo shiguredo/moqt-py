@@ -43,6 +43,8 @@ dev = [
   "hypothesis>=6.140,<7",
   # 実通信テスト用の自己署名証明書生成
   "cryptography>=50.0,<51",
+  # E2E の接続確立が稀にタイムアウトするため、接続エラーだけを再実行する
+  "pytest-rerunfailures>=16,<17",
 ]
 
 [tool.maturin]
@@ -64,7 +66,17 @@ ignore = []
 
 [tool.pytest.ini_options]
 # CI runner の負荷で E2E の接続確立に時間がかかるため、全体の timeout に余裕を持たせる
-addopts = ["-ra", "--strict-markers", "--strict-config", "--timeout=30"]
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+  "--timeout=30",
+  # E2E の接続確立が稀にタイムアウトするため、接続エラーだけを 2 回まで再実行する
+  "--reruns=2",
+  "--reruns-delay=1",
+  "--only-rerun=ConnectionError",
+  "--only-rerun=TimeoutError",
+]
 testpaths = ["tests"]
 python_files = ["test_*.py", "prop_*.py"]
 python_functions = ["test_*", "prop_*"]
