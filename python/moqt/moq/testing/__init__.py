@@ -42,7 +42,7 @@ import pytest_asyncio
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from moqt.moq.client import Client
 from moqt.moq.testing.server import (
@@ -147,6 +147,10 @@ def generate_certificates(
                     x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
                 ]
             ),
+            critical=False,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
             critical=False,
         )
         .sign(private_key, hashes.SHA256())
