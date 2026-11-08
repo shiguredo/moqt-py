@@ -1,7 +1,7 @@
 # E2E テストの接続タイムアウトを再実行で安定化する
 
 - Created: 2026-11-08
-- Completed:
+- Completed: 2026-11-08
 - Branch: feature/e2e-rerun
 - Polished:
 
@@ -28,13 +28,24 @@
 
 ## 作業項目
 
-- [ ] `pytest-rerunfailures` を開発依存に追加する
-- [ ] `ConnectionError` / `TimeoutError` だけを再実行する設定を追加する
-- [ ] 全テストを複数回実行して安定することを確認する
-- [ ] Python 3.15 / 3.15t でも確認する
-- [ ] `prek run --all-files` を通す
+- [x] `pytest-rerunfailures` を開発依存に追加する
+- [x] `ConnectionError` / `TimeoutError` だけを再実行する設定を追加する
+- [x] 全テストを複数回実行して安定することを確認する
+- [x] Python 3.15 / 3.15t でも確認する
+- [x] `prek run --all-files` を通す
 
 ## テスト
 
 全テストを 10 回実行し、失敗したテストが再実行で回復することを確認する。
 修正を push した後の CI でも確認する。
+
+## 解決方法
+
+開発依存に `pytest-rerunfailures` を追加し、`ConnectionError` と `TimeoutError`
+だけを最大 2 回再実行する設定を追加した。
+
+全テストを 10 回実行し、すべて 672 passed になった。接続タイムアウトが発生した
+回も、再実行で回復した。Python 3.15 / 3.15t と `prek run --all-files` も通り、
+CI と e2e-test が成功した。
+
+サーバー側の接続受付が一時的に止まる恒久的な原因は別途調査する。
