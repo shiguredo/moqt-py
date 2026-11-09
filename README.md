@@ -48,10 +48,10 @@ wheel は配布しておらず、Rust 1.95 以降の toolchain を使ってソ�
 
 ## 対応 Python
 
-- 3.14
-- 3.14t (Free-Threading)
 - 3.15
 - 3.15t (Free-Threading)
+- 3.14
+- 3.14t (Free-Threading)
 
 ## インストール
 
