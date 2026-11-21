@@ -24,6 +24,23 @@ pub(crate) async fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, Io
     Ok(addresses)
 }
 
+/// 接続を試したアドレスと失敗理由をまとめて 1 つのメッセージにする。
+///
+/// 最後のアドレスのエラーだけを報告すると、到達できないアドレスファミリの
+/// エラーが実際の失敗理由 (TLS / WebTransport のハンドシェイク失敗など) を
+/// 隠してしまう。診断できるよう、試した全アドレスの失敗を残す。
+pub(crate) fn describe_connect_failures(failures: &[(SocketAddr, String)]) -> String {
+    if failures.is_empty() {
+        return String::from("no address was tried");
+    }
+    let details = failures
+        .iter()
+        .map(|(address, error)| format!("{address}: {error}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("failed to connect to any resolved address ({details})")
+}
+
 /// 接続先のアドレスファミリに合わせたローカルアドレスを返す。
 pub(crate) fn local_bind_addr(remote: SocketAddr) -> SocketAddr {
     if remote.is_ipv6() {

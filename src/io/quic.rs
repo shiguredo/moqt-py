@@ -110,7 +110,7 @@ pub(crate) async fn run_client(
             return;
         }
     };
-    let mut last_error = String::from("no address was tried");
+    let mut failures = Vec::new();
     for address in addresses {
         let builder = Client::builder()
             .with_tls(ClientTlsConfig::new(Arc::clone(&tls)))
@@ -122,7 +122,7 @@ pub(crate) async fn run_client(
         let client = match builder.start() {
             Ok(client) => client,
             Err(error) => {
-                last_error = format!("failed to start the QUIC client: {error}");
+                failures.push((address, format!("failed to start the QUIC client: {error}")));
                 continue;
             }
         };
@@ -135,14 +135,13 @@ pub(crate) async fn run_client(
                 run_connection(ConnectionRole::Client, connection, commands, events, None).await;
                 return;
             }
-            Err(error) => {
-                last_error = format!("failed to connect to {address}: {error}");
-            }
+            Err(error) => failures.push((address, error.to_string())),
         }
     }
-    let error = IoError::connection(last_error.clone());
+    let message = net::describe_connect_failures(&failures);
+    let error = IoError::connection(message.clone());
     let _ = ready.send(Err(error));
-    let _ = events.send(EventSpec::error(0, 0, last_error)).await;
+    let _ = events.send(EventSpec::error(0, 0, message)).await;
     let _ = events.send(EventSpec::end(0, 0)).await;
 }
 

@@ -193,7 +193,7 @@ pub(crate) async fn run_client(
             return;
         }
     };
-    let mut last_error = String::from("no address was tried");
+    let mut failures = Vec::new();
     for address in addresses {
         match connect_client(address, &config, Arc::clone(&tls)).await {
             Ok((connection, tls_stream, connect_stream, local, peer)) => {
@@ -227,12 +227,15 @@ pub(crate) async fn run_client(
                 .await;
                 return;
             }
-            Err(error) => {
-                last_error = format!("failed to connect to {address}: {}", error.message);
-            }
+            Err(error) => failures.push((address, error.message)),
         }
     }
-    fail(ready, events, IoError::connection(last_error)).await;
+    fail(
+        ready,
+        events,
+        IoError::connection(net::describe_connect_failures(&failures)),
+    )
+    .await;
 }
 
 /// HTTP/2 の接続を確立し、拡張 CONNECT が受理されるまで待つ。

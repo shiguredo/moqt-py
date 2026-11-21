@@ -146,7 +146,7 @@ pub(crate) async fn run_client(
             return;
         }
     };
-    let mut last_error = String::from("no address was tried");
+    let mut failures = Vec::new();
     for address in addresses {
         let client = match wt_client::Client::builder()
             .with_tls_config(Arc::clone(&tls))
@@ -156,7 +156,7 @@ pub(crate) async fn run_client(
         {
             Ok(client) => client,
             Err(error) => {
-                last_error = format!("failed to start the QUIC client: {error}");
+                failures.push((address, format!("failed to start the QUIC client: {error}")));
                 continue;
             }
         };
@@ -185,12 +185,15 @@ pub(crate) async fn run_client(
                 run_client_session(0, session, commands, events).await;
                 return;
             }
-            Err(error) => {
-                last_error = format!("failed to connect to {address}: {error}");
-            }
+            Err(error) => failures.push((address, error.to_string())),
         }
     }
-    fail_client(ready, events, IoError::connection(last_error)).await;
+    fail_client(
+        ready,
+        events,
+        IoError::connection(net::describe_connect_failures(&failures)),
+    )
+    .await;
 }
 
 /// クライアントの接続失敗を Future とイベントへ伝える。
