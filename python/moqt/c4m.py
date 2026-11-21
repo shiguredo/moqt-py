@@ -190,12 +190,15 @@ CLAIM_CAT_IF: int = _native.CLAIM_CAT_IF
 CLAIM_CAT_RENEWAL: int = _native.CLAIM_CAT_RENEWAL
 """`catr` (323)。"""
 
-# `cnf` の `jkt` の confirmation key
+# `cnf` の confirmation key (IANA の CWT Confirmation Methods レジストリ)
 CONFIRMATION_JWK_THUMBPRINT: int = _native.CONFIRMATION_JWK_THUMBPRINT
 """IANA 登録の `jkt` の confirmation key (323)。"""
 
+CONFIRMATION_COSE_KEY_THUMBPRINT: int = _native.CONFIRMATION_COSE_KEY_THUMBPRINT
+"""IANA 登録の `ckt` の confirmation key (5)。"""
+
 CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT: int = _native.CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT
-"""draft-ietf-moq-c4m-02 のベクタが使う `jkt` の confirmation key (3)。"""
+"""draft-ietf-moq-c4m-01 のベクタが `jkt` として使う confirmation key (3)。"""
 
 # MOQT の Auth Token Type (draft-ietf-moq-c4m-02 §7.1)
 MOQT_AUTH_TOKEN_TYPE_CAT: int = _native.MOQT_AUTH_TOKEN_TYPE_CAT
@@ -418,6 +421,7 @@ __all__ = [
     "CLAIM_NOT_BEFORE",
     "CLAIM_SUBJECT",
     "CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT",
+    "CONFIRMATION_COSE_KEY_THUMBPRINT",
     "CONFIRMATION_JWK_THUMBPRINT",
     "DPOP_PROOF_JWT_TYPE",
     "HEADER_ALGORITHM",

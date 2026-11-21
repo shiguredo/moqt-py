@@ -17,10 +17,10 @@ use shiguredo_moqt::c4m::cat::{
     CLAIM_CAT_REPLAY, CLAIM_CAT_TLS_PUBLIC_KEY, CLAIM_CAT_URI, CLAIM_CAT_VERSION,
     CLAIM_CONFIRMATION, CLAIM_CWT_ID, CLAIM_EXPIRATION, CLAIM_ISSUED_AT, CLAIM_ISSUER,
     CLAIM_NOT_BEFORE, CLAIM_SUBJECT, CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT,
-    CONFIRMATION_JWK_THUMBPRINT, CatClaims as MoqtCatClaims, CatToken as MoqtCatToken,
-    CatTokenBuilder as MoqtCatTokenBuilder, ClaimValidationOptions as MoqtClaimValidationOptions,
-    Confirmation as MoqtConfirmation, MOQT_AUTH_TOKEN_TYPE_CAT, TokenFormat,
-    VerifyOptions as MoqtVerifyOptions,
+    CONFIRMATION_COSE_KEY_THUMBPRINT, CONFIRMATION_JWK_THUMBPRINT, CatClaims as MoqtCatClaims,
+    CatToken as MoqtCatToken, CatTokenBuilder as MoqtCatTokenBuilder,
+    ClaimValidationOptions as MoqtClaimValidationOptions, Confirmation as MoqtConfirmation,
+    MOQT_AUTH_TOKEN_TYPE_CAT, TokenFormat, VerifyOptions as MoqtVerifyOptions,
 };
 use shiguredo_moqt::c4m::crypto::aws_lc_rs::AwsLcRsCrypto;
 
@@ -32,10 +32,12 @@ use crate::c4m::crypto::{CoseKey, algorithm_from_identifier};
 use crate::c4m::namespace_refs;
 use crate::errors::codec_error;
 
-/// `cnf` (confirmation) クレーム (RFC 8747 / CTA-5007-B)。
+/// `cnf` (confirmation) クレーム (RFC 8747 / RFC 9679 / CTA-5007-B)。
 ///
-/// IANA 登録の `jkt` (confirmation key 323) と、draft-ietf-moq-c4m-02 のベクタが
-/// 使う `jkt` (confirmation key 3) を分けて保持する。検証は 323 を優先する。
+/// IANA 登録の `jkt` (confirmation key 323) / `ckt` (confirmation key 5) と、
+/// confirmation key 3 の生値を分けて保持する。confirmation key 3 は IANA では
+/// `kid` であり (RFC 8747 §3.4)、draft-ietf-moq-c4m-01 のベクタだけが `jkt` として
+/// 使うため、解釈は [`Confirmation::jkt`] / [`Confirmation::kid`] で指定する。
 #[derive(PartialEq)]
 #[pyclass(name = "Confirmation", eq)]
 pub(crate) struct Confirmation {
@@ -84,16 +86,35 @@ impl Confirmation {
         self.inner.jwk_thumbprint = value;
     }
 
-    /// draft-ietf-moq-c4m-02 のベクタが使う `jkt` (confirmation key 3) の値。
+    /// `ckt` (confirmation key 5) の値。
+    ///
+    /// RFC 9679 §3 の COSE Key Thumbprint を SHA-256 で計算した 32 バイトである。
     #[getter]
-    fn c4m_draft_jwk_thumbprint(&self) -> Option<Vec<u8>> {
-        self.inner.c4m_draft_jwk_thumbprint.clone()
+    fn cose_key_thumbprint(&self) -> Option<Vec<u8>> {
+        self.inner.cose_key_thumbprint.clone()
     }
 
-    /// draft のベクタが使う `jkt` (confirmation key 3) の値を設定する。
+    /// `ckt` (confirmation key 5) の値を設定する。
     #[setter]
-    fn set_c4m_draft_jwk_thumbprint(&mut self, value: Option<Vec<u8>>) {
-        self.inner.c4m_draft_jwk_thumbprint = value;
+    fn set_cose_key_thumbprint(&mut self, value: Option<Vec<u8>>) {
+        self.inner.cose_key_thumbprint = value;
+    }
+
+    /// confirmation key 3 の生値。
+    ///
+    /// IANA の CWT Confirmation Methods レジストリでは 3 は `kid` であり
+    /// (RFC 8747 §3.4)、draft-ietf-moq-c4m-01 のベクタだけが `jkt` として使う。
+    /// どちらとして解釈するかは [`Confirmation::jkt`] / [`Confirmation::kid`] に
+    /// 渡す。
+    #[getter]
+    fn confirmation_key_3(&self) -> Option<Vec<u8>> {
+        self.inner.confirmation_key_3.clone()
+    }
+
+    /// confirmation key 3 の生値を設定する。
+    #[setter]
+    fn set_confirmation_key_3(&mut self, value: Option<Vec<u8>>) {
+        self.inner.confirmation_key_3 = value;
     }
 
     /// 解釈しなかった confirmation の値。
@@ -111,11 +132,34 @@ impl Confirmation {
             .collect();
     }
 
-    /// JWK サムプリントを返す。
+    /// `jkt` (JWK サムプリント) を返す。
     ///
-    /// IANA 登録の 323 を優先し、無ければドラフトのベクタが使う 3 を返す。
-    fn jkt(&self) -> Option<Vec<u8>> {
-        self.inner.jkt().map(|jkt| jkt.to_vec())
+    /// IANA 登録の 323 を優先し、323 が無い場合は `interpretation` が
+    /// `"c4m_draft_jkt"` のときだけ confirmation key 3 を返す。既定の
+    /// `"iana_kid"` では 3 は `kid` であり `jkt` ではないため `None` になる。
+    #[pyo3(signature = (interpretation = None))]
+    fn jkt(&self, interpretation: Option<&str>) -> PyResult<Option<Vec<u8>>> {
+        let interpretation = crate::c4m::confirmation_key3_from_python(interpretation)?;
+        Ok(self.inner.jkt_with(interpretation).map(|jkt| jkt.to_vec()))
+    }
+
+    /// `kid` (key identifier) を返す。
+    ///
+    /// IANA の CWT Confirmation Methods レジストリでは confirmation key 3 が
+    /// `kid` である (RFC 8747 §3.4)。`interpretation` が `"c4m_draft_jkt"` の
+    /// 場合は 3 を `jkt` として扱うため `None` になる。
+    #[pyo3(signature = (interpretation = None))]
+    fn kid(&self, interpretation: Option<&str>) -> PyResult<Option<Vec<u8>>> {
+        let interpretation = crate::c4m::confirmation_key3_from_python(interpretation)?;
+        Ok(self.inner.kid(interpretation).map(|kid| kid.to_vec()))
+    }
+
+    /// `ckt` (COSE Key Thumbprint) を返す。
+    ///
+    /// RFC 9679 §3 の COSE Key Thumbprint を SHA-256 で計算した 32 バイトである。
+    /// `jkt` とは別の値を返す。
+    fn ckt(&self) -> Option<Vec<u8>> {
+        self.inner.ckt().map(|ckt| ckt.to_vec())
     }
 
     fn __repr__(&self) -> String {
@@ -203,8 +247,13 @@ impl CatClaims {
 
     /// 時刻と期待値に対するクレームの検証を行う。
     ///
-    /// `exp` / `nbf` / `iss` / `aud` を検証する。署名の検証は [`CatToken::verify`] が
-    /// 行う。
+    /// `exp` / `nbf` / `iss` / `aud` と `moqt-reval` を検証する。署名の検証は
+    /// [`CatToken::verify`] が行う。
+    ///
+    /// `moqt-reval` を持つトークンの受理可否は
+    /// [`ClaimValidationOptions::revalidation_interval_seconds`] で決まる
+    /// (draft-ietf-moq-c4m-02 §2.2)。既定 (`None`) では再検証できない受信者として扱い、
+    /// `moqt-reval` を持つトークンを値が 0 でも拒否する。
     fn validate(&self, options: &ClaimValidationOptions) -> PyResult<()> {
         let issuers: Vec<&str> = options
             .expected_issuers
@@ -221,6 +270,7 @@ impl CatClaims {
             clock_tolerance_seconds: options.clock_tolerance_seconds,
             expected_issuers: &issuers,
             expected_audiences: &audiences,
+            revalidation_interval_seconds: options.revalidation_interval_seconds,
         };
         self.inner.validate(&options).map_err(codec_error)
     }
@@ -410,36 +460,58 @@ pub(crate) struct ClaimValidationOptions {
     /// 期待する `aud` の一覧。空の場合は検証しない。
     #[pyo3(get, set)]
     pub expected_audiences: Vec<String>,
+    /// 受信者が再検証できる最小間隔 (秒)。
+    ///
+    /// `moqt-reval` を持つトークンの受理可否に使う
+    /// (draft-ietf-moq-c4m-02 §2.2)。`None` (既定) は再検証できないことを表し、
+    /// `moqt-reval` を持つトークンを値が 0 でも拒否する。
+    #[pyo3(get, set)]
+    pub revalidation_interval_seconds: Option<f64>,
 }
 
 #[pymethods]
 impl ClaimValidationOptions {
     /// 検証オプションを組み立てる。
     ///
-    /// 現在時刻と許容ずれの既定値は 0、期待する `iss` / `aud` の既定値は空である。
+    /// 現在時刻と許容ずれの既定値は 0、期待する `iss` / `aud` の既定値は空、
+    /// 再検証間隔の既定値は `None` である。
+    ///
+    /// `revalidation_interval_seconds` は `moqt-reval` を持つトークンの受理可否に使う
+    /// (draft-ietf-moq-c4m-02 §2.2)。
+    ///
+    /// - `None` (既定): 再検証できない受信者として扱い、`moqt-reval` を持つトークンを
+    ///   値が 0 でも拒否する
+    /// - 値を指定した場合: `moqt-reval` が 0 なら受理し、非ゼロなら指定値以上のときだけ
+    ///   受理する
     #[new]
-    #[pyo3(signature = (reference_time_seconds = 0.0, clock_tolerance_seconds = 0.0, expected_issuers = None, expected_audiences = None))]
+    #[pyo3(signature = (reference_time_seconds = 0.0, clock_tolerance_seconds = 0.0, expected_issuers = None, expected_audiences = None, revalidation_interval_seconds = None))]
     fn new(
         reference_time_seconds: f64,
         clock_tolerance_seconds: f64,
         expected_issuers: Option<Vec<String>>,
         expected_audiences: Option<Vec<String>>,
+        revalidation_interval_seconds: Option<f64>,
     ) -> Self {
         Self {
             reference_time_seconds,
             clock_tolerance_seconds,
             expected_issuers: expected_issuers.unwrap_or_default(),
             expected_audiences: expected_audiences.unwrap_or_default(),
+            revalidation_interval_seconds,
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "ClaimValidationOptions(reference_time_seconds={}, clock_tolerance_seconds={}, expected_issuers={}, expected_audiences={})",
+            "ClaimValidationOptions(reference_time_seconds={}, clock_tolerance_seconds={}, expected_issuers={}, expected_audiences={}, revalidation_interval_seconds={})",
             self.reference_time_seconds,
             self.clock_tolerance_seconds,
             self.expected_issuers.len(),
-            self.expected_audiences.len()
+            self.expected_audiences.len(),
+            match self.revalidation_interval_seconds {
+                Some(interval) => interval.to_string(),
+                None => String::from("None"),
+            }
         )
     }
 }
@@ -745,14 +817,16 @@ impl CatTokenBuilder {
         confirmation.jwk_thumbprint = Some(thumbprint);
     }
 
-    /// `cnf` の `jkt` を draft-ietf-moq-c4m-02 のベクタが使う key 3 で設定する。
-    fn c4m_draft_jwk_thumbprint(&mut self, thumbprint: Vec<u8>) {
+    /// `cnf` の confirmation key 3 を設定する。
+    ///
+    /// IANA では `kid`、draft-ietf-moq-c4m-01 のベクタでは `jkt` として使われる値である。
+    fn confirmation_key_3(&mut self, value: Vec<u8>) {
         let confirmation = self
             .inner
             .claims
             .confirmation
             .get_or_insert_with(Default::default);
-        confirmation.c4m_draft_jwk_thumbprint = Some(thumbprint);
+        confirmation.confirmation_key_3 = Some(value);
     }
 
     /// `catdpop` を設定する。
@@ -926,8 +1000,12 @@ pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("CLAIM_CAT_IF", CLAIM_CAT_IF)?;
     module.add("CLAIM_CAT_RENEWAL", CLAIM_CAT_RENEWAL)?;
 
-    // `cnf` の `jkt` の confirmation key
+    // `cnf` の confirmation key (IANA の CWT Confirmation Methods レジストリ)
     module.add("CONFIRMATION_JWK_THUMBPRINT", CONFIRMATION_JWK_THUMBPRINT)?;
+    module.add(
+        "CONFIRMATION_COSE_KEY_THUMBPRINT",
+        CONFIRMATION_COSE_KEY_THUMBPRINT,
+    )?;
     module.add(
         "CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT",
         CONFIRMATION_C4M_DRAFT_JWK_THUMBPRINT,

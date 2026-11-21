@@ -137,18 +137,21 @@ MSF (MOQT Streaming Format) のカタログ・メディアタイムライン・�
 from moqt import msf
 
 catalog = msf.Catalog.parse(
-    '{"version":"draft-01","tracks":[{"name":"video","packaging":"loc","isLive":true}]}'
+    '{"version":"draft-02","tracks":[{"name":"video","packaging":"loc","isLive":true}]}'
 )
 print(catalog.tracks)
 
 # delta 更新を適用する
-catalog.apply_delta('{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}]}')
+catalog.apply_delta(
+    '{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}],"generatedAt":1234}'
+)
 print(catalog.encode())
 
 # JSON 文字列を経由せずに組み立てる
 built = msf.Catalog()
 built.add_track(msf.Track("video", "loc", True))
 delta = msf.DeltaUpdate()
+delta.generated_at = 1234
 delta.add_tracks([msf.Track("audio", "loc", True)])
 delta.clone_tracks([msf.CloneTrack("video-low", "video")])
 built.apply_delta_update(delta)
@@ -203,6 +206,7 @@ print(token.format, token.claims.issuer)
 - DPoP: `DpopProof` / `DpopProofBuilder` / `AuthorizationContext` / `DpopReplayCache`
 - 整数の識別子を持つ enum (`MoqtAction` / `Algorithm` / `EcCurve` / `OkpCurve`) は `enum.IntEnum` であり、native 側の関数へそのまま渡せる
 - Track Namespace は `tuple[bytes, ...]`、Track Name は `bytes` で扱う。デコードと検証の失敗は `ValueError` になる
+- `ClaimValidationOptions` の `revalidation_interval_seconds` を指定しない限り、`moqt-reval` を持つトークンは検証で拒否される。再検証できる間隔を指定すると、その値以上の `moqt-reval` を持つトークンだけを受理する (draft-ietf-moq-c4m-02 §2.2)
 - クレームとヘッダの定数は `CLAIM_*` / `HEADER_*` / `TAG_*` / `CONFIRMATION_*` / `CAT_*` / `DPOP_*` / `MOQT_*` に分かれている
 - 付録 A のテストベクタは `tests/test_c4m.py` で固定している
 
@@ -449,7 +453,7 @@ asyncio.run(main())
 
 - MOQT: draft-ietf-moq-transport-23
 - LOC: draft-ietf-moq-loc-04
-- MSF: draft-ietf-moq-msf-01
+- MSF: draft-ietf-moq-msf-02
 - C4M: draft-ietf-moq-c4m-02
 - CBOR / COSE / CWT: RFC 8949 / RFC 9052 / RFC 8392
 - DPoP: draft-nandakumar-moq-generic-dpop-proof-00

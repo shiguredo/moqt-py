@@ -497,6 +497,34 @@ def test_clock_tolerance_allows_expired_token() -> None:
         )
 
 
+def test_moqt_reval_requires_a_revalidation_interval() -> None:
+    """
+    `moqt-reval` を持つトークンの受理可否が再検証間隔で決まることを確認する。
+
+    draft-ietf-moq-c4m-02 §2.2: 再検証できない受信者は `moqt-reval` 付きトークンを
+    すべて拒否する (MUST)。再検証できる受信者は、自身の再検証間隔以上を要求する
+    トークンを受理し、より短い間隔を要求するトークンは拒否する。
+    """
+    claims = CatClaims()
+    # 再検証間隔を指定しない場合 (既定) は再検証できない受信者として扱う。
+    # `moqt-reval` が 0 でも拒否する
+    claims.moqt_reval = 0.0
+    with pytest.raises(ValueError, match="cannot revalidate tokens"):
+        claims.validate(ClaimValidationOptions())
+    # 0 秒の再検証間隔を宣言すれば、再検証を要求しないトークンは受理する
+    claims.validate(ClaimValidationOptions(revalidation_interval_seconds=0.0))
+
+    claims.moqt_reval = 60.0
+    # 自身の再検証間隔 (30 秒) 以上の間隔を要求するトークンは受理する
+    claims.validate(ClaimValidationOptions(revalidation_interval_seconds=30.0))
+    # 自身の再検証間隔 (120 秒) より短い間隔を要求するトークンは拒否する
+    with pytest.raises(ValueError, match="shorter than the recipient can revalidate"):
+        claims.validate(ClaimValidationOptions(revalidation_interval_seconds=120.0))
+    # 再検証間隔は有限かつ 0 以上でなければならない
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        claims.validate(ClaimValidationOptions(revalidation_interval_seconds=-1.0))
+
+
 @pytest.mark.parametrize(
     ("token_text", "key_hex", "expected_algorithm", "message"),
     SPOOFED_TOKENS,
@@ -1278,20 +1306,33 @@ def test_access_token_hash_verification() -> None:
 
 def test_replay_cache_expires_old_entries() -> None:
     """
-    リプレイキャッシュがウィンドウ外の古い記録を破棄することを確認する。
+    リプレイキャッシュが保持期限を過ぎた記録を破棄することを確認する。
 
-    同じ jti でもウィンドウを過ぎれば再び受理される。
+    記録は `iat + 保持期間の上限` を過ぎるまで保持し、同じ jti でも解放後は再び受理される。
+    保持期間の上限より大きいウィンドウの proof は fail-closed で拒否する。
     """
-    cache = DpopReplayCache()
+    cache = DpopReplayCache(60.0)
+    assert cache.max_window_seconds == 60.0
     cache.check_and_record("id-1", 1700000000.0, 60.0, 1700000000.0)
 
     assert len(cache) == 1
     with pytest.raises(ValueError, match="already used"):
         cache.check_and_record("id-1", 1700000000.0, 60.0, 1700000030.0)
 
-    # ウィンドウを過ぎた記録は破棄される
+    # 保持期限 (iat + 60 秒) を過ぎた記録は破棄される
     cache.check_and_record("id-1", 1700000000.0, 60.0, 1700000061.0)
     assert len(cache) == 1
+
+    # 保持期間の上限を超えるウィンドウは拒否する
+    with pytest.raises(ValueError, match="exceeds the maximum replay window"):
+        cache.check_and_record("id-2", 1700000000.0, 61.0, 1700000000.0)
+    # 拒否しても他の jti は記録できる
+    cache.check_and_record("id-3", 1700000000.0, 60.0, 1700000000.0)
+    assert len(cache) == 2
+
+    # 保持期間の上限は有限かつ正でなければならない
+    with pytest.raises(ValueError, match="finite and positive"):
+        DpopReplayCache(0.0)
 
 
 def test_appendix_a4_dpop_binding_claims() -> None:
@@ -1305,7 +1346,7 @@ def test_appendix_a4_dpop_binding_claims() -> None:
     binding = CatToken.decode(TOKEN_DPOP_JWK_BINDING).claims
 
     assert binding.confirmation is not None
-    assert binding.confirmation.jkt() == hex_bytes(
+    assert binding.confirmation.jkt("c4m_draft_jkt") == hex_bytes(
         "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1"
     )
     assert binding.confirmation.jwk_thumbprint is None
@@ -1320,7 +1361,7 @@ def test_appendix_a4_dpop_binding_claims() -> None:
 
     es256 = CatToken.decode(TOKEN_DPOP_ES256).claims
     assert es256.confirmation is not None
-    assert es256.confirmation.jkt() == es256_jwk().thumbprint_sha256()
+    assert es256.confirmation.jkt("c4m_draft_jkt") == es256_jwk().thumbprint_sha256()
     assert es256.catdpop is not None
     assert es256.catdpop.window_seconds_or(0.0) == 120.0
     assert not es256.catdpop.honors_jti()
@@ -1345,7 +1386,7 @@ def test_authorization_context_decode_and_errors() -> None:
     context.verify_context_type(c4m.MOQT_AUTHORIZATION_CONTEXT_TYPE)
     context.verify_action(MoqtAction.PUBLISH_NAMESPACE)
     context.verify_target((b"example.com",), b"live")
-    context.verify_resource_consistency()
+    context.verify_resource_consistency(MoqtAction.PUBLISH_NAMESPACE)
 
     with pytest.raises(ValueError, match=r"actx\.type does not match"):
         context.verify_context_type("other")
@@ -1616,22 +1657,36 @@ def test_cose_key_api() -> None:
 
 def test_confirmation_api() -> None:
     """
-    `Confirmation` の IANA の `jkt` とドラフトの `jkt` の優先順位を確認する。
+    `Confirmation` の `jkt` / `kid` / `ckt` の意味を確認する。
 
-    `jkt` は confirmation key 323 を優先し、無ければ 3 を返す。
+    IANA の CWT Confirmation Methods レジストリでは confirmation key 3 は `kid` であり
+    (RFC 8747 §3.4)、draft-ietf-moq-c4m-01 のベクタだけが `jkt` として使う。`jkt` は
+    confirmation key 323 を優先し、323 が無い場合は解釈を明示したときだけ 3 を返す。
     """
     confirmation = Confirmation()
-    confirmation.c4m_draft_jwk_thumbprint = b"\x01" * 32
+    confirmation.confirmation_key_3 = b"\x01" * 32
 
-    assert confirmation.jkt() == b"\x01" * 32
+    # 既定の解釈では confirmation key 3 は kid であり jkt ではない
+    assert confirmation.jkt() is None
+    assert confirmation.kid() == b"\x01" * 32
+    # ドラフトのベクタの解釈を明示すると jkt として読める
+    assert confirmation.jkt("c4m_draft_jkt") == b"\x01" * 32
+    assert confirmation.kid("c4m_draft_jkt") is None
 
     confirmation.jwk_thumbprint = b"\x02" * 32
+    confirmation.cose_key_thumbprint = b"\x03" * 32
     assert confirmation.jwk_thumbprint == b"\x02" * 32
-    assert confirmation.c4m_draft_jwk_thumbprint == b"\x01" * 32
+    assert confirmation.cose_key_thumbprint == b"\x03" * 32
+    assert confirmation.confirmation_key_3 == b"\x01" * 32
+    # jkt は 323 を優先し、ckt は別の値を返す
     assert confirmation.jkt() == b"\x02" * 32
+    assert confirmation.ckt() == b"\x03" * 32
 
     decoded = Confirmation.decode(confirmation.encode())
     assert decoded == confirmation
+
+    with pytest.raises(ValueError, match="unknown confirmation key 3 interpretation"):
+        confirmation.jkt("unknown")
 
 
 def test_cat_claims_raw_get() -> None:

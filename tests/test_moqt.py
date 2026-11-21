@@ -745,43 +745,84 @@ def test_message_equality_is_based_on_the_wire_bytes() -> None:
     assert "kind=setup" in repr(first)
 
 
-def test_decode_message_reports_a_defined_but_unimplemented_message() -> None:
+@pytest.mark.parametrize(
+    ("type_id", "kind"),
+    [
+        (0x06, "publish_namespace"),
+        (0x50, "subscribe_namespace"),
+        (0x51, "subscribe_tracks"),
+    ],
+)
+def test_decode_message_decodes_a_namespace_request(type_id: int, kind: str) -> None:
     """
-    定義済みだが実装しない制御メッセージを `unsupported` としてデコードすることを確認する。
+    namespace の発見・告知 request を種別ごとの本体にデコードすることを確認する。
 
-    draft-ietf-moq-transport-23 §9 Table 5 は PUBLISH_NAMESPACE (0x06) を request として
-    定義する。relay 専用の namespace 発見・告知機構は moqt-rs が実装しないため、
-    本体は型 ID と生バイト列のまま公開される。先頭の Request ID (vi64) だけは解釈される。
+    PUBLISH_NAMESPACE (0x06) / SUBSCRIBE_NAMESPACE (0x50) / SUBSCRIBE_TRACKS (0x51) は
+    共通して Request ID (vi64) + Track Namespace Prefix + Parameters を運ぶ
+    (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+    §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS))。
     """
-    # Type (vi64) 0x06 + Length (vi64) 1 + Message Body (Request ID 0)
-    data = b"\x06\x01\x00"
+    # Request ID 3 + Track Namespace Prefix (["ns"]) + Parameters (0 件)
+    body = encode_varint(3) + encode_varint(1) + encode_varint(2) + b"ns" + encode_varint(0)
+    data = encode_varint(type_id) + encode_varint(len(body)) + body
 
     message, consumed = decode_message(data)
 
-    assert message.kind == "unsupported"
-    assert message.type_id == 0x06
-    assert message.request_id == 0
-    assert message.body == {"type_id": 0x06, "request_id": 0, "body": b"\x00"}
+    assert message.kind == kind
+    assert message.type_id == type_id
+    assert message.request_id == 3
+    assert message.body == {
+        "request_id": 3,
+        "track_namespace": [b"ns"],
+        "parameters": {},
+    }
     assert message.raw == data
     assert consumed == len(data)
 
 
-def test_decode_message_reports_a_response_only_message_without_a_request_id() -> None:
+@pytest.mark.parametrize(
+    ("type_id", "kind", "body", "expected_body"),
+    [
+        # NAMESPACE (0x08): Track Namespace Suffix (["ns"]) + Parameters (0 件)
+        (
+            0x08,
+            "namespace",
+            b"\x01\x02ns\x00",
+            {"track_namespace_suffix": [b"ns"], "parameters": {}},
+        ),
+        # NAMESPACE_DONE (0x0E): Track Namespace Suffix (["ns"]) だけ
+        (0x0E, "namespace_done", b"\x01\x02ns", {"track_namespace_suffix": [b"ns"]}),
+        # PUBLISH_SKIPPED (0x0F): Track Namespace Suffix + Track Name ("t")
+        (
+            0x0F,
+            "publish_skipped",
+            b"\x01\x02ns\x01t",
+            {"track_namespace_suffix": [b"ns"], "track_name": b"t"},
+        ),
+    ],
+)
+def test_decode_message_decodes_a_namespace_response(
+    type_id: int, kind: str, body: bytes, expected_body: dict[str, object]
+) -> None:
     """
-    Request ID を持たない定義済みメッセージを `request_id=None` としてデコードすることを確認する。
+    Request ID を持たない namespace の応答メッセージをデコードすることを確認する。
 
-    draft-ietf-moq-transport-23 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
-    Request ID で始まらない。
+    NAMESPACE / NAMESPACE_DONE / PUBLISH_SKIPPED は SUBSCRIBE_NAMESPACE と
+    SUBSCRIBE_TRACKS の応答 stream で届き、ワイヤに Request ID を含まない。運ぶのは
+    要求の Track Namespace Prefix の後ろの suffix だけである
+    (draft-ietf-moq-transport-23 §9.15 (NAMESPACE) / §9.16 (NAMESPACE_DONE) /
+    §9.18 (PUBLISH_SKIPPED))。
     """
-    # Type (vi64) 0x08 + Length (vi64) 1 + Message Body (Track Namespace Suffix)
-    data = b"\x08\x01\x00"
+    data = encode_varint(type_id) + encode_varint(len(body)) + body
 
-    message, _ = decode_message(data)
+    message, consumed = decode_message(data)
 
-    assert message.kind == "unsupported"
-    assert message.type_id == 0x08
+    assert message.kind == kind
+    assert message.type_id == type_id
     assert message.request_id is None
-    assert message.body == {"type_id": 0x08, "request_id": None, "body": b"\x00"}
+    assert message.body == expected_body
+    assert message.raw == data
+    assert consumed == len(data)
 
 
 # ─── ストリーム種別の判定 ───────────────────────────────────
@@ -1052,8 +1093,8 @@ def test_track_status_request_does_not_create_subscription_state() -> None:
     assert server.track_status_request(request_id) is not None
 
 
-def _unsupported_request(type_id: int, body: bytes) -> bytes:
-    """未対応 request の制御メッセージを組み立てる。
+def _namespace_request(type_id: int, body: bytes) -> bytes:
+    """namespace の発見・告知 request の制御メッセージを組み立てる。
 
     制御メッセージは Type (vi64) + Length (vi64) + Message Body の順に
     直列化する (draft-ietf-moq-transport-23 §9 (Control Messages))。
@@ -1061,12 +1102,12 @@ def _unsupported_request(type_id: int, body: bytes) -> bytes:
     return encode_varint(type_id) + encode_varint(len(body)) + body
 
 
-def _unsupported_request_body(
+def _namespace_request_body(
     request_id: int,
     namespace: tuple[bytes, ...],
     parameters: bytes,
 ) -> bytes:
-    """未対応 request の本体を組み立てる。
+    """namespace の発見・告知 request の本体を組み立てる。
 
     PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS は共通して
     Request ID (vi64) + Track Namespace Prefix + Parameters を運ぶ
@@ -1118,48 +1159,67 @@ def _authorization_token_register(alias: int, token_type: int, token_value: byte
     return encode_varint(1) + encode_varint(alias) + encode_varint(token_type) + token_value
 
 
-def test_defined_but_unimplemented_request_is_rejected_with_not_supported() -> None:
+@pytest.mark.parametrize(
+    ("type_id", "kind"),
+    [
+        (0x06, "publish_namespace"),
+        (0x50, "subscribe_namespace"),
+        (0x51, "subscribe_tracks"),
+    ],
+)
+def test_namespace_request_is_offered_to_the_application(type_id: int, kind: str) -> None:
     """
-    定義済みだが実装しない request を NOT_SUPPORTED で拒否することを確認する。
+    namespace の発見・告知 request を状態機械がアプリへ通知することを確認する。
 
-    draft-ietf-moq-transport-23 §1.6 (Modularity): "Limited endpoints SHOULD respond to
-    any unsupported messages with the appropriate NOT_SUPPORTED error code, rather than
-    ignoring them." §9 Table 5 の PUBLISH_NAMESPACE (0x06) は relay 専用の namespace
-    発見・告知機構であり、moqt-rs は実装しない。本体は Request ID + Track Namespace
-    Prefix + Parameters として解析されるため、完全な本体を送る。受信したセッションは
-    閉じない。
+    draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+    §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS) は、アプリが
+    REQUEST_OK または REQUEST_ERROR で 1 通だけ応答することを要求する。
+    状態機械は自動で応答しないため、受信はイベントとして通知される。
+    本体は Request ID + Track Namespace Prefix + Parameters である。
     """
     _client, server = _setup()
-    body = _unsupported_request_body(0, (b"ns",), _parameter_block())
+    body = _namespace_request_body(0, (b"ns",), _parameter_block())
+    data = _namespace_request(type_id, body)
 
-    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+    events = server.receive_request_stream(4, data, "peer")
 
-    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
-    assert events[0].message == {"type_id": 0x06, "request_id": 0, "body": body}
-    rejection = events[1].message
-    assert rejection is not None
-    # REQUEST_ERROR は request の拒否であり、送信後に FIN で stream を閉じる
-    assert rejection["error_code"] == moqt.REQUEST_NOT_SUPPORTED
-    assert events[1].fin is True
-    response, _ = decode_message(_message_data(events[1]))
+    # namespace request のメッセージイベントは 1 件だけ通知される
+    assert [event.kind for event in events] == [kind]
+    assert events[0].request_id == 0
+    assert events[0].message == {
+        "request_id": 0,
+        "track_namespace": [b"ns"],
+        "parameters": {},
+    }
+    # 生バイト列はそのまま中継できる形で保持する
+    assert _message_data(events[0]) == data
+    assert server.established is True
+
+    # アプリの応答は REQUEST_ERROR + FIN として送信される
+    rejected = server.send_request_error(0, moqt.REQUEST_NOT_SUPPORTED, 0, "not supported")
+    assert [event.kind for event in rejected] == ["send_on_stream"]
+    assert rejected[0].fin is True
+    response, _ = decode_message(_message_data(rejected[0]))
     assert response.kind == "request_error"
     assert response.body["error_code"] == moqt.REQUEST_NOT_SUPPORTED
-    # セッションは閉じない
+    # 拒否は request 単位であり、セッションは維持する
     assert server.established is True
 
 
-def test_defined_but_unimplemented_response_message_closes_the_session() -> None:
+def test_namespace_response_message_cannot_start_a_request_stream() -> None:
     """
-    応答専用の定義済みメッセージを request として受信するとセッションを閉じることを確認する。
+    応答専用の namespace メッセージを request として受信するとセッションを閉じることを確認する。
 
-    draft-ietf-moq-transport-23 §9 Table 5 の NAMESPACE (0x08) は応答専用であり、
-    対応する request を持たない。request stream の先頭に届くのはプロトコル違反である。
+    NAMESPACE (0x08) は SUBSCRIBE_NAMESPACE の応答 stream でだけ届くメッセージであり、
+    Request ID も持たない。request stream の先頭に届くのはプロトコル違反である
+    (draft-ietf-moq-transport-23 §9.15 (NAMESPACE))。
     """
     _client, server = _setup()
-    # Type (vi64) 0x08 + Length (vi64) 1 + Message Body
-    data = b"\x08\x01\x00"
+    # Type (vi64) 0x08 + Length (vi64) 4 +
+    # Message Body (Track Namespace Suffix ["ns"] + 0 件の Parameters)
+    data = _namespace_request(0x08, b"\x01\x02ns\x00")
 
-    with pytest.raises(RuntimeError, match="control message type cannot start a request stream"):
+    with pytest.raises(RuntimeError, match="unsupported request message in current phase"):
         server.receive_request_stream(4, data, "peer")
 
     # 終端通知の処理でセッションの終了が観測できる
@@ -1170,34 +1230,32 @@ def test_defined_but_unimplemented_response_message_closes_the_session() -> None
     assert server.established is False
 
 
-def test_truncated_unsupported_request_closes_the_session() -> None:
+def test_truncated_publish_namespace_body_is_rejected() -> None:
     """
-    本体が途中で切れた未対応 request は PROTOCOL_VIOLATION で閉じることを確認する。
+    本体が途中で切れた PUBLISH_NAMESPACE をデコード時に拒否することを確認する。
 
-    状態機械は未対応 request の本体 (Request ID + Track Namespace Prefix +
-    Parameters) を解析する
+    Request ID の後で切れた本体は Track Namespace Prefix を読めないため、
+    制御メッセージのデコードが失敗する。moqt-py は状態機械へ渡す前に制御メッセージを
+    デコードするため、セッションの状態は変わらない
     (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) / §8.7 (Track Namespace
-    Structure))。Request ID の後で切れた本体はフレーミング違反であり、セッションを
-    閉じる。
+    Structure))。
     """
     _client, server = _setup()
     # Request ID 0 だけで、Track Namespace Prefix 以降が無い
-    data = _unsupported_request(0x06, encode_varint(0))
+    data = _namespace_request(0x06, encode_varint(0))
 
-    with pytest.raises(RuntimeError, match="unexpected end of buffer"):
+    with pytest.raises(RuntimeError, match="malformed message"):
         server.receive_request_stream(4, data, "peer")
 
-    # 終端通知の処理でセッションの終了が観測できる
-    events = server.receive_request_stream_closed(4, False, None)
-    assert [(event.kind, event.code) for event in events] == [
-        ("close", moqt.SESSION_MALFORMED_MESSAGE)
-    ]
-    assert server.established is False
+    assert [
+        (event.kind, event.code) for event in server.receive_request_stream_closed(4, False, None)
+    ] == []
+    assert server.established is True
 
 
-def test_unsupported_request_with_disallowed_parameter_closes_the_session() -> None:
+def test_publish_namespace_with_a_disallowed_parameter_is_rejected() -> None:
     """
-    未対応 request に許可されないパラメータを入れるとセッションを閉じることを確認する。
+    PUBLISH_NAMESPACE に許可されないパラメータを入れるとデコード時に拒否することを確認する。
 
     draft-ietf-moq-transport-23 §9.19.1 (Parameter Scope): メッセージ型ごとに許可される
     パラメータ以外の受信は PROTOCOL_VIOLATION で閉じる (MUST)。PUBLISH_NAMESPACE が
@@ -1206,21 +1264,20 @@ def test_unsupported_request_with_disallowed_parameter_closes_the_session() -> N
     _client, server = _setup()
     # PAUSED (0x11) は uint8 のパラメータであり、PUBLISH_NAMESPACE では許可されない
     parameters = _parameter_block(_kvp(moqt.PARAM_PAUSED, b"\x01"))
-    body = _unsupported_request_body(0, (b"ns",), parameters)
+    body = _namespace_request_body(0, (b"ns",), parameters)
 
-    with pytest.raises(RuntimeError, match="parameter is not allowed in the unsupported request"):
-        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+    with pytest.raises(RuntimeError, match="invalid parameter encoding"):
+        server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
-    events = server.receive_request_stream_closed(4, False, None)
-    assert [(event.kind, event.code) for event in events] == [
-        ("close", moqt.SESSION_INVALID_PARAMETER)
-    ]
-    assert server.established is False
+    assert [
+        (event.kind, event.code) for event in server.receive_request_stream_closed(4, False, None)
+    ] == []
+    assert server.established is True
 
 
-def test_unsupported_request_with_broken_parameter_value_closes_the_session() -> None:
+def test_publish_namespace_with_a_broken_parameter_value_is_rejected() -> None:
     """
-    パラメータの値の直列化が壊れていると KEY_VALUE_FORMATTING_ERROR で閉じることを確認する。
+    パラメータの値の直列化が壊れている PUBLISH_NAMESPACE を拒否することを確認する。
 
     draft-ietf-moq-transport-23 §8.3 (Key-Value-Pair Structure): 長さ付きの値で宣言長が
     残りバイトを超える場合は KEY_VALUE_FORMATTING_ERROR である。
@@ -1228,21 +1285,20 @@ def test_unsupported_request_with_broken_parameter_value_closes_the_session() ->
     _client, server = _setup()
     # AUTHORIZATION_TOKEN の値長を 5 と宣言しているが、実体は 1 バイトしか無い
     parameters = _parameter_block(_kvp(moqt.PARAM_AUTHORIZATION_TOKEN, b"\x05\x00"))
-    body = _unsupported_request_body(0, (b"ns",), parameters)
+    body = _namespace_request_body(0, (b"ns",), parameters)
 
     with pytest.raises(RuntimeError, match="value length exceeds remaining buffer"):
-        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+        server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
-    events = server.receive_request_stream_closed(4, False, None)
-    assert [(event.kind, event.code) for event in events] == [
-        ("close", moqt.SESSION_MALFORMED_KEY_VALUE)
-    ]
-    assert server.established is False
+    assert [
+        (event.kind, event.code) for event in server.receive_request_stream_closed(4, False, None)
+    ] == []
+    assert server.established is True
 
 
-def test_unsupported_request_with_duplicate_authorization_token_is_rejected() -> None:
+def test_publish_namespace_with_a_duplicate_authorization_token_is_rejected() -> None:
     """
-    内容が重複する AUTHORIZATION_TOKEN をメッセージ単位で拒否することを確認する。
+    内容が重複する AUTHORIZATION_TOKEN を持つ PUBLISH_NAMESPACE を拒否することを確認する。
 
     draft-ietf-moq-transport-23 §8.9 (Authorization Token Compression): alias 解決後の
     (Token Type, Token Value) が重複するメッセージは MALFORMED_AUTH_TOKEN で拒否する
@@ -1261,11 +1317,16 @@ def test_unsupported_request_with_duplicate_authorization_token_is_rejected() ->
             previous_type=moqt.PARAM_AUTHORIZATION_TOKEN,
         ),
     )
-    body = _unsupported_request_body(0, (b"ns",), parameters)
+    body = _namespace_request_body(0, (b"ns",), parameters)
 
-    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+    events = server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
-    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    assert [event.kind for event in events] == ["publish_namespace", "send_on_stream"]
+    assert events[0].message == {
+        "request_id": 0,
+        "track_namespace": [b"ns"],
+        "parameters": {moqt.PARAM_AUTHORIZATION_TOKEN: [value, value]},
+    }
     rejection = events[1].message
     assert rejection is not None
     assert rejection["error_code"] == moqt.REQUEST_MALFORMED_AUTH_TOKEN
@@ -1275,7 +1336,7 @@ def test_unsupported_request_with_duplicate_authorization_token_is_rejected() ->
     assert server.established is True
 
 
-def test_unsupported_request_registering_an_overflowing_token_closes_the_session() -> None:
+def test_publish_namespace_registering_an_overflowing_token_closes_the_session() -> None:
     """
     MAX_AUTH_TOKEN_CACHE_SIZE を超える REGISTER はセッションを閉じることを確認する。
 
@@ -1288,10 +1349,10 @@ def test_unsupported_request_registering_an_overflowing_token_closes_the_session
     token = _authorization_token_register(0, 1, b"x")
     value = encode_varint(len(token)) + token
     parameters = _parameter_block(_kvp(moqt.PARAM_AUTHORIZATION_TOKEN, value))
-    body = _unsupported_request_body(0, (b"ns",), parameters)
+    body = _namespace_request_body(0, (b"ns",), parameters)
 
     with pytest.raises(RuntimeError, match="REGISTER exceeds cache size"):
-        server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+        server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
     events = server.receive_request_stream_closed(4, False, None)
     assert [(event.kind, event.code) for event in events] == [
@@ -1300,20 +1361,20 @@ def test_unsupported_request_registering_an_overflowing_token_closes_the_session
     assert server.established is False
 
 
-def test_unsupported_request_is_rejected_with_going_away_after_goaway() -> None:
+def test_publish_namespace_is_rejected_with_going_away_after_goaway() -> None:
     """
-    control GOAWAY 送信後は NOT_SUPPORTED より GOING_AWAY を優先することを確認する。
+    GOAWAY 送信後の PUBLISH_NAMESPACE を GOING_AWAY で拒否することを確認する。
 
     draft-ietf-moq-transport-23 §9.2 (GOAWAY): "a publisher MAY reject new requests
     after sending a GOAWAY" の拒否コードは GOING_AWAY である。
     """
     _client, server = _setup()
     server.send_goaway(b"", 5000)
-    body = _unsupported_request_body(0, (b"ns",), _parameter_block())
+    body = _namespace_request_body(0, (b"ns",), _parameter_block())
 
-    events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+    events = server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
-    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    assert [event.kind for event in events] == ["publish_namespace", "send_on_stream"]
     rejection = events[1].message
     assert rejection is not None
     assert rejection["error_code"] == moqt.REQUEST_GOING_AWAY
@@ -1322,9 +1383,9 @@ def test_unsupported_request_is_rejected_with_going_away_after_goaway() -> None:
     assert server.established is True
 
 
-def test_unsupported_request_for_reserved_namespace_is_rejected_with_does_not_exist() -> None:
+def test_publish_namespace_for_reserved_namespace_is_rejected_with_does_not_exist() -> None:
     """
-    予約名前空間への未対応 request を DOES_NOT_EXIST で拒否することを確認する。
+    予約名前空間への PUBLISH_NAMESPACE を DOES_NOT_EXIST で拒否することを確認する。
 
     draft-ietf-moq-transport-23 §2.4.3 (Reserved Namespaces): `.` 単独の Track Namespace
     への request は DOES_NOT_EXIST で拒否する (MUST)。§6.5 (Session-Level Tracks and
@@ -1334,11 +1395,11 @@ def test_unsupported_request_for_reserved_namespace_is_rejected_with_does_not_ex
     for namespace in ((b".",), (b".session",)):
         # Request ID はセッションごとに重複できないため、名前空間ごとにセッションを作る
         _client, server = _setup()
-        body = _unsupported_request_body(0, namespace, _parameter_block())
+        body = _namespace_request_body(0, namespace, _parameter_block())
 
-        events = server.receive_request_stream(4, _unsupported_request(0x06, body), "peer")
+        events = server.receive_request_stream(4, _namespace_request(0x06, body), "peer")
 
-        assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+        assert [event.kind for event in events] == ["publish_namespace", "send_on_stream"]
         rejection = events[1].message
         assert rejection is not None
         assert rejection["error_code"] == moqt.REQUEST_DOES_NOT_EXIST
@@ -1346,9 +1407,9 @@ def test_unsupported_request_for_reserved_namespace_is_rejected_with_does_not_ex
         assert server.established is True
 
 
-def test_unsupported_request_with_invalid_range_filter_is_rejected() -> None:
+def test_subscribe_tracks_with_invalid_range_filter_is_rejected() -> None:
     """
-    MAX_FILTER_RANGES を超える Range Filter を持つ未対応 request を INVALID_FILTER で拒否する。
+    MAX_FILTER_RANGES を超える Range Filter を持つ SUBSCRIBE_TRACKS を INVALID_FILTER で拒否する。
 
     draft-ietf-moq-transport-23 §3.3.2 (Range Filters): MAX_FILTER_RANGES を宣言して
     いない場合、Range を 1 つ以上持つ Range Filter は INVALID_FILTER で拒否する (MUST)。
@@ -1362,11 +1423,11 @@ def test_unsupported_request_with_invalid_range_filter_is_rejected() -> None:
     filter_body = bytes([0]) + encode_varint(0) + encode_varint(1)
     filter_value = encode_varint(len(filter_body)) + filter_body
     parameters = _parameter_block(_kvp(moqt.PARAM_OBJECTID_FILTER, filter_value))
-    body = _unsupported_request_body(0, (b"ns",), parameters)
+    body = _namespace_request_body(0, (b"ns",), parameters)
 
-    events = server.receive_request_stream(4, _unsupported_request(0x51, body), "peer")
+    events = server.receive_request_stream(4, _namespace_request(0x51, body), "peer")
 
-    assert [event.kind for event in events] == ["unsupported", "send_on_stream"]
+    assert [event.kind for event in events] == ["subscribe_tracks", "send_on_stream"]
     rejection = events[1].message
     assert rejection is not None
     assert rejection["error_code"] == moqt.REQUEST_INVALID_FILTER
@@ -1633,7 +1694,7 @@ def test_object_properties_rejects_a_value_that_is_too_long() -> None:
     properties = ObjectProperties()
     properties.add(0x0D, b"\x00" * (2**16))
 
-    with pytest.raises(ValueError, match="too long"):
+    with pytest.raises(ValueError, match="value length exceeds 65535"):
         properties.encode()
 
 

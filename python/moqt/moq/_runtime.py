@@ -421,6 +421,15 @@ class Runtime:
         # ように別に保持する (draft-ietf-moq-transport-23 §6.4.2.2
         # (Graceful Request Stream Closure))。
         self._incoming_request_streams: dict[int, int] = {}
+        # peer から届いた namespace の発見・告知 request のうち、状態機械が自動拒否
+        # しなかったもの (Request ID 索引)
+        #
+        # 状態機械は予約 namespace や GOAWAY 後の request を同じ受信呼び出しの中で
+        # REQUEST_ERROR として拒否する。拒否済みの request へ重ねて応答しないよう、
+        # イベントのバッチを処理し終えてから残った request だけを拒否する
+        # (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+        # §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS))。
+        self._pending_namespace_requests: dict[int, NativeEvent] = {}
         # 自側が開始したストリーム ID
         self._local_streams: set[int] = set()
         # stream type を通知済みのデータストリーム
@@ -1583,6 +1592,14 @@ class Runtime:
     ) -> None:
         """native のイベントを I/O とアプリケーションへ振り分ける。"""
         for event in events:
+            if (
+                event.kind == "send_on_stream"
+                and event.request_id is not None
+                and event.request_id in self._pending_namespace_requests
+            ):
+                # 状態機械が namespace request を自動拒否した。同じ request へ
+                # 重ねて REQUEST_ERROR を送らないよう、拒否待ちから外す
+                self._pending_namespace_requests.pop(event.request_id, None)
             # データストリームの制御は I/O を先に済ませる。アプリがイベントを観測した
             # 時点で STOP_SENDING / RESET_STREAM が送信済みであることを保証し、
             # 購読者が止めたストリームへ publisher が書き込む競合を避ける
@@ -1631,6 +1648,13 @@ class Runtime:
                 pass
             else:
                 await self._handle_message_event(kind, event)
+
+        # 状態機械が自動拒否しなかった namespace request を、バッチの処理後に拒否する。
+        # 自動拒否は同じバッチの send_on_stream として届くため、それらは除外済みである
+        pending = list(self._pending_namespace_requests.values())
+        self._pending_namespace_requests.clear()
+        for pending_event in pending:
+            await self._reject_unsupported_namespace_request(pending_event)
 
     async def _send_control(self, event: NativeEvent) -> None:
         """制御ストリームへメッセージを書き込む。"""
@@ -1750,6 +1774,7 @@ class Runtime:
         if event.kind == "reset_data_stream":
             stream_id = event.stream_id
             if stream_id is not None:
+                code = int(event.code or 0)
                 if event.reliable_size is not None:
                     # RESET_STREAM_AT である。先頭 reliable_size バイトは peer へ届く
                     # (draft-ietf-moq-transport-23 §11.3.2 (Closing Subgroup Streams))。
@@ -1762,7 +1787,17 @@ class Runtime:
                         event.reliable_size,
                     )
                 with contextlib.suppress(Exception):
-                    await self._ops.reset_stream(stream_id, int(event.code or 0))
+                    await self._ops.reset_stream(stream_id, code)
+                # Retained の reset では状態機械が stream の追跡を続ける。I/O 層が wire へ
+                # RESET_STREAM を送ったことを通知すると、保留中の PUBLISH_DONE を送る
+                # (draft-ietf-moq-transport-23 §5.2 (Delivery Timeouts and Data Reliability))。
+                body = event.message or {}
+                if body.get("tracking") == "retained":
+                    await self._apply_events(
+                        self._core.send_data_stream_closed(
+                            stream_id, True, code, event.reliable_size
+                        )
+                    )
         elif event.kind == "stop_sending_data_stream":
             # 状態機械が受信中のデータストリームを止める判断をした。購読は生かしたまま
             # 受信方向へ STOP_SENDING を送る
@@ -1841,12 +1876,27 @@ class Runtime:
                 event.request_id,
                 event.message.get("unsupported_property_types") if event.message else None,
             )
-        elif kind == "unsupported":
-            # 定義済みだが実装しない request は状態機械が REQUEST_ERROR
-            # (NOT_SUPPORTED) + FIN で拒否する (draft-ietf-moq-transport-23
-            # §1.6 (Modularity))。応答は状態機械が send_on_stream として発行するため、
-            # アプリへは通知せず、送信先のストリームだけ覚える
+        elif kind in {
+            "publish_namespace",
+            "subscribe_namespace",
+            "subscribe_tracks",
+        }:
+            # namespace の発見・告知機構の request である。moqt-py は relay 向けの
+            # この機構を実装しないため、応答できるようストリームを登録してから
+            # REQUEST_NOT_SUPPORTED で拒否する。状態機械が自動拒否する request と
+            # 区別するため、拒否はイベントのバッチを処理し終えてから行う
+            # (draft-ietf-moq-transport-23 §1.6 (Modularity) /
+            # §9.13 (PUBLISH_NAMESPACE) / §9.14 (SUBSCRIBE_NAMESPACE) /
+            # §9.17 (SUBSCRIBE_TRACKS))。
             self._remember_incoming_request(event)
+            if event.request_id is not None:
+                self._pending_namespace_requests[event.request_id] = event
+        elif kind in {"namespace", "namespace_done", "publish_skipped"}:
+            # SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS の応答 stream で届く通知である。
+            # moqt-py は自側からこれらの要求を送らないため、受信しても状態の変更は無い
+            # (draft-ietf-moq-transport-23 §9.15 (NAMESPACE) /
+            # §9.16 (NAMESPACE_DONE) / §9.18 (PUBLISH_SKIPPED))。
+            logger.debug("MOQT namespace notification received: %s", kind)
         elif kind in {
             "subscribe",
             "publish",
@@ -1858,6 +1908,23 @@ class Runtime:
             await self._notify(self._events.on_request, event)
         else:
             logger.warning("unhandled MOQT event: %s", kind)
+
+    async def _reject_unsupported_namespace_request(self, event: NativeEvent) -> None:
+        """namespace の発見・告知 request を REQUEST_NOT_SUPPORTED で拒否する。
+
+        moqt-py は relay 向けの namespace の発見・告知機構を実装しない。状態機械が
+        自動拒否した request は `_apply_events` が除外するため、ここへ届くのは
+        アプリ側で拒否する必要がある request だけである
+        (draft-ietf-moq-transport-23 §9.13 - §9.17)。
+        """
+        request_id = event.request_id
+        if request_id is None:
+            return
+        await self.send_request_error(
+            request_id,
+            moqt.REQUEST_NOT_SUPPORTED,
+            f"{event.kind} is not supported",
+        )
 
     async def _respond_request_update(self, event: NativeEvent) -> None:
         """受信した REQUEST_UPDATE へ応答する。

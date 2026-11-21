@@ -27,8 +27,9 @@ use shiguredo_moqt::decoder::MessageDecoder;
 use shiguredo_moqt::error::MessageError;
 use shiguredo_moqt::message::common::{Location, TrackNamespace};
 use shiguredo_moqt::message::{
-    ControlMessage, ErrorDetail, ErrorDetails, Publish, PublishDone, PublishStateNotify, Redirect,
-    RequestError, RequestOk, RequestUpdate, Subscribe, SubscribeOk, TrackStatus,
+    ControlMessage, ErrorDetail, ErrorDetails, Namespace, NamespaceDone, Publish, PublishDone,
+    PublishNamespace, PublishSkipped, PublishStateNotify, Redirect, RequestError, RequestOk,
+    RequestUpdate, Subscribe, SubscribeNamespace, SubscribeOk, SubscribeTracks, TrackStatus,
 };
 use shiguredo_moqt::message_parameter::{
     AuthorizationToken, LocationFilter as MoqtLocationFilter, MessageParameter,
@@ -46,9 +47,9 @@ use shiguredo_moqt::parameter::{
 use shiguredo_moqt::session::core::Session;
 use shiguredo_moqt::session::types::{
     DEFAULT_PUBLISHER_GROUP_ORDER_ASCENDING, DataStreamId, DatagramAcceptance, Fetch, FetchState,
-    RequestKind, RequestStreamEnd, SessionEvent, SessionState, Subscription, SubscriptionInitiator,
-    SubscriptionState, TerminationReason, TrackDataAcceptance, TrackRole, TrackStatusEntry,
-    TrackStatusResponse, Transport,
+    RequestKind, RequestStreamEnd, ResetTracking, SessionEvent, SessionState, Subscription,
+    SubscriptionInitiator, SubscriptionState, TerminationReason, TrackDataAcceptance, TrackRole,
+    TrackStatusEntry, TrackStatusResponse, Transport,
 };
 use shiguredo_moqt::stream::DataStreamType;
 use shiguredo_moqt::stream::datagram::ObjectDatagram;
@@ -586,9 +587,12 @@ pub(crate) fn message_kind(message: &ControlMessage) -> &'static str {
         ControlMessage::PublishStateNotify(_) => "publish_state_notify",
         ControlMessage::Fetch(_) => "fetch",
         ControlMessage::TrackStatus(_) => "track_status",
-        // 定義済みだが moqt-rs が実装しない制御メッセージ
-        // (relay 専用の namespace 発見・告知機構。draft-ietf-moq-transport-23 §9 Table 5)
-        ControlMessage::Unsupported { .. } => "unsupported",
+        ControlMessage::PublishNamespace(_) => "publish_namespace",
+        ControlMessage::SubscribeNamespace(_) => "subscribe_namespace",
+        ControlMessage::SubscribeTracks(_) => "subscribe_tracks",
+        ControlMessage::Namespace(_) => "namespace",
+        ControlMessage::NamespaceDone(_) => "namespace_done",
+        ControlMessage::PublishSkipped(_) => "publish_skipped",
     }
 }
 
@@ -602,9 +606,25 @@ pub(crate) fn message_request_id(message: &ControlMessage) -> Option<u64> {
         ControlMessage::Publish(m) => Some(m.request_id),
         ControlMessage::Fetch(m) => Some(m.request_id),
         ControlMessage::TrackStatus(m) => Some(m.request_id),
-        ControlMessage::Unsupported { request_id, .. } => *request_id,
+        ControlMessage::PublishNamespace(m) => Some(m.request_id),
+        ControlMessage::SubscribeNamespace(m) => Some(m.request_id),
+        ControlMessage::SubscribeTracks(m) => Some(m.request_id),
         _ => None,
     }
+}
+
+/// namespace の発見・告知機構の request メッセージかを返す。
+///
+/// 状態機械はこれらの request を受理すると *Received イベントを発行する
+/// (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+/// §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS))。
+fn is_namespace_request(message: &ControlMessage) -> bool {
+    matches!(
+        message,
+        ControlMessage::PublishNamespace(_)
+            | ControlMessage::SubscribeNamespace(_)
+            | ControlMessage::SubscribeTracks(_)
+    )
 }
 
 /// `RequestKind` を Python 側の文字列へ変換する。
@@ -614,6 +634,9 @@ fn request_kind_to_python(kind: RequestKind) -> &'static str {
         RequestKind::Publish => "publish",
         RequestKind::Fetch => "fetch",
         RequestKind::TrackStatus => "track_status",
+        RequestKind::PublishNamespace => "publish_namespace",
+        RequestKind::SubscribeNamespace => "subscribe_namespace",
+        RequestKind::SubscribeTracks => "subscribe_tracks",
     }
 }
 
@@ -1156,17 +1179,73 @@ pub(crate) fn message_body_to_python(
             dict.set_item("track_name", PyBytes::new(py, track_name))?;
             dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
         }
-        // 定義済みだが moqt-rs が実装しない制御メッセージ。本体は Length の後ろの
-        // 生バイト列のまま公開し、Python 側で内容を解釈できるようにする
-        // (draft-ietf-moq-transport-23 §9 Table 5 / §1.6 (Modularity))。
-        ControlMessage::Unsupported {
-            type_id,
+        ControlMessage::PublishNamespace(PublishNamespace {
             request_id,
-            body,
-        } => {
-            dict.set_item("type_id", *type_id)?;
+            track_namespace,
+            parameters,
+        }) => {
             dict.set_item("request_id", *request_id)?;
-            dict.set_item("body", PyBytes::new(py, body))?;
+            dict.set_item(
+                "track_namespace",
+                track_namespace_to_python(py, track_namespace)?,
+            )?;
+            dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
+        }
+        ControlMessage::SubscribeNamespace(SubscribeNamespace {
+            request_id,
+            track_namespace,
+            parameters,
+        }) => {
+            dict.set_item("request_id", *request_id)?;
+            dict.set_item(
+                "track_namespace",
+                track_namespace_to_python(py, track_namespace)?,
+            )?;
+            dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
+        }
+        ControlMessage::SubscribeTracks(SubscribeTracks {
+            request_id,
+            track_namespace,
+            parameters,
+        }) => {
+            dict.set_item("request_id", *request_id)?;
+            dict.set_item(
+                "track_namespace",
+                track_namespace_to_python(py, track_namespace)?,
+            )?;
+            dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
+        }
+        // NAMESPACE / NAMESPACE_DONE / PUBLISH_SKIPPED は応答 stream で届くメッセージであり、
+        // wire に Request ID を含まない。運ぶのは要求の prefix の後ろの suffix だけである
+        // (draft-ietf-moq-transport-23 §9.15 (NAMESPACE) / §9.16 (NAMESPACE_DONE) /
+        // §9.18 (PUBLISH_SKIPPED))。
+        ControlMessage::Namespace(Namespace {
+            track_namespace_suffix,
+            parameters,
+        }) => {
+            dict.set_item(
+                "track_namespace_suffix",
+                track_namespace_to_python(py, track_namespace_suffix)?,
+            )?;
+            dict.set_item("parameters", message_parameters_to_python(py, parameters)?)?;
+        }
+        ControlMessage::NamespaceDone(NamespaceDone {
+            track_namespace_suffix,
+        }) => {
+            dict.set_item(
+                "track_namespace_suffix",
+                track_namespace_to_python(py, track_namespace_suffix)?,
+            )?;
+        }
+        ControlMessage::PublishSkipped(PublishSkipped {
+            track_namespace_suffix,
+            track_name,
+        }) => {
+            dict.set_item(
+                "track_namespace_suffix",
+                track_namespace_to_python(py, track_namespace_suffix)?,
+            )?;
+            dict.set_item("track_name", PyBytes::new(py, track_name))?;
         }
     }
     Ok(dict.unbind())
@@ -2356,6 +2435,123 @@ impl CoreSession {
                 Some(request_id),
                 Some(message_parameters_to_python(py, &parameters)?),
             )),
+            // namespace の発見・告知機構。状態機械はこれらの要求を自動で拒否しないため、
+            // アプリが REQUEST_OK / REQUEST_ERROR で応答する
+            // (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+            // §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS))。
+            SessionEvent::PublishNamespaceReceived {
+                request_id,
+                track_namespace,
+                parameters,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                Ok(CoreEvent::with_message(
+                    "publish_namespace",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    Some(message_parameters_to_python(py, &parameters)?),
+                ))
+            }
+            SessionEvent::SubscribeNamespaceReceived {
+                request_id,
+                track_namespace,
+                parameters,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                Ok(CoreEvent::with_message(
+                    "subscribe_namespace",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    Some(message_parameters_to_python(py, &parameters)?),
+                ))
+            }
+            SessionEvent::SubscribeTracksReceived {
+                request_id,
+                track_namespace,
+                parameters,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                Ok(CoreEvent::with_message(
+                    "subscribe_tracks",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    Some(message_parameters_to_python(py, &parameters)?),
+                ))
+            }
+            // NAMESPACE / NAMESPACE_DONE / PUBLISH_SKIPPED は
+            // SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS の応答 stream で届く。
+            // `track_namespace` は要求の prefix と受信した suffix を結合した完全な名前である
+            // (draft-ietf-moq-transport-23 §9.15 (NAMESPACE) / §9.16 (NAMESPACE_DONE) /
+            // §9.18 (PUBLISH_SKIPPED))。
+            SessionEvent::NamespaceReceived {
+                request_id,
+                track_namespace,
+                parameters,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                Ok(CoreEvent::with_message(
+                    "namespace",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    Some(message_parameters_to_python(py, &parameters)?),
+                ))
+            }
+            SessionEvent::NamespaceDoneReceived {
+                request_id,
+                track_namespace,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                Ok(CoreEvent::with_message(
+                    "namespace_done",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    None,
+                ))
+            }
+            SessionEvent::PublishSkippedReceived {
+                request_id,
+                track_namespace,
+                track_name,
+            } => {
+                let body = PyDict::new(py);
+                body.set_item(
+                    "track_namespace",
+                    track_namespace_to_python(py, &track_namespace)?,
+                )?;
+                body.set_item("track_name", PyBytes::new(py, &track_name))?;
+                Ok(CoreEvent::with_message(
+                    "publish_skipped",
+                    body.unbind(),
+                    data.clone(),
+                    Some(request_id),
+                    None,
+                ))
+            }
             SessionEvent::RequestTerminated {
                 request_id,
                 kind,
@@ -2414,12 +2610,32 @@ impl CoreSession {
                 stream_id,
                 error_code,
                 reliable_size,
-            } => Ok(CoreEvent {
-                stream_id: Some(stream_id.0),
-                code: Some(error_code),
-                reliable_size,
-                ..CoreEvent::simple("reset_data_stream")
-            }),
+                tracking,
+            } => {
+                // `tracking` は状態機械が reset 後も stream を追跡するかを表す。
+                // I/O 層の操作はどちらも同じ RESET_STREAM であり、E2E テストが
+                // 配送 timeout の reset と cancel の reset を区別できるよう公開する。
+                let body = PyDict::new(py);
+                body.set_item(
+                    "tracking",
+                    match tracking {
+                        ResetTracking::Removed => "removed",
+                        ResetTracking::Retained => "retained",
+                    },
+                )?;
+                Ok(CoreEvent {
+                    stream_id: Some(stream_id.0),
+                    code: Some(error_code),
+                    reliable_size,
+                    ..CoreEvent::with_message(
+                        "reset_data_stream",
+                        body.unbind(),
+                        data.clone(),
+                        None,
+                        None,
+                    )
+                })
+            }
             SessionEvent::OpenFillFetchStream {
                 request_id,
                 subscription_request_id,
@@ -2714,10 +2930,15 @@ impl CoreSession {
                             .map_err(runtime_error)?;
                     } else {
                         // 最初のメッセージは状態機械がイベントを発行しないため、
-                        // ここで Python 側へ渡す
+                        // ここで Python 側へ渡す。namespace の発見・告知機構の request だけは
+                        // 状態機械も *Received イベントを発行するため、同じ request を 2 回
+                        // 通知しないよう、状態機械側のイベントは捨てる
+                        // (draft-ietf-moq-transport-23 §9.13 (PUBLISH_NAMESPACE) /
+                        // §9.14 (SUBSCRIBE_NAMESPACE) / §9.17 (SUBSCRIBE_TRACKS))。
                         let kind = message_kind(&message);
                         let body = message_body_to_python(py, &message)?;
                         let request_id = message_request_id(&message);
+                        let namespace_request = is_namespace_request(&message);
                         self.session.recv_request(message).map_err(runtime_error)?;
                         // ストリームの終端を状態機械へ通知するときに Request ID が要るため、
                         // 最初のメッセージが運んだ値を保持する
@@ -2733,14 +2954,28 @@ impl CoreSession {
                             },
                         );
                         events.push(
-                            CoreEvent::with_message(kind, body, raw, request_id, None)
+                            CoreEvent::with_message(kind, body, raw.clone(), request_id, None)
                                 .with_track_properties(decode_track_properties_data(
                                     py,
                                     self.request_buffers.get(stream_id),
                                 )?)
                                 .on_stream(stream_id),
                         );
-                        events.extend(self.drain_events(py)?);
+                        for event in self.drain_events_with_data(py, raw)? {
+                            // namespace request の *Received イベントは、上で積んだ
+                            // メッセージイベントと同じ request を表す
+                            if namespace_request
+                                && matches!(
+                                    event.kind,
+                                    "publish_namespace"
+                                        | "subscribe_namespace"
+                                        | "subscribe_tracks"
+                                )
+                            {
+                                continue;
+                            }
+                            events.push(event);
+                        }
                         continue;
                     }
                 }
@@ -3621,6 +3856,12 @@ impl CoreSession {
             // ローカルのフィルタで破棄する場合はエラーではなく「送らない」指示である
             Err(shiguredo_moqt::session::types::SendRequestError::LocalFilterMismatch) => {
                 Ok((false, Vec::new()))
+            }
+            // 配送 timeout を超えた subgroup Object も送らない。状態機械は先に
+            // ResetDataStream (Retained) を積んでいるため、イベントとして渡す
+            // (draft-ietf-moq-transport-23 §5.2 (Delivery Timeouts and Data Reliability))。
+            Err(shiguredo_moqt::session::types::SendRequestError::LocalSubgroupTimeout) => {
+                Ok((false, self.drain_events(py)?))
             }
             Err(error) => Err(runtime_error(error)),
         }

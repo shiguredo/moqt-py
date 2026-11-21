@@ -120,9 +120,13 @@ impl AuthorizationContext {
     /// `resource` は `moqt://<relay-endpoint>?tns=<namespace>&tn=<track>` の形式
     /// (draft-ietf-moq-c4m-02 §3.1.3) を前提とし、クエリパラメータを文字列として
     /// 比較する。パーセントエンコーディングは解釈しない。
-    fn verify_resource_consistency(&self) -> PyResult<()> {
+    ///
+    /// `action` によって要求されるパラメータが変わるため、actx の action と同じ値を渡す。
+    fn verify_resource_consistency(&self, action: i64) -> PyResult<()> {
+        let action = action_from_key(action)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("unknown MOQT action"))?;
         self.inner
-            .verify_resource_consistency()
+            .verify_resource_consistency(action)
             .map_err(codec_error)
     }
 
@@ -364,11 +368,18 @@ impl DpopProof {
 
     /// proof の JWK がトークンの `cnf` の JWK サムプリントと一致するか検証する。
     ///
-    /// `cnf` の confirmation key 323 (IANA 登録の `jkt`) を優先し、323 が無い場合だけ
-    /// 3 (ドラフトのベクタが使う値) と比較する。
-    fn verify_key_binding(&self, confirmation: &Confirmation) -> PyResult<()> {
+    /// `cnf` の confirmation key 323 (IANA 登録の `jkt`) を優先する。323 が無い場合は
+    /// `interpretation` が `"c4m_draft_jkt"` のときだけ confirmation key 3 と比較し、
+    /// 既定の `"iana_kid"` では 3 を `jkt` として扱わない。
+    #[pyo3(signature = (confirmation, interpretation = None))]
+    fn verify_key_binding(
+        &self,
+        confirmation: &Confirmation,
+        interpretation: Option<&str>,
+    ) -> PyResult<()> {
+        let interpretation = crate::c4m::confirmation_key3_from_python(interpretation)?;
         self.inner
-            .verify_key_binding(&AwsLcRsCrypto::new(), &confirmation.inner())
+            .verify_key_binding(&AwsLcRsCrypto::new(), &confirmation.inner(), interpretation)
             .map_err(codec_error)
     }
 
@@ -431,6 +442,7 @@ impl DpopProof {
         reference_time_seconds,
         default_window_seconds,
         replay_cache = None,
+        confirmation_key3 = None,
     ))]
     fn verify_against_cat_token(
         &self,
@@ -441,19 +453,22 @@ impl DpopProof {
         reference_time_seconds: f64,
         default_window_seconds: f64,
         replay_cache: Option<PyRefMut<'_, DpopReplayCache>>,
+        confirmation_key3: Option<&str>,
     ) -> PyResult<()> {
         let action = action_from_key(action)
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("unknown MOQT action"))?;
+        let interpretation = crate::c4m::confirmation_key3_from_python(confirmation_key3)?;
         let namespace = crate::core::track_namespace_from_python(namespace)?;
         let mut replay_cache = replay_cache;
         let replay_cache = replay_cache
             .as_deref_mut()
             .map(|replay_cache| &mut replay_cache.inner);
         self.inner
-            .verify_against_cat_token(
+            .verify_against_cat_token_with(
                 &AwsLcRsCrypto::new(),
                 &token.inner(),
                 action,
+                interpretation,
                 &namespace,
                 track_name,
                 reference_time_seconds,
@@ -503,6 +518,8 @@ pub(crate) struct DpopVerification {
     token_claims: shiguredo_moqt::c4m::cat::CatClaims,
     /// 要求されたアクション。
     action: shiguredo_moqt::c4m::MoqtAction,
+    /// `cnf` の confirmation key 3 の解釈。
+    confirmation_key3: shiguredo_moqt::c4m::cat::ConfirmationKey3Interpretation,
     /// 対象の Track Namespace。
     namespace: shiguredo_moqt::message::common::TrackNamespace,
     /// 対象の Track Name。
@@ -521,6 +538,7 @@ impl DpopVerification {
         MoqtDpopVerification {
             token_claims: &self.token_claims,
             action: self.action,
+            confirmation_key3: self.confirmation_key3,
             namespace: &self.namespace,
             track_name: &self.track_name,
             reference_time_seconds: self.reference_time_seconds,
@@ -535,6 +553,7 @@ impl DpopVerification {
     /// 検証入力を組み立てる。
     ///
     /// `namespace` は正規の Track Namespace でなければ `ValueError` になる。
+    #[expect(clippy::too_many_arguments)]
     #[new]
     #[pyo3(signature = (
         token_claims,
@@ -544,6 +563,7 @@ impl DpopVerification {
         reference_time_seconds,
         default_window_seconds,
         access_token = None,
+        confirmation_key3 = None,
     ))]
     fn new(
         token_claims: &CatClaims,
@@ -553,13 +573,16 @@ impl DpopVerification {
         reference_time_seconds: f64,
         default_window_seconds: f64,
         access_token: Option<Vec<u8>>,
+        confirmation_key3: Option<&str>,
     ) -> PyResult<Self> {
         let action = action_from_key(action)
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("unknown MOQT action"))?;
+        let confirmation_key3 = crate::c4m::confirmation_key3_from_python(confirmation_key3)?;
         let namespace = crate::core::track_namespace_from_python(namespace)?;
         Ok(Self {
             token_claims: token_claims.inner(),
             action,
+            confirmation_key3,
             namespace,
             track_name,
             reference_time_seconds,
@@ -578,6 +601,15 @@ impl DpopVerification {
     #[getter]
     fn action(&self) -> i64 {
         self.action.key()
+    }
+
+    /// `cnf` の confirmation key 3 の解釈。
+    ///
+    /// `"iana_kid"` (既定) は RFC 8747 §3.4 の `kid`、`"c4m_draft_jkt"` は
+    /// draft-ietf-moq-c4m-01 のベクタに合わせて `jkt` として扱う。
+    #[getter]
+    fn confirmation_key3(&self) -> &'static str {
+        crate::c4m::confirmation_key3_to_python(self.confirmation_key3)
     }
 
     /// 対象の Track Namespace のフィールド列。
@@ -637,17 +669,35 @@ pub(crate) struct DpopReplayCache {
 #[pymethods]
 impl DpopReplayCache {
     /// 空のキャッシュを組み立てる。
+    ///
+    /// `max_window_seconds` は記録の保持期間の上限 (秒) である。省略した場合は
+    /// moqt-rs の既定値を使う。0 以下や非有限の値は `ValueError` になる。
+    ///
+    /// 記録は `iat + max_window_seconds` を過ぎるまで保持する。proof の
+    /// `catdpop` ウィンドウが上限を超える場合は `ValueError` になる (fail-closed)。
     #[new]
-    fn new() -> Self {
-        Self {
-            inner: MoqtDpopReplayCache::new(),
-        }
+    #[pyo3(signature = (max_window_seconds = None))]
+    fn new(max_window_seconds: Option<f64>) -> PyResult<Self> {
+        let inner = match max_window_seconds {
+            Some(max_window_seconds) => {
+                MoqtDpopReplayCache::with_max_window(max_window_seconds).map_err(codec_error)?
+            }
+            None => MoqtDpopReplayCache::new(),
+        };
+        Ok(Self { inner })
+    }
+
+    /// 記録の保持期間の上限 (秒)。
+    #[getter]
+    fn max_window_seconds(&self) -> f64 {
+        self.inner.max_window_seconds()
     }
 
     /// jti を確認して記録する。
     ///
-    /// ウィンドウ外の古い記録は破棄する。同じ jti がウィンドウ内に存在する場合は
-    /// `ValueError` になる。
+    /// `window_seconds` は proof の鮮度に使った `catdpop` のウィンドウである。
+    /// 保持期限 (`iat + 保持期間の上限`) を過ぎた記録は破棄する。同じ jti が
+    /// 残っている場合は `ValueError` になる。
     fn check_and_record(
         &mut self,
         jti: &str,

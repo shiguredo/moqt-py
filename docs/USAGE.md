@@ -68,12 +68,14 @@ MSF (MOQT Streaming Format) のカタログとタイムラインの codec。カ�
 from moqt import msf
 
 catalog = msf.Catalog.parse(
-    '{"version":"draft-01","tracks":[{"name":"video","packaging":"loc","isLive":true}]}'
+    '{"version":"draft-02","tracks":[{"name":"video","packaging":"loc","isLive":true}]}'
 )
 print(catalog.tracks)
 
 # delta 更新を適用する
-catalog.apply_delta('{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}]}')
+catalog.apply_delta(
+    '{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}],"generatedAt":1234}'
+)
 print(catalog.encode())
 ```
 

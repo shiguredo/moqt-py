@@ -1,6 +1,6 @@
 //! MSF (MOQT Streaming Format) の codec (`moqt.msf`)。
 //!
-//! draft-ietf-moq-msf-01 のカタログ・メディアタイムライン・イベントタイムライン・
+//! draft-ietf-moq-msf-02 のカタログ・メディアタイムライン・イベントタイムライン・
 //! URI を Python から扱う。この仕様は draft 由来であり、将来の改訂で変更される
 //! 可能性がある。
 //!
@@ -16,9 +16,9 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 use shiguredo_moqt::msf::{
     self, MSF_CATALOG_TRACK_NAME, MSF_VERSION, MsfAccessibility, MsfAuthInfo, MsfBuffers,
     MsfCatalog, MsfCatalogDocument, MsfCloneTrack, MsfDeltaOperation, MsfDeltaUpdate,
-    MsfEventIndex, MsfEventTimeline, MsfEventTimelineEntry, MsfInitData, MsfInitDataKind,
-    MsfMediaTimeline, MsfMediaTimelineEntry, MsfPackaging, MsfRemoveTrack, MsfTemplate, MsfTrack,
-    TimelineEncodingOptions, uri,
+    MsfDependency, MsfEventIndex, MsfEventTimeline, MsfEventTimelineEntry, MsfInitData,
+    MsfInitDataKind, MsfMediaTimeline, MsfMediaTimelineEntry, MsfPackaging, MsfRemoveTrack,
+    MsfTemplate, MsfTrack, TimelineEncodingOptions, uri,
 };
 use shiguredo_moqt::name;
 
@@ -31,6 +31,29 @@ fn json_to_python(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
         .map_err(|_| PyValueError::new_err("MSF JSON is not valid UTF-8"))?;
     let value = py.import("json")?.call_method1("loads", (text,))?;
     Ok(value.unbind())
+}
+
+/// `depends` の Python 値 (トラック名の str または renderGroup の int) を
+/// `MsfDependency` へ変換する。
+///
+/// draft-ietf-moq-msf-02 §5.2.15 (Dependencies) は、各要素を JSON String (track name)
+/// または JSON Number (renderGroup) のいずれかと定める。
+fn dependencies_from_python(py: Python<'_>, values: &[Py<PyAny>]) -> PyResult<Vec<MsfDependency>> {
+    let mut dependencies = Vec::with_capacity(values.len());
+    for value in values {
+        let value = value.bind(py);
+        if let Ok(track_name) = value.extract::<String>() {
+            dependencies.push(MsfDependency::TrackName(track_name));
+        } else if let Ok(render_group) = value.extract::<u64>() {
+            dependencies.push(MsfDependency::RenderGroup(render_group));
+        } else {
+            return Err(PyValueError::new_err(format!(
+                "depends entries must be a track name (str) or renderGroup (int): got {}",
+                value.get_type().name()?
+            )));
+        }
+    }
+    Ok(dependencies)
 }
 
 /// JSON オブジェクトの member を Python の値として取り出す。
@@ -46,7 +69,7 @@ fn json_member(
     Ok(document.call_method1("get", (key, default))?.unbind())
 }
 
-/// draft-ietf-moq-msf-01 §5.2.4 (Packaging) の packaging 文字列を `MsfPackaging` へ変換する。
+/// draft-ietf-moq-msf-02 §5.2.4 (Packaging) の packaging 文字列を `MsfPackaging` へ変換する。
 ///
 /// 許容値は `loc` / `mediatimeline` / `eventtimeline` / `moqlog` / `moqmetrics` である。
 /// この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
@@ -89,7 +112,7 @@ fn format_bool(value: bool) -> String {
 
 /// MSF カタログ。
 ///
-/// draft-ietf-moq-msf-01 §5 (Catalog) の完全カタログである。delta 更新は
+/// draft-ietf-moq-msf-02 §5 (Catalog) の完全カタログである。delta 更新は
 /// [`DeltaUpdate`] で読み込み、[`Catalog::apply_delta`] で適用する。
 #[pyclass(name = "Catalog")]
 pub(crate) struct Catalog {
@@ -141,11 +164,11 @@ impl Catalog {
     /// delta 更新をこのカタログへ適用する。
     ///
     /// `namespace` はカタログトラック自身のネームスペースであり、トラックが
-    /// namespace を省略した場合の継承先として使う (draft-ietf-moq-msf-01 §5.2.2)。
+    /// namespace を省略した場合の継承先として使う (draft-ietf-moq-msf-02 §5.2.2)。
     ///
     /// 操作は配列順に適用される。適用は原子的であり、途中で失敗した場合は
     /// `ValueError` を送出してこのカタログを呼び出し前の状態に保つ
-    /// (draft-ietf-moq-msf-01 §5.1.6)。
+    /// (draft-ietf-moq-msf-02 §5.1.6)。
     #[pyo3(signature = (text, namespace = None))]
     fn apply_delta(&mut self, text: &str, namespace: Option<&str>) -> PyResult<()> {
         let delta = match MsfCatalogDocument::decode(text.as_bytes()).map_err(codec_error)? {
@@ -156,8 +179,15 @@ impl Catalog {
                 ));
             }
         };
+        // `namespace` は MSF の namespace 文字列 (`/` 区切り) であり、
+        // MOQT の Track Namespace へ変換してから渡す
+        // (draft-ietf-moq-msf-02 §5.1.6 (Delta update) / §5.2.2 (Track namespace))。
+        let namespace = namespace
+            .map(msf::parse_catalog_namespace)
+            .transpose()
+            .map_err(codec_error)?;
         self.inner
-            .apply_delta(&delta, namespace)
+            .apply_delta(&delta, namespace.as_ref())
             .map_err(codec_error)
     }
 
@@ -172,8 +202,15 @@ impl Catalog {
         namespace: Option<&str>,
     ) -> PyResult<()> {
         let delta = delta.borrow();
+        // `namespace` は MSF の namespace 文字列 (`/` 区切り) であり、
+        // MOQT の Track Namespace へ変換してから渡す
+        // (draft-ietf-moq-msf-02 §5.1.6 (Delta update) / §5.2.2 (Track namespace))。
+        let namespace = namespace
+            .map(msf::parse_catalog_namespace)
+            .transpose()
+            .map_err(codec_error)?;
         self.inner
-            .apply_delta(&delta.inner, namespace)
+            .apply_delta(&delta.inner, namespace.as_ref())
             .map_err(codec_error)
     }
 
@@ -189,7 +226,7 @@ impl Catalog {
     }
 
     /// トラックを `publishTracks` へ追加する
-    /// (draft-ietf-moq-msf-01 §5.1.5 (Publish tracks))。
+    /// (draft-ietf-moq-msf-02 §5.1.5 (Publish tracks))。
     fn add_publish_track(&mut self, track: &Bound<'_, Track>) -> PyResult<()> {
         let track = track.borrow().to_inner(track.py())?;
         self.inner.publish_tracks.push(track);
@@ -197,7 +234,7 @@ impl Catalog {
     }
 
     /// 初期化データを `initDataList` へ追加する
-    /// (draft-ietf-moq-msf-01 §5.1.7 (Initialization Data List))。
+    /// (draft-ietf-moq-msf-02 §5.1.7 (Initialization Data List))。
     ///
     /// トラックの `init_ref` が指す id をここで登録する。登録の無い id を指す
     /// `init_ref` は encode 時に `ValueError` になる。
@@ -207,31 +244,31 @@ impl Catalog {
         Ok(())
     }
 
-    /// MSF バージョン (draft-ietf-moq-msf-01 §5.1.1)。
+    /// MSF バージョン (draft-ietf-moq-msf-02 §5.1.1)。
     #[getter]
     fn version(&self) -> &str {
         &self.inner.version
     }
 
-    /// カタログ生成時刻 (ms) (draft-ietf-moq-msf-01 §5.1.2)。
+    /// カタログ生成時刻 (ms) (draft-ietf-moq-msf-02 §5.1.2)。
     #[getter]
     fn generated_at(&self) -> Option<u64> {
         self.inner.generated_at
     }
 
-    /// カタログ生成時刻 (ms) を設定する (draft-ietf-moq-msf-01 §5.1.2)。
+    /// カタログ生成時刻 (ms) を設定する (draft-ietf-moq-msf-02 §5.1.2)。
     #[setter]
     fn set_generated_at(&mut self, value: Option<u64>) {
         self.inner.generated_at = value;
     }
 
-    /// ブロードキャストが完了しているか (draft-ietf-moq-msf-01 §5.1.3)。
+    /// ブロードキャストが完了しているか (draft-ietf-moq-msf-02 §5.1.3)。
     #[getter]
     fn is_complete(&self) -> bool {
         self.inner.is_complete
     }
 
-    /// ブロードキャストが完了しているかを設定する (draft-ietf-moq-msf-01 §5.1.3)。
+    /// ブロードキャストが完了しているかを設定する (draft-ietf-moq-msf-02 §5.1.3)。
     ///
     /// 真にすると、それ以降の delta 更新によるトラックの追加と複製が拒否される。
     #[setter]
@@ -239,7 +276,7 @@ impl Catalog {
         self.inner.is_complete = value;
     }
 
-    /// トラック一覧 (draft-ietf-moq-msf-01 §5.1.4)。
+    /// トラック一覧 (draft-ietf-moq-msf-02 §5.1.4)。
     ///
     /// draft のフィールド名を持つ辞書のリストとして返す。
     #[getter]
@@ -249,7 +286,7 @@ impl Catalog {
         json_member(py, &text, "tracks", &default)
     }
 
-    /// publish track 一覧 (draft-ietf-moq-msf-01 §5.1.5)。
+    /// publish track 一覧 (draft-ietf-moq-msf-02 §5.1.5)。
     #[getter]
     fn publish_tracks(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let text = self.to_json()?;
@@ -257,7 +294,7 @@ impl Catalog {
         json_member(py, &text, "publishTracks", &default)
     }
 
-    /// 初期化データ一覧 (draft-ietf-moq-msf-01 §5.1.7)。
+    /// 初期化データ一覧 (draft-ietf-moq-msf-02 §5.1.7)。
     #[getter]
     fn init_data_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let text = self.to_json()?;
@@ -293,7 +330,7 @@ impl Catalog {
 
 /// MSF の delta 更新。
 ///
-/// draft-ietf-moq-msf-01 §5.1.6 (Delta update) の文書である。JSON から読み込むほかに、
+/// draft-ietf-moq-msf-02 §5.1.6 (Delta update) の文書である。JSON から読み込むほかに、
 /// [`DeltaUpdate::add_tracks`] / [`DeltaUpdate::remove_tracks`] /
 /// [`DeltaUpdate::clone_tracks`] で操作列を組み立てられる。
 #[pyclass(name = "DeltaUpdate")]
@@ -311,7 +348,10 @@ impl DeltaUpdate {
     fn new() -> Self {
         Self {
             inner: MsfDeltaUpdate {
-                generated_at: None,
+                // generatedAt は draft-02 では必須である。操作を追加してから encode する
+                // 前提のため、初期値は UNIX エポックにする
+                // (draft-ietf-moq-msf-02 §5.1.6 (Delta update))。
+                generated_at: 0,
                 operations: Vec::new(),
             },
         }
@@ -346,7 +386,7 @@ impl DeltaUpdate {
     }
 
     /// トラックを追加する操作 ("add") を操作列の末尾へ追加する
-    /// (draft-ietf-moq-msf-01 §5.1.6 (Delta update))。
+    /// (draft-ietf-moq-msf-02 §5.1.6 (Delta update))。
     ///
     /// 操作は配列順に適用されるため、追加した順が適用順になる。
     fn add_tracks(&mut self, tracks: Vec<Bound<'_, Track>>) -> PyResult<()> {
@@ -361,7 +401,7 @@ impl DeltaUpdate {
     }
 
     /// トラックを削除する操作 ("remove") を操作列の末尾へ追加する
-    /// (draft-ietf-moq-msf-01 §5.1.6 (Delta update))。
+    /// (draft-ietf-moq-msf-02 §5.1.6 (Delta update))。
     fn remove_tracks(&mut self, tracks: Vec<Bound<'_, RemoveTrack>>) -> PyResult<()> {
         let mut converted = Vec::new();
         for track in &tracks {
@@ -374,7 +414,7 @@ impl DeltaUpdate {
     }
 
     /// トラックを複製する操作 ("clone") を操作列の末尾へ追加する
-    /// (draft-ietf-moq-msf-01 §5.1.6 (Delta update))。
+    /// (draft-ietf-moq-msf-02 §5.1.6 (Delta update))。
     ///
     /// 複製は親トラックの属性を継承し、再定義した属性だけを上書きする。
     fn clone_tracks(&mut self, tracks: Vec<Bound<'_, CloneTrack>>) -> PyResult<()> {
@@ -388,19 +428,21 @@ impl DeltaUpdate {
         Ok(())
     }
 
-    /// カタログ生成時刻 (ms) (draft-ietf-moq-msf-01 §5.1.6)。
+    /// カタログ生成時刻 (ms) (draft-ietf-moq-msf-02 §5.3 (Delta updates))。
+    ///
+    /// draft-02 では必須である。
     #[getter]
-    fn generated_at(&self) -> Option<u64> {
+    fn generated_at(&self) -> u64 {
         self.inner.generated_at
     }
 
-    /// カタログ生成時刻 (ms) を設定する (draft-ietf-moq-msf-01 §5.1.6)。
+    /// カタログ生成時刻 (ms) を設定する (draft-ietf-moq-msf-02 §5.3 (Delta updates))。
     #[setter]
-    fn set_generated_at(&mut self, value: Option<u64>) {
+    fn set_generated_at(&mut self, value: u64) {
         self.inner.generated_at = value;
     }
 
-    /// 操作列 (draft-ietf-moq-msf-01 §5.1.6)。
+    /// 操作列 (draft-ietf-moq-msf-02 §5.1.6)。
     ///
     /// draft のフィールド名を持つ辞書のリストとして返す。操作は配列順に適用される。
     #[getter]
@@ -422,7 +464,7 @@ impl DeltaUpdate {
     }
 }
 
-/// MSF のターゲットバッファ (draft-ietf-moq-msf-01 §5.2.9 (Buffers))。
+/// MSF のターゲットバッファ (draft-ietf-moq-msf-02 §5.2.10 (Buffers))。
 ///
 /// [`Track::buffers`] に設定する。draft は target / min / max を省略可能な
 /// フィールドとして定義する。
@@ -476,7 +518,7 @@ impl Buffers {
 }
 
 /// MSF のメディアタイムラインテンプレート
-/// (draft-ietf-moq-msf-01 §5.2.15 (Template) / §7.4.1 (Template Format))。
+/// (draft-ietf-moq-msf-02 §5.2.16 (Template) / §7.4.1 (Template Format))。
 ///
 /// [`Track::template`] に設定する。8 つの値は JSON では 6 要素の配列であり、
 /// `[start_media_time, delta_media_time, [start_group_id, start_object_id],
@@ -563,7 +605,7 @@ impl Template {
 
     /// n 番目 (0 始まり) のエントリを `(pts_ms, group_id, object_id, wallclock_ms)` として返す。
     ///
-    /// draft-ietf-moq-msf-01 §7.4.1 の計算式に従う。4 系列のいずれかが overflow する
+    /// draft-ietf-moq-msf-02 §7.4.1 の計算式に従う。4 系列のいずれかが overflow する
     /// 場合は `None` を返す。この仕様は draft 由来であり、将来の改訂で変更される
     /// 可能性がある。
     fn resolve_entry(&self, n: u64) -> Option<(u64, u64, u64, u64)> {
@@ -592,7 +634,7 @@ impl Template {
     }
 }
 
-/// MSF の認可情報エントリ (draft-ietf-moq-msf-01 §5.2.42 (Authorization Info))。
+/// MSF の認可情報エントリ (draft-ietf-moq-msf-02 §5.2.42 (Authorization Info))。
 ///
 /// [`Track::auth_info`] に設定する。`value` は scheme 固有の JSON 値そのものであり、
 /// UTF-8 の生 JSON バイト列として渡す。単独の JSON 値でない場合は encode 時に
@@ -640,7 +682,7 @@ impl AuthInfo {
     }
 }
 
-/// MSF の accessibility 記述子 (draft-ietf-moq-msf-01 §5.2.44 (Accessibility))。
+/// MSF の accessibility 記述子 (draft-ietf-moq-msf-02 §5.2.44 (Accessibility))。
 ///
 /// [`Track::accessibility`] に設定する。
 ///
@@ -686,7 +728,7 @@ impl Accessibility {
     }
 }
 
-/// MSF の初期化データエントリ (draft-ietf-moq-msf-01 §5.1.7 (Initialization Data List))。
+/// MSF の初期化データエントリ (draft-ietf-moq-msf-02 §5.1.7 (Initialization Data List))。
 ///
 /// [`Catalog::add_init_data`] で登録する。draft が定める `type` は現状 `inline`
 /// (Base64 [RFC 4648] で符号化した初期化データ) だけであり、JSON へは常に `inline`
@@ -734,7 +776,7 @@ impl InitData {
 }
 
 /// カタログから削除するトラックの参照
-/// (draft-ietf-moq-msf-01 §5.1.6 (Delta update) の remove 操作)。
+/// (draft-ietf-moq-msf-02 §5.1.6 (Delta update) の remove 操作)。
 ///
 /// draft はトラック名と任意のネームスペースだけを持つ参照を定める。ネームスペースを
 /// 省略した場合はカタログトラックのネームスペースを継承したものとして解決される
@@ -787,7 +829,7 @@ impl RemoveTrack {
     }
 }
 
-/// MSF のトラックオブジェクト (draft-ietf-moq-msf-01 §5.2 (Track Object Fields))。
+/// MSF のトラックオブジェクト (draft-ietf-moq-msf-02 §5.2 (Track Object Fields))。
 ///
 /// カタログの `tracks` / `publishTracks` と、delta 更新の add 操作が運ぶトラック 1 件で
 /// ある。JSON のフィールド名を snake_case にした属性を持つ。
@@ -802,91 +844,96 @@ impl RemoveTrack {
 /// この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
 #[pyclass(name = "Track", get_all, set_all)]
 pub(crate) struct Track {
-    /// トラック名 (draft-ietf-moq-msf-01 §5.2.3 (Track name))。必須。
+    /// トラック名 (draft-ietf-moq-msf-02 §5.2.3 (Track name))。必須。
     pub name: String,
-    /// トラックネームスペース (draft-ietf-moq-msf-01 §5.2.2 (Track namespace))。
+    /// トラックネームスペース (draft-ietf-moq-msf-02 §5.2.2 (Track namespace))。
     pub namespace: Option<String>,
-    /// パッケージングタイプ (draft-ietf-moq-msf-01 §5.2.4 (Packaging))。必須。
+    /// パッケージングタイプ (draft-ietf-moq-msf-02 §5.2.4 (Packaging))。必須。
     pub packaging: String,
-    /// イベントタイムラインタイプ (draft-ietf-moq-msf-01 §5.2.5 (Event timeline type))。
+    /// パッケージング固有メタデータ (draft-ietf-moq-msf-02 §5.2.5 (Packaging metadata))。
+    pub packaging_metadata: Option<String>,
+    /// イベントタイムラインタイプ (draft-ietf-moq-msf-02 §5.2.6 (Event timeline type))。
     pub event_type: Option<String>,
-    /// トラックロール (draft-ietf-moq-msf-01 §5.2.6 (Track role))。
+    /// トラックロール (draft-ietf-moq-msf-02 §5.2.7 (Track role))。
     pub role: Option<String>,
-    /// ライブフラグ (draft-ietf-moq-msf-01 §5.2.7 (Is Live))。必須。
+    /// ライブフラグ (draft-ietf-moq-msf-02 §5.2.8 (Is Live))。必須。
     pub is_live: bool,
-    /// ターゲットレイテンシ (ms) (draft-ietf-moq-msf-01 §5.2.8 (Target latency))。
+    /// ターゲットレイテンシ (ms) (draft-ietf-moq-msf-02 §5.2.9 (Target latency))。
     ///
     /// `buffers` と同時には指定できない。
     pub target_latency: Option<u64>,
-    /// ターゲットバッファ (draft-ietf-moq-msf-01 §5.2.9 (Buffers))。
+    /// ターゲットバッファ (draft-ietf-moq-msf-02 §5.2.10 (Buffers))。
     ///
     /// `target_latency` と同時には指定できない。
     pub buffers: Option<Py<Buffers>>,
-    /// トラックラベル (draft-ietf-moq-msf-01 §5.2.10 (Track label))。
+    /// トラックラベル (draft-ietf-moq-msf-02 §5.2.11 (Track label))。
     pub label: Option<String>,
-    /// レンダーグループ (draft-ietf-moq-msf-01 §5.2.11 (Render group))。
+    /// レンダーグループ (draft-ietf-moq-msf-02 §5.2.12 (Render group))。
     pub render_group: Option<u64>,
-    /// オルタネートグループ (draft-ietf-moq-msf-01 §5.2.12 (Alternate group))。
+    /// オルタネートグループ (draft-ietf-moq-msf-02 §5.2.13 (Alternate group))。
     pub alt_group: Option<u64>,
-    /// 初期化データ参照 (draft-ietf-moq-msf-01 §5.2.13 (Initialization reference))。
+    /// アクセス可能ウィンドウ (ms) (draft-ietf-moq-msf-02 §5.2.45 (Accessible Window Time))。
+    pub accessible_window_time: Option<u64>,
+    /// キーフレーム間隔 (ms) (draft-ietf-moq-msf-02 §5.2.46 (Keyframe Spacing))。
+    pub keyframe_spacing: Option<u64>,
+    /// 初期化データ参照 (draft-ietf-moq-msf-02 §5.2.14 (Initialization reference))。
     pub init_ref: Option<String>,
-    /// 依存トラック名 (draft-ietf-moq-msf-01 §5.2.14 (Dependencies))。
-    pub depends: Vec<String>,
-    /// メディアタイムラインテンプレート (draft-ietf-moq-msf-01 §5.2.15 (Template))。
+    /// 依存トラック名 (str) または renderGroup (int) の列
+    /// (draft-ietf-moq-msf-02 §5.2.15 (Dependencies))。
+    pub depends: Vec<Py<PyAny>>,
+    /// メディアタイムラインテンプレート (draft-ietf-moq-msf-02 §5.2.16 (Template))。
     pub template: Option<Py<Template>>,
-    /// テンポラル ID (draft-ietf-moq-msf-01 §5.2.16 (Temporal ID))。
+    /// テンポラル ID (draft-ietf-moq-msf-02 §5.2.17 (Temporal ID))。
     pub temporal_id: Option<u64>,
-    /// スペーシャル ID (draft-ietf-moq-msf-01 §5.2.17 (Spatial ID))。
+    /// スペーシャル ID (draft-ietf-moq-msf-02 §5.2.18 (Spatial ID))。
     pub spatial_id: Option<u64>,
-    /// コーデック (draft-ietf-moq-msf-01 §5.2.18 (Codec))。
+    /// コーデック (draft-ietf-moq-msf-02 §5.2.19 (Codec))。
     pub codec: Option<String>,
-    /// MIME タイプ (draft-ietf-moq-msf-01 §5.2.19 (Mimetype))。
+    /// MIME タイプ (draft-ietf-moq-msf-02 §5.2.20 (Mimetype))。
     pub mime_type: Option<String>,
-    /// フレームレート (fps) (draft-ietf-moq-msf-01 §5.2.20 (Framerate))。
+    /// フレームレート (fps) (draft-ietf-moq-msf-02 §5.2.21 (Framerate))。
     pub framerate: Option<f64>,
-    /// タイムスケール (draft-ietf-moq-msf-01 §5.2.21 (Timescale))。
+    /// タイムスケール (draft-ietf-moq-msf-02 §5.2.22 (Timescale))。
     pub timescale: Option<u64>,
-    /// 最大ビットレート (bps) (draft-ietf-moq-msf-01 §5.2.22 (Maximum Bitrate))。
+    /// 最大ビットレート (bps) (draft-ietf-moq-msf-02 §5.2.23 (Maximum Bitrate))。
     pub bitrate: Option<u64>,
-    /// 平均ビットレート (bps) (draft-ietf-moq-msf-01 §5.2.23 (Average Bitrate))。
+    /// 平均ビットレート (bps) (draft-ietf-moq-msf-02 §5.2.24 (Average Bitrate))。
     pub avg_bitrate: Option<u64>,
-    /// 最大 GOP 長 (ms) (draft-ietf-moq-msf-01 §5.2.24 (Maximum GOP Duration))。
+    /// 最大 GOP 長 (ms) (draft-ietf-moq-msf-02 §5.2.25 (Maximum GOP Duration))。
     pub max_gop_duration: Option<u64>,
-    /// 最大 Group 長 (ms) (draft-ietf-moq-msf-01 §5.2.25 (Maximum Group Duration))。
+    /// 最大 Group 長 (ms) (draft-ietf-moq-msf-02 §5.2.26 (Maximum Group Duration))。
     pub max_group_duration: Option<u64>,
-    /// エンコード幅 (px) (draft-ietf-moq-msf-01 §5.2.26 (Width))。
+    /// エンコード幅 (px) (draft-ietf-moq-msf-02 §5.2.27 (Width))。
     pub width: Option<u64>,
-    /// エンコード高さ (px) (draft-ietf-moq-msf-01 §5.2.27 (Height))。
+    /// エンコード高さ (px) (draft-ietf-moq-msf-02 §5.2.28 (Height))。
     pub height: Option<u64>,
-    /// オーディオサンプルレート (Hz) (draft-ietf-moq-msf-01 §5.2.28 (Audio sample rate))。
+    /// オーディオサンプルレート (Hz) (draft-ietf-moq-msf-02 §5.2.29 (Audio sample rate))。
     pub samplerate: Option<u64>,
-    /// チャンネル設定 (draft-ietf-moq-msf-01 §5.2.29 (Channel configuration))。
+    /// チャンネル設定 (draft-ietf-moq-msf-02 §5.2.30 (Channel configuration))。
     pub channel_config: Option<String>,
-    /// 表示幅 (px) (draft-ietf-moq-msf-01 §5.2.30 (Display width))。
+    /// 表示幅 (px) (draft-ietf-moq-msf-02 §5.2.31 (Display width))。
     pub display_width: Option<u64>,
-    /// 表示高さ (px) (draft-ietf-moq-msf-01 §5.2.31 (Display height))。
+    /// 表示高さ (px) (draft-ietf-moq-msf-02 §5.2.32 (Display height))。
     pub display_height: Option<u64>,
-    /// 言語タグ (draft-ietf-moq-msf-01 §5.2.32 (Language))。
+    /// 言語タグ (draft-ietf-moq-msf-02 §5.2.33 (Language))。
     pub lang: Option<String>,
-    /// トラック長 (ms) (draft-ietf-moq-msf-01 §5.2.35 (Track duration))。
+    /// トラック長 (ms) (draft-ietf-moq-msf-02 §5.2.36 (Track duration))。
     ///
     /// `is_live` が真の場合は指定できない。
     pub track_duration: Option<u64>,
-    /// 接続先 URI (draft-ietf-moq-msf-01 §5.2.36 (Connection URI))。
+    /// 接続先 URI (draft-ietf-moq-msf-02 §5.2.37 (Connection URI))。
     pub connection_uri: Option<String>,
-    /// 認証トークン (draft-ietf-moq-msf-01 §5.2.37 (Token))。
-    pub token: Option<String>,
-    /// 暗号化方式 (draft-ietf-moq-msf-01 §5.2.38 (Encryption Scheme))。
+    /// 暗号化方式 (draft-ietf-moq-msf-02 §5.2.38 (Encryption Scheme))。
     pub encryption_scheme: Option<String>,
-    /// 暗号スイート (draft-ietf-moq-msf-01 §5.2.39 (Cipher Suite))。
+    /// 暗号スイート (draft-ietf-moq-msf-02 §5.2.39 (Cipher Suite))。
     pub cipher_suite: Option<String>,
-    /// 鍵識別子 (draft-ietf-moq-msf-01 §5.2.40 (Key ID))。
+    /// 鍵識別子 (draft-ietf-moq-msf-02 §5.2.40 (Key ID))。
     pub key_id: Option<String>,
-    /// track 基本鍵 (draft-ietf-moq-msf-01 §5.2.41 (Track Base Key))。
+    /// track 基本鍵 (draft-ietf-moq-msf-02 §5.2.41 (Track Base Key))。
     pub track_base_key: Option<String>,
-    /// 認可情報 (draft-ietf-moq-msf-01 §5.2.42 (Authorization Info))。
+    /// 認可情報 (draft-ietf-moq-msf-02 §5.2.42 (Authorization Info))。
     pub auth_info: Option<Vec<Py<AuthInfo>>>,
-    /// accessibility 記述子 (draft-ietf-moq-msf-01 §5.2.44 (Accessibility))。
+    /// accessibility 記述子 (draft-ietf-moq-msf-02 §5.2.44 (Accessibility))。
     pub accessibility: Vec<Py<Accessibility>>,
 }
 
@@ -898,6 +945,7 @@ impl Track {
             packaging,
             is_live,
             namespace: None,
+            packaging_metadata: None,
             event_type: None,
             role: None,
             target_latency: None,
@@ -905,6 +953,8 @@ impl Track {
             label: None,
             render_group: None,
             alt_group: None,
+            accessible_window_time: None,
+            keyframe_spacing: None,
             init_ref: None,
             depends: Vec::new(),
             template: None,
@@ -927,7 +977,6 @@ impl Track {
             lang: None,
             track_duration: None,
             connection_uri: None,
-            token: None,
             encryption_scheme: None,
             cipher_suite: None,
             key_id: None,
@@ -940,13 +989,14 @@ impl Track {
     /// `MsfTrack` へ変換する。
     ///
     /// `parentName` は clone 操作の中だけで意味を持つ
-    /// (draft-ietf-moq-msf-01 §5.2.33 (Parent name)) ため、カタログのトラックと
+    /// (draft-ietf-moq-msf-02 §5.2.34 (Parent name)) ため、カタログのトラックと
     /// add 操作のトラックでは常に省略する。
     fn to_inner(&self, py: Python<'_>) -> PyResult<MsfTrack> {
         Ok(MsfTrack {
             name: self.name.clone(),
             namespace: self.namespace.clone(),
             packaging: packaging_from_string(&self.packaging)?,
+            packaging_metadata: self.packaging_metadata.clone(),
             event_type: self.event_type.clone(),
             role: self.role.clone(),
             is_live: self.is_live,
@@ -958,8 +1008,10 @@ impl Track {
             label: self.label.clone(),
             render_group: self.render_group,
             alt_group: self.alt_group,
+            accessible_window_time: self.accessible_window_time,
+            keyframe_spacing: self.keyframe_spacing,
             init_ref: self.init_ref.clone(),
-            depends: self.depends.clone(),
+            depends: dependencies_from_python(py, &self.depends)?,
             template: self
                 .template
                 .as_ref()
@@ -984,7 +1036,6 @@ impl Track {
             parent_name: None,
             track_duration: self.track_duration,
             connection_uri: self.connection_uri.clone(),
-            token: self.token.clone(),
             encryption_scheme: self.encryption_scheme.clone(),
             cipher_suite: self.cipher_suite.clone(),
             key_id: self.key_id.clone(),
@@ -1039,7 +1090,7 @@ impl Track {
 }
 
 /// MSF の delta 更新が複製するトラック定義
-/// (draft-ietf-moq-msf-01 §5.1.6 (Delta update) の clone 操作)。
+/// (draft-ietf-moq-msf-02 §5.1.6 (Delta update) の clone 操作)。
 ///
 /// 親トラックの属性を継承し、再定義した属性だけを上書きする。指定しなかった属性は
 /// 親から継承されるため、[`Track`] と違ってすべての属性が省略可能である。
@@ -1047,91 +1098,98 @@ impl Track {
 /// この仕様は draft 由来であり、将来の改訂で変更される可能性がある。
 #[pyclass(name = "CloneTrack", get_all, set_all)]
 pub(crate) struct CloneTrack {
-    /// 新しいトラック名 (draft-ietf-moq-msf-01 §5.2.3 (Track name))。必須。
+    /// 新しいトラック名 (draft-ietf-moq-msf-02 §5.2.3 (Track name))。必須。
     pub name: String,
-    /// 親トラック名 (draft-ietf-moq-msf-01 §5.2.33 (Parent name))。必須。
+    /// 親トラック名 (draft-ietf-moq-msf-02 §5.2.34 (Parent name))。必須。
     pub parent_name: String,
-    /// 親トラックネームスペース (draft-ietf-moq-msf-01 §5.2.34 (Parent namespace))。
+    /// 親トラックネームスペース (draft-ietf-moq-msf-02 §5.2.35 (Parent namespace))。
     ///
     /// 省略した場合はカタログのネームスペースを継承したものとして解決される。
     pub parent_namespace: Option<String>,
-    /// パッケージングタイプ (draft-ietf-moq-msf-01 §5.2.4 (Packaging))。省略時は親から継承する。
+    /// パッケージングタイプ (draft-ietf-moq-msf-02 §5.2.4 (Packaging))。省略時は親から継承する。
     pub packaging: Option<String>,
-    /// トラックネームスペース (draft-ietf-moq-msf-01 §5.2.2 (Track namespace))。
+    /// パッケージング固有メタデータ (draft-ietf-moq-msf-02 §5.2.5 (Packaging metadata))。
+    ///
+    /// 省略した場合は親トラックから継承する。
+    pub packaging_metadata: Option<String>,
+    /// トラックネームスペース (draft-ietf-moq-msf-02 §5.2.2 (Track namespace))。
     pub namespace: Option<String>,
-    /// イベントタイムラインタイプ (draft-ietf-moq-msf-01 §5.2.5 (Event timeline type))。
+    /// イベントタイムラインタイプ (draft-ietf-moq-msf-02 §5.2.6 (Event timeline type))。
     pub event_type: Option<String>,
-    /// トラックロール (draft-ietf-moq-msf-01 §5.2.6 (Track role))。
+    /// トラックロール (draft-ietf-moq-msf-02 §5.2.7 (Track role))。
     pub role: Option<String>,
-    /// ライブフラグ (draft-ietf-moq-msf-01 §5.2.7 (Is Live))。省略時は親から継承する。
+    /// ライブフラグ (draft-ietf-moq-msf-02 §5.2.8 (Is Live))。省略時は親から継承する。
     pub is_live: Option<bool>,
-    /// ターゲットレイテンシ (ms) (draft-ietf-moq-msf-01 §5.2.8 (Target latency))。
+    /// ターゲットレイテンシ (ms) (draft-ietf-moq-msf-02 §5.2.9 (Target latency))。
     pub target_latency: Option<u64>,
-    /// ターゲットバッファ (draft-ietf-moq-msf-01 §5.2.9 (Buffers))。
+    /// ターゲットバッファ (draft-ietf-moq-msf-02 §5.2.10 (Buffers))。
     pub buffers: Option<Py<Buffers>>,
-    /// トラックラベル (draft-ietf-moq-msf-01 §5.2.10 (Track label))。
+    /// トラックラベル (draft-ietf-moq-msf-02 §5.2.11 (Track label))。
     pub label: Option<String>,
-    /// レンダーグループ (draft-ietf-moq-msf-01 §5.2.11 (Render group))。
+    /// レンダーグループ (draft-ietf-moq-msf-02 §5.2.12 (Render group))。
     pub render_group: Option<u64>,
-    /// オルタネートグループ (draft-ietf-moq-msf-01 §5.2.12 (Alternate group))。
+    /// オルタネートグループ (draft-ietf-moq-msf-02 §5.2.13 (Alternate group))。
     pub alt_group: Option<u64>,
-    /// 初期化データ参照 (draft-ietf-moq-msf-01 §5.2.13 (Initialization reference))。
+    /// アクセス可能ウィンドウ (ms) (draft-ietf-moq-msf-02 §5.2.45 (Accessible Window Time))。
+    pub accessible_window_time: Option<u64>,
+    /// キーフレーム間隔 (ms) (draft-ietf-moq-msf-02 §5.2.46 (Keyframe Spacing))。
+    pub keyframe_spacing: Option<u64>,
+    /// 初期化データ参照 (draft-ietf-moq-msf-02 §5.2.14 (Initialization reference))。
     pub init_ref: Option<String>,
-    /// 依存トラック名 (draft-ietf-moq-msf-01 §5.2.14 (Dependencies))。省略時は親から継承する。
-    pub depends: Option<Vec<String>>,
-    /// メディアタイムラインテンプレート (draft-ietf-moq-msf-01 §5.2.15 (Template))。
+    /// 依存トラック名 (str) または renderGroup (int) の列
+    /// (draft-ietf-moq-msf-02 §5.2.15 (Dependencies))。省略時は親から継承する。
+    pub depends: Option<Vec<Py<PyAny>>>,
+    /// メディアタイムラインテンプレート (draft-ietf-moq-msf-02 §5.2.16 (Template))。
     pub template: Option<Py<Template>>,
-    /// テンポラル ID (draft-ietf-moq-msf-01 §5.2.16 (Temporal ID))。
+    /// テンポラル ID (draft-ietf-moq-msf-02 §5.2.17 (Temporal ID))。
     pub temporal_id: Option<u64>,
-    /// スペーシャル ID (draft-ietf-moq-msf-01 §5.2.17 (Spatial ID))。
+    /// スペーシャル ID (draft-ietf-moq-msf-02 §5.2.18 (Spatial ID))。
     pub spatial_id: Option<u64>,
-    /// コーデック (draft-ietf-moq-msf-01 §5.2.18 (Codec))。
+    /// コーデック (draft-ietf-moq-msf-02 §5.2.19 (Codec))。
     pub codec: Option<String>,
-    /// MIME タイプ (draft-ietf-moq-msf-01 §5.2.19 (Mimetype))。
+    /// MIME タイプ (draft-ietf-moq-msf-02 §5.2.20 (Mimetype))。
     pub mime_type: Option<String>,
-    /// フレームレート (fps) (draft-ietf-moq-msf-01 §5.2.20 (Framerate))。
+    /// フレームレート (fps) (draft-ietf-moq-msf-02 §5.2.21 (Framerate))。
     pub framerate: Option<f64>,
-    /// タイムスケール (draft-ietf-moq-msf-01 §5.2.21 (Timescale))。
+    /// タイムスケール (draft-ietf-moq-msf-02 §5.2.22 (Timescale))。
     pub timescale: Option<u64>,
-    /// 最大ビットレート (bps) (draft-ietf-moq-msf-01 §5.2.22 (Maximum Bitrate))。
+    /// 最大ビットレート (bps) (draft-ietf-moq-msf-02 §5.2.23 (Maximum Bitrate))。
     pub bitrate: Option<u64>,
-    /// 平均ビットレート (bps) (draft-ietf-moq-msf-01 §5.2.23 (Average Bitrate))。
+    /// 平均ビットレート (bps) (draft-ietf-moq-msf-02 §5.2.24 (Average Bitrate))。
     pub avg_bitrate: Option<u64>,
-    /// 最大 GOP 長 (ms) (draft-ietf-moq-msf-01 §5.2.24 (Maximum GOP Duration))。
+    /// 最大 GOP 長 (ms) (draft-ietf-moq-msf-02 §5.2.25 (Maximum GOP Duration))。
     pub max_gop_duration: Option<u64>,
-    /// 最大 Group 長 (ms) (draft-ietf-moq-msf-01 §5.2.25 (Maximum Group Duration))。
+    /// 最大 Group 長 (ms) (draft-ietf-moq-msf-02 §5.2.26 (Maximum Group Duration))。
     pub max_group_duration: Option<u64>,
-    /// エンコード幅 (px) (draft-ietf-moq-msf-01 §5.2.26 (Width))。
+    /// エンコード幅 (px) (draft-ietf-moq-msf-02 §5.2.27 (Width))。
     pub width: Option<u64>,
-    /// エンコード高さ (px) (draft-ietf-moq-msf-01 §5.2.27 (Height))。
+    /// エンコード高さ (px) (draft-ietf-moq-msf-02 §5.2.28 (Height))。
     pub height: Option<u64>,
-    /// オーディオサンプルレート (Hz) (draft-ietf-moq-msf-01 §5.2.28 (Audio sample rate))。
+    /// オーディオサンプルレート (Hz) (draft-ietf-moq-msf-02 §5.2.29 (Audio sample rate))。
     pub samplerate: Option<u64>,
-    /// チャンネル設定 (draft-ietf-moq-msf-01 §5.2.29 (Channel configuration))。
+    /// チャンネル設定 (draft-ietf-moq-msf-02 §5.2.30 (Channel configuration))。
     pub channel_config: Option<String>,
-    /// 表示幅 (px) (draft-ietf-moq-msf-01 §5.2.30 (Display width))。
+    /// 表示幅 (px) (draft-ietf-moq-msf-02 §5.2.31 (Display width))。
     pub display_width: Option<u64>,
-    /// 表示高さ (px) (draft-ietf-moq-msf-01 §5.2.31 (Display height))。
+    /// 表示高さ (px) (draft-ietf-moq-msf-02 §5.2.32 (Display height))。
     pub display_height: Option<u64>,
-    /// 言語タグ (draft-ietf-moq-msf-01 §5.2.32 (Language))。
+    /// 言語タグ (draft-ietf-moq-msf-02 §5.2.33 (Language))。
     pub lang: Option<String>,
-    /// トラック長 (ms) (draft-ietf-moq-msf-01 §5.2.35 (Track duration))。
+    /// トラック長 (ms) (draft-ietf-moq-msf-02 §5.2.36 (Track duration))。
     pub track_duration: Option<u64>,
-    /// 接続先 URI (draft-ietf-moq-msf-01 §5.2.36 (Connection URI))。
+    /// 接続先 URI (draft-ietf-moq-msf-02 §5.2.37 (Connection URI))。
     pub connection_uri: Option<String>,
-    /// 認証トークン (draft-ietf-moq-msf-01 §5.2.37 (Token))。
-    pub token: Option<String>,
-    /// 暗号化方式 (draft-ietf-moq-msf-01 §5.2.38 (Encryption Scheme))。
+    /// 暗号化方式 (draft-ietf-moq-msf-02 §5.2.38 (Encryption Scheme))。
     pub encryption_scheme: Option<String>,
-    /// 暗号スイート (draft-ietf-moq-msf-01 §5.2.39 (Cipher Suite))。
+    /// 暗号スイート (draft-ietf-moq-msf-02 §5.2.39 (Cipher Suite))。
     pub cipher_suite: Option<String>,
-    /// 鍵識別子 (draft-ietf-moq-msf-01 §5.2.40 (Key ID))。
+    /// 鍵識別子 (draft-ietf-moq-msf-02 §5.2.40 (Key ID))。
     pub key_id: Option<String>,
-    /// track 基本鍵 (draft-ietf-moq-msf-01 §5.2.41 (Track Base Key))。
+    /// track 基本鍵 (draft-ietf-moq-msf-02 §5.2.41 (Track Base Key))。
     pub track_base_key: Option<String>,
-    /// 認可情報 (draft-ietf-moq-msf-01 §5.2.42 (Authorization Info))。
+    /// 認可情報 (draft-ietf-moq-msf-02 §5.2.42 (Authorization Info))。
     pub auth_info: Option<Vec<Py<AuthInfo>>>,
-    /// accessibility 記述子 (draft-ietf-moq-msf-01 §5.2.44 (Accessibility))。
+    /// accessibility 記述子 (draft-ietf-moq-msf-02 §5.2.44 (Accessibility))。
     pub accessibility: Option<Vec<Py<Accessibility>>>,
 }
 
@@ -1143,6 +1201,7 @@ impl CloneTrack {
             parent_name,
             parent_namespace: None,
             packaging: None,
+            packaging_metadata: None,
             namespace: None,
             event_type: None,
             role: None,
@@ -1152,6 +1211,8 @@ impl CloneTrack {
             label: None,
             render_group: None,
             alt_group: None,
+            accessible_window_time: None,
+            keyframe_spacing: None,
             init_ref: None,
             depends: None,
             template: None,
@@ -1174,7 +1235,6 @@ impl CloneTrack {
             lang: None,
             track_duration: None,
             connection_uri: None,
-            token: None,
             encryption_scheme: None,
             cipher_suite: None,
             key_id: None,
@@ -1195,6 +1255,7 @@ impl CloneTrack {
             parent_name: self.parent_name.clone(),
             parent_namespace: self.parent_namespace.clone(),
             packaging,
+            packaging_metadata: self.packaging_metadata.clone(),
             namespace: self.namespace.clone(),
             event_type: self.event_type.clone(),
             role: self.role.clone(),
@@ -1207,8 +1268,13 @@ impl CloneTrack {
             label: self.label.clone(),
             render_group: self.render_group,
             alt_group: self.alt_group,
+            accessible_window_time: self.accessible_window_time,
+            keyframe_spacing: self.keyframe_spacing,
             init_ref: self.init_ref.clone(),
-            depends: self.depends.clone(),
+            depends: match &self.depends {
+                Some(values) => Some(dependencies_from_python(py, values)?),
+                None => None,
+            },
             template: self
                 .template
                 .as_ref()
@@ -1232,7 +1298,6 @@ impl CloneTrack {
             lang: self.lang.clone(),
             track_duration: self.track_duration,
             connection_uri: self.connection_uri.clone(),
-            token: self.token.clone(),
             encryption_scheme: self.encryption_scheme.clone(),
             cipher_suite: self.cipher_suite.clone(),
             key_id: self.key_id.clone(),
@@ -1286,7 +1351,7 @@ impl CloneTrack {
     }
 }
 
-/// MSF メディアタイムライン (draft-ietf-moq-msf-01 §7.1)。
+/// MSF メディアタイムライン (draft-ietf-moq-msf-02 §7.1)。
 ///
 /// フォーマットは `[[pts_ms, [group_id, object_id], wallclock_ms], ...]` である。
 #[pyclass(name = "MediaTimeline")]
@@ -1335,7 +1400,7 @@ impl MediaTimeline {
 
     /// メディアタイムラインを JSON バイト列へ書き出す。
     ///
-    /// `gzip` が真の場合は gzip で圧縮する (draft-ietf-moq-msf-01 §7.1)。
+    /// `gzip` が真の場合は gzip で圧縮する (draft-ietf-moq-msf-02 §7.1)。
     #[pyo3(signature = (gzip = false))]
     fn encode<'py>(&self, py: Python<'py>, gzip: bool) -> PyResult<Bound<'py, PyBytes>> {
         let data = msf::encode_media_timeline(&self.inner, TimelineEncodingOptions { gzip })
@@ -1368,7 +1433,7 @@ impl MediaTimeline {
     }
 }
 
-/// MSF イベントタイムライン (draft-ietf-moq-msf-01 §8.1)。
+/// MSF イベントタイムライン (draft-ietf-moq-msf-02 §8.1)。
 ///
 /// フォーマットは `[{"t"/"l"/"m": ..., "data": ...}, ...]` である。
 #[pyclass(name = "EventTimeline")]
@@ -1457,7 +1522,7 @@ impl EventTimeline {
     }
 }
 
-/// パース済みの MSF URI (draft-ietf-moq-msf-01 §11.1)。
+/// パース済みの MSF URI (draft-ietf-moq-msf-02 §11.1)。
 ///
 /// `moqt://` URI の fragment (`msf:...`) をパースした結果である。percent-decode は
 /// 行わず、値をそのまま保持する。
@@ -1470,7 +1535,7 @@ pub(crate) struct Uri {
 impl Uri {
     /// MSF URI をパースする。
     ///
-    /// draft-ietf-moq-msf-01 §11.1 の
+    /// draft-ietf-moq-msf-02 §11.1 の
     /// `msf-uri = "moqt://" authority path-abempty [ "?" query ] "#" msf-fragment`
     /// に従う。scheme は case-insensitive である。
     #[staticmethod]
@@ -1604,16 +1669,6 @@ impl Uri {
         Ok(result)
     }
 
-    /// c4m パラメータの値を出現順に返す。
-    fn c4m_tokens(&self) -> Vec<String> {
-        self.inner
-            .fragment
-            .c4m_tokens()
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    }
-
     fn __repr__(&self) -> String {
         format!(
             "Uri(authority={}, path={})",
@@ -1630,7 +1685,7 @@ impl Uri {
 }
 
 /// fragment を `&` 区切りのパラメータ列へ分解する
-/// (draft-ietf-moq-msf-01 §11.1)。
+/// (draft-ietf-moq-msf-02 §11.1)。
 ///
 /// `msf:` prefix の検証は行わず、`&` 区切りの `名前=値` を取り出すだけである。
 #[pyfunction]
@@ -1639,7 +1694,7 @@ pub(crate) fn parse_fragment_pairs(fragment: &str) -> PyResult<Vec<(String, Stri
 }
 
 /// カタログの変数参照を fragment の値で解決する
-/// (draft-ietf-moq-msf-01 §5.4 (Variable Substitution))。
+/// (draft-ietf-moq-msf-02 §5.4 (Variable Substitution))。
 #[pyfunction]
 pub(crate) fn resolve_catalog_variables<'py>(
     py: Python<'py>,
@@ -1651,7 +1706,7 @@ pub(crate) fn resolve_catalog_variables<'py>(
 }
 
 /// MSF の media timeline template から n 番目のエントリを計算する
-/// (draft-ietf-moq-msf-01 §7.4.1)。
+/// (draft-ietf-moq-msf-02 §7.4.1)。
 ///
 /// `template` は `Catalog.tracks` の `template` 配列である。値が負の整数または
 /// 配列でない場合は `ValueError` になる。計算が overflow する場合は `None` を返す。
@@ -1676,7 +1731,7 @@ pub(crate) fn resolve_timeline_template(
 ///
 /// 配列は `[start_media_time, delta_media_time, [start_group_id, start_object_id],
 /// [delta_group_id, delta_object_id], start_wallclock, delta_wallclock]` である
-/// (draft-ietf-moq-msf-01 §7.4.1)。
+/// (draft-ietf-moq-msf-02 §7.4.1)。
 fn msf_template_from_python(items: &Bound<'_, PyList>) -> PyResult<MsfTemplate> {
     if items.len() != 6 {
         return Err(PyValueError::new_err(format!(
@@ -1706,7 +1761,7 @@ fn msf_template_from_python(items: &Bound<'_, PyList>) -> PyResult<MsfTemplate> 
 type ParsedMsfFragment = (Py<PyAny>, Py<PyBytes>, Vec<(String, String)>);
 
 /// MSF fragment (`msf:` prefix 付き) を namespace と Track 名とパラメータへ分解する
-/// (draft-ietf-moq-msf-01 §11.1 (URL construction and interpretation))。
+/// (draft-ietf-moq-msf-02 §11.1 (URL construction and interpretation))。
 ///
 /// `Uri.parse` を通さない入力を扱う。返り値は
 /// `(namespace, track_name, [(名前, 値), ...])` である。

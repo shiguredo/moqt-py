@@ -10,16 +10,25 @@ from moqt.msf import Catalog, EventTimeline, MediaTimeline
 TIMELINE_FIELDS = st.integers(min_value=0, max_value=2**62 - 1)
 
 # イベントのデータは単一の JSON object でなければならない
-# (draft-ietf-moq-msf-01 §8.1 (Event Timeline data format))。
+# (draft-ietf-moq-msf-02 §8.1 (Event Timeline data format))。
 EVENT_DATA = st.dictionaries(
     st.text(min_size=1, max_size=8),
     st.integers() | st.text(max_size=8),
     max_size=4,
 )
 
-# カタログのトラック名は空でなく、名前が重複しない必要がある
-# (draft-ietf-moq-msf-01 §5.2.3 (Track name))。
-TRACK_NAMES = st.lists(st.text(min_size=1, max_size=16), unique=True, max_size=5)
+# カタログのトラック名は空でなく、NUL を含まず、名前が重複しない必要がある
+# (draft-ietf-moq-msf-02 §5.2.3 (Track name) / §11.2.1 (Producing bytes from a JSON string))。
+TRACK_NAMES = st.lists(
+    st.text(
+        # サロゲート (Cs) は JSON の単独文字列として表現できないため除外する
+        alphabet=st.characters(blacklist_categories=("Cs",), blacklist_characters="\x00"),
+        min_size=1,
+        max_size=16,
+    ),
+    unique=True,
+    max_size=5,
+)
 
 
 @given(
@@ -38,15 +47,18 @@ def prop_media_timeline_round_trips(
     任意のメディアタイムラインが encode と decode で往復することを確認する。
 
     gzip 圧縮の有無にかかわらず同じエントリ列が復元されることを検証する。
-    (draft-ietf-moq-msf-01 §7.1 (Media Timeline track payload))
+    (draft-ietf-moq-msf-02 §7.1 (Media Timeline track payload))
     """
+    # v02 は media time の非減少順を要求するため、PTS で安定ソートしてから追加する
+    # (draft-ietf-moq-msf-02 §7.1 (Media Timeline track payload))。
+    ordered = sorted(entries, key=lambda entry: entry[0])
     timeline = MediaTimeline()
-    for pts_ms, group_id, object_id, wallclock_ms in entries:
+    for pts_ms, group_id, object_id, wallclock_ms in ordered:
         timeline.add(pts_ms, group_id, object_id, wallclock_ms)
 
     decoded = MediaTimeline.decode(timeline.encode(gzip=gzip))
 
-    assert decoded.entries == entries
+    assert decoded.entries == ordered
 
 
 @given(
@@ -69,8 +81,8 @@ def prop_event_timeline_round_trips(
     """
     任意のイベントタイムラインが encode と decode で往復することを確認する。
 
-    インデックスの種別 (`l` / `t` / `m`) と `data` の JSON がそのまま復元される
-    ことを検証する。(draft-ietf-moq-msf-01 §8.1 (Event Timeline data format))
+    インデックスの種別 (`L` / `T` / `M`) と `data` の JSON がそのまま復元される
+    ことを検証する。(draft-ietf-moq-msf-02 §8.1 (Event Timeline data format))
     """
     timeline = EventTimeline()
     expected: list[dict[str, object]] = []
@@ -81,13 +93,13 @@ def prop_event_timeline_round_trips(
         encoded_data = json.dumps(data)
         if kind == "l":
             timeline.add_location(first, second, encoded_data)
-            expected.append({"l": [first, second], "data": data})
+            expected.append({"L": [first, second], "data": data})
         elif kind == "t":
             timeline.add_wallclock(first, encoded_data)
-            expected.append({"t": first, "data": data})
+            expected.append({"T": first, "data": data})
         else:
             timeline.add_media_pts(first, encoded_data)
-            expected.append({"m": first, "data": data})
+            expected.append({"M": first, "data": data})
 
     decoded = EventTimeline.decode(timeline.encode(gzip=gzip))
 
@@ -97,7 +109,7 @@ def prop_event_timeline_round_trips(
 @given(
     names=TRACK_NAMES,
     # mediatimeline / eventtimeline は他のトラックへの depends と mimeType を
-    # 必須とするため (draft-ietf-moq-msf-01 §7.2 / §8.2)、ここでは扱わない。
+    # 必須とするため (draft-ietf-moq-msf-02 §7.2 / §8.2)、ここでは扱わない。
     packaging=st.sampled_from(["loc", "moqlog", "moqmetrics"]),
     is_live=st.booleans(),
 )
@@ -111,11 +123,11 @@ def prop_catalog_track_names_round_trip(
     任意のトラック名を持つカタログが encode と decode で往復することを確認する。
 
     JSON のエスケープを挟んでもトラック名と必須フィールドが保たれることを
-    検証する。(draft-ietf-moq-msf-01 §5.1.4 (Tracks))
+    検証する。(draft-ietf-moq-msf-02 §5.1.4 (Tracks))
     """
     document = json.dumps(
         {
-            "version": "draft-01",
+            "version": "draft-02",
             "tracks": [{"name": name, "packaging": packaging, "isLive": is_live} for name in names],
         },
     ).encode()

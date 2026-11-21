@@ -257,7 +257,7 @@ async def test_relay_delivers_the_msf_catalog() -> None:
     MSF カタログを relay 経由で受け取り、同じ内容へ復元できることを確認する。
 
     カタログは映像と音声の 2 つの Track を告知する完全カタログであり、`catalog` Track の
-    object のペイロードとして届く (draft-ietf-moq-msf-01 §5 (Catalog))。
+    object のペイロードとして届く (draft-ietf-moq-msf-02 §5 (Catalog))。
     """
     catalog = msf.Catalog()
     catalog.add_track(msf.Track("video", "loc", True))

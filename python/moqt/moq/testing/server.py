@@ -795,8 +795,11 @@ class Server:
         if event.kind != "subscribe":
             # 未対応の request は REQUEST_NOT_SUPPORTED で拒否する。
             # 状態機械が request として受理するのは SUBSCRIBE / PUBLISH / FETCH /
-            # TRACK_STATUS であり、それ以外はコールバックへ届かないため、
-            # ここで扱うのは SUBSCRIBE のみである
+            # TRACK_STATUS と namespace の発見・告知機構 (PUBLISH_NAMESPACE /
+            # SUBSCRIBE_NAMESPACE / SUBSCRIBE_TRACKS) であり、この server が扱うのは
+            # SUBSCRIBE のみである。namespace の発見・告知機構はランタイムが先に
+            # REQUEST_NOT_SUPPORTED で拒否するためここへは届かないが、防御的に扱う
+            # (draft-ietf-moq-transport-23 §9.13 - §9.17)。
             await runtime.send_request_error(
                 event.request_id or 0,
                 moqt.REQUEST_NOT_SUPPORTED,

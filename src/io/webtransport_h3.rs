@@ -783,8 +783,13 @@ async fn accept_connection(
         .await
         .ok()
         .map(|address| (address.ip().to_string(), address.port()));
-    // WebTransport は HTTP/3 (ALPN h3) の上でだけ使える
-    if connection.application_protocol().await.as_deref() != Some(b"h3") {
+    // WebTransport は HTTP/3 (ALPN h3) の上でだけ使える。ALPN を取得できない場合は
+    // ドライバータスクが停止しているため、接続エラーとして扱う
+    let application_protocol = connection
+        .application_protocol()
+        .await
+        .map_err(map_quic_error)?;
+    if application_protocol.as_deref() != Some(b"h3") {
         let _ = connection.close_application(H3_NO_ERROR, b"").await;
         return Err(IoError::connection(
             "the connection did not negotiate the h3 ALPN",

@@ -60,6 +60,36 @@ pub(crate) fn namespace_refs(namespace: &[Vec<u8>]) -> Vec<&[u8]> {
     namespace.iter().map(|field| field.as_slice()).collect()
 }
 
+/// confirmation key 3 の解釈を Python の文字列から解決する。
+///
+/// `None` は IANA の CWT Confirmation Methods レジストリに従い `kid` として扱う
+/// (moqt-rs の既定と同じ)。draft-ietf-moq-c4m-01 のベクタが 3 を `jkt` として使う
+/// 場合だけ `"c4m_draft_jkt"` を明示する。
+pub(crate) fn confirmation_key3_from_python(
+    value: Option<&str>,
+) -> PyResult<shiguredo_moqt::c4m::cat::ConfirmationKey3Interpretation> {
+    use shiguredo_moqt::c4m::cat::ConfirmationKey3Interpretation;
+    match value {
+        None | Some("iana_kid") => Ok(ConfirmationKey3Interpretation::IanaKid),
+        Some("c4m_draft_jkt") => Ok(ConfirmationKey3Interpretation::C4mDraftJkt),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown confirmation key 3 interpretation: {other} \
+             (expected 'iana_kid' or 'c4m_draft_jkt')"
+        ))),
+    }
+}
+
+/// confirmation key 3 の解釈を Python の文字列へ変換する。
+pub(crate) fn confirmation_key3_to_python(
+    value: shiguredo_moqt::c4m::cat::ConfirmationKey3Interpretation,
+) -> &'static str {
+    use shiguredo_moqt::c4m::cat::ConfirmationKey3Interpretation;
+    match value {
+        ConfirmationKey3Interpretation::IanaKid => "iana_kid",
+        ConfirmationKey3Interpretation::C4mDraftJkt => "c4m_draft_jkt",
+    }
+}
+
 /// モジュール定数を登録する。
 pub(crate) fn register_constants(module: &Bound<'_, PyModule>) -> PyResult<()> {
     cbor::register_constants(module)?;

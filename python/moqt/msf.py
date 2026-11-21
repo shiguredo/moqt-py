@@ -1,10 +1,10 @@
 """MSF (MOQT Streaming Format) のカタログとタイムライン。
 
-draft-ietf-moq-msf-01 のカタログ・メディアタイムライン・イベントタイムライン・
+draft-ietf-moq-msf-02 のカタログ・メディアタイムライン・イベントタイムライン・
 URI を扱う。いずれも JSON 文書であり、Rust 側が draft の MUST に照らした検証と
 delta 更新の適用を担う。
 
-カタログは ``catalog`` という Track 名で配信する (draft-ietf-moq-msf-01 §5 (Catalog))。
+カタログは ``catalog`` という Track 名で配信する (draft-ietf-moq-msf-02 §5 (Catalog))。
 ``CATALOG_TRACK_NAME`` がその名前である。
 
 カタログと delta 更新は JSON 文字列を経由せずに組み立てられる。``Track`` /
@@ -49,10 +49,10 @@ from moqt._native import (
 )
 
 MSF_VERSION: str = _native.MSF_VERSION
-"""このライブラリが対応する MSF のバージョン (draft-ietf-moq-msf-01 §5.1.1)。"""
+"""このライブラリが対応する MSF のバージョン (draft-ietf-moq-msf-02 §5.1.1)。"""
 
 CATALOG_TRACK_NAME: bytes = _native.MSF_CATALOG_TRACK_NAME
-"""カタログを配信する Track 名 (draft-ietf-moq-msf-01 §5 (Catalog))。"""
+"""カタログを配信する Track 名 (draft-ietf-moq-msf-02 §5 (Catalog))。"""
 
 __all__ = [
     "CATALOG_TRACK_NAME",
