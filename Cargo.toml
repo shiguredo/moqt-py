@@ -25,6 +25,9 @@ tobi_quic = { git = "https://github.com/shiguredo/tobi-quic", branch = "main" }
 tobi_webtransport = { git = "https://github.com/shiguredo/tobi-quic", branch = "main" }
 # WebTransport over HTTP/2 の HTTP/2 と Capsule Protocol (Sans I/O)
 shiguredo_http2 = "2026.1.0-canary.17"
+# tobi-webtransport の ClientConfig::with_draft に渡す WebTransport draft 版
+# (tobi-quic と同じ版を使う)
+shiguredo_http3 = "2026.1.0-canary.16"
 # 非同期ランタイム (I/O 層のタスクとタイマー)
 tokio = { version = "1.54", features = [
   "rt-multi-thread",

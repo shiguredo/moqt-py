@@ -275,6 +275,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "shiguredo_http2",
+ "shiguredo_http3",
  "shiguredo_moqt",
  "shiguredo_qmux",
  "shiguredo_tokio_qmux",

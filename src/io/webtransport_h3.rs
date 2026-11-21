@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::time::Duration;
 
+use shiguredo_http3::webtransport::connect::DraftVersion;
 use tobi_quic::core::connection::ConnectionConfig;
 use tobi_quic::{
     Connect, Connection, DatagramConfig, IoConfig, Server as QuicServer, ServerTlsConfig,
@@ -146,46 +147,53 @@ pub(crate) async fn run_client(
             return;
         }
     };
+    // WebTransport over HTTP/3 の draft はサーバーの SETTINGS と一致しなければならない
+    // (draft-ietf-webtrans-http3-17 §3.1)。Shiguredo の relay は draft-17 を使うため
+    // draft-17 を優先し、draft-15 のサーバーへも接続できるよう順に試す。
+    const DRAFTS: [DraftVersion; 2] = [DraftVersion::Draft17, DraftVersion::Draft15];
     let mut failures = Vec::new();
     for address in addresses {
-        let client = match wt_client::Client::builder()
-            .with_tls_config(Arc::clone(&tls))
-            .with_io(IoConfig::new(net::local_bind_addr(address)))
-            .with_handshake_timeout(Some(HANDSHAKE_TIMEOUT))
-            .start()
-        {
-            Ok(client) => client,
-            Err(error) => {
-                failures.push((address, format!("failed to start the QUIC client: {error}")));
-                continue;
+        for draft in DRAFTS {
+            let client = match wt_client::Client::builder()
+                .with_tls_config(Arc::clone(&tls))
+                .with_io(IoConfig::new(net::local_bind_addr(address)))
+                .with_handshake_timeout(Some(HANDSHAKE_TIMEOUT))
+                .start()
+            {
+                Ok(client) => client,
+                Err(error) => {
+                    failures.push((address, format!("failed to start the QUIC client: {error}")));
+                    break;
+                }
+            };
+            let mut session_config =
+                wt_client::ClientConfig::new(config.authority.clone(), config.path.clone())
+                    .with_draft(draft)
+                    .with_limits(session_limits());
+            if !config.protocols.is_empty() {
+                session_config = session_config.with_available_protocols(config.protocols.clone());
             }
-        };
-        let mut session_config =
-            wt_client::ClientConfig::new(config.authority.clone(), config.path.clone())
-                .with_limits(session_limits());
-        if !config.protocols.is_empty() {
-            session_config = session_config.with_available_protocols(config.protocols.clone());
-        }
-        if !config.origin.is_empty() {
-            session_config = session_config.with_origin(config.origin.clone());
-        }
-        match client
-            .connect(
-                Connect::new(address, config.server_name.as_str()),
-                session_config,
-            )
-            .await
-        {
-            Ok(session) => {
-                let session_id = session.session_id();
-                let _ = ready.send(Ok(Completion::Unit));
-                let _ = events
-                    .send(EventSpec::session_ready(0, session_id, None))
-                    .await;
-                run_client_session(0, session, commands, events).await;
-                return;
+            if !config.origin.is_empty() {
+                session_config = session_config.with_origin(config.origin.clone());
             }
-            Err(error) => failures.push((address, error.to_string())),
+            match client
+                .connect(
+                    Connect::new(address, config.server_name.as_str()),
+                    session_config,
+                )
+                .await
+            {
+                Ok(session) => {
+                    let session_id = session.session_id();
+                    let _ = ready.send(Ok(Completion::Unit));
+                    let _ = events
+                        .send(EventSpec::session_ready(0, session_id, None))
+                        .await;
+                    run_client_session(0, session, commands, events).await;
+                    return;
+                }
+                Err(error) => failures.push((address, format!("{draft:?}: {error}"))),
+            }
         }
     }
     fail_client(
