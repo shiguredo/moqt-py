@@ -4315,7 +4315,10 @@ class Session:
         """
     def start(self, /) -> bytes:
         """
-        自側制御ストリームの stream type prefix と SETUP を返す。
+        自側制御ストリームの SETUP メッセージを返す。
+        
+        先頭 varint は SETUP メッセージの Type 0x2F00 であり、単方向ストリームの
+        種別を兼ねる。ストリーム種別用の varint を別に前置しない。
         """
     def state(self, /) -> str:
         """

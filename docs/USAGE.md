@@ -16,11 +16,11 @@ from moqt.moqt import Session, decode_message, decode_varint
 # 自側の制御ストリームの先頭バイト列を作る
 session = Session.client("my-implementation")
 data = session.start()
-# 先頭は制御ストリームの stream type (0x2F00) の varint 表現
+# 先頭の varint は SETUP メッセージの Type (0x2F00) であり、ストリーム種別を兼ねる
 print(decode_varint(data))
 
 # 制御メッセージを 1 件デコードする
-message, consumed = decode_message(data[2:])
+message, consumed = decode_message(data)
 print(message.kind, hex(message.type_id), message.body)
 ```
 

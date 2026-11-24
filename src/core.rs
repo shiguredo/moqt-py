@@ -56,7 +56,6 @@ use shiguredo_moqt::stream::datagram::ObjectDatagram;
 use shiguredo_moqt::stream::decoder::{
     DecodedFetchEntry, DecodedSubgroupObject, FetchStreamDecoder, SubgroupStreamDecoder,
 };
-use shiguredo_moqt::stream::encode_control_stream_setup;
 use shiguredo_moqt::stream::fetch::FetchHeader;
 use shiguredo_moqt::stream::subgroup::{SubgroupHeader, SubgroupIdMode};
 use shiguredo_moqt::track_properties::{TrackProperties, TrackProperty, TrackPropertyValue};
@@ -1668,9 +1667,8 @@ struct DataHeaderInfo {
 #[pyclass(name = "Session")]
 pub(crate) struct CoreSession {
     session: Session,
-    /// 制御ストリームの受信バッファ (stream type のデコード用)。
+    /// 制御ストリームの受信バッファ (先頭の SETUP からデコードする)。
     control_decoder: MessageDecoder,
-    peer_control_stream_type_received: bool,
     /// request stream ごとの受信バッファ。
     request_buffers: StreamBuffers,
     /// request stream の役割と、自側が開始した request の Request ID。
@@ -1792,7 +1790,6 @@ impl CoreSession {
         Ok(Self {
             session,
             control_decoder: MessageDecoder::new(DEFAULT_MAX_CONTROL_MESSAGE_SIZE),
-            peer_control_stream_type_received: false,
             request_buffers: StreamBuffers::default(),
             request_streams: HashMap::new(),
             data_buffers: StreamBuffers::default(),
@@ -2790,7 +2787,11 @@ impl CoreSession {
         }
     }
 
-    /// 自側制御ストリームの stream type prefix と SETUP を返す。
+    /// 自側制御ストリームの SETUP メッセージを返す。
+    ///
+    /// 先頭 varint は SETUP メッセージの Type 0x2F00 であり、単方向ストリームの
+    /// 種別を兼ねる (draft-ietf-moq-transport-23 §6.4.1 / §9.1)。ストリーム種別用の
+    /// varint を別に前置しない。
     fn start(&mut self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
         if self.started {
             return Err(PyRuntimeError::new_err("session has already started"));
@@ -2807,7 +2808,8 @@ impl CoreSession {
             }
             None => return Err(PyRuntimeError::new_err("initial SETUP event is missing")),
         };
-        let data = encode_control_stream_setup(&message, DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
+        let data = message
+            .encode(DEFAULT_MAX_CONTROL_MESSAGE_SIZE)
             .map_err(runtime_error)?;
         self.started = true;
         Ok(PyBytes::new(py, &data).unbind())
@@ -2820,20 +2822,9 @@ impl CoreSession {
         }
 
         self.control_decoder.push(data);
-        if !self.peer_control_stream_type_received {
-            let Some(stream_type) = self
-                .control_decoder
-                .try_decode_varint()
-                .map_err(runtime_error)?
-            else {
-                return Ok(Vec::new());
-            };
-            self.session
-                .recv_control_stream_type(stream_type)
-                .map_err(runtime_error)?;
-            self.peer_control_stream_type_received = true;
-        }
-
+        // 制御ストリームの先頭 varint は SETUP メッセージの Type であり、単方向
+        // ストリームの種別を兼ねる (draft-ietf-moq-transport-23 §6.4.1 / §9.1)。
+        // 先頭から SETUP を含む制御メッセージ列としてデコードする。
         while let Some(message) = self
             .control_decoder
             .try_decode_message()

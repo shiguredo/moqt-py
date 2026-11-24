@@ -324,30 +324,28 @@ def test_requester_fin_does_not_terminate_the_request_at_the_responder() -> None
 # ─── SETUP と制御ストリーム ─────────────────────────────────
 
 
-def test_start_emits_control_stream_type_and_implementation_option() -> None:
+def test_start_emits_control_stream_setup_once() -> None:
     """
     自側制御ストリームが仕様どおりの形式で始まることを確認する。
 
-    制御ストリームは stream type (vi64) で始まり、SETUP は
-    Type (vi64) + Length (vi64) + Message Body が続く。
+    control stream の先頭 varint は SETUP メッセージの Type 0x2F00 であり、
+    単方向ストリームの種別を兼ねる (draft-ietf-moq-transport-23 §6.4.1 / §9.1)。
     実装名は SETUP の MOQT_IMPLEMENTATION option で通知する。
     """
     implementation = "moqt-py-test"
     session = Session.client(implementation)
     data = session.start()
 
-    # draft-ietf-moq-transport-23 §6.4.1 (Unidirectional Streams) Table 2 の
-    # SETUP 制御ストリームは 0x2F00 で、vi64 では 2 バイトになる。
+    # SETUP の Type 0x2F00 は vi64 では 2 バイトになる。ストリーム種別用の
+    # 2 個目の 0x2F00 を前置してはならない。
     assert data[:2] == b"\xaf\x00"
-
-    # draft-ietf-moq-transport-23 §9.1 (SETUP) の SETUP メッセージは
-    # stream type と同じ 0x2F00 を使う。
-    assert data[2:4] == b"\xaf\x00"
+    length, length_size = decode_varint(data[2:])
+    assert len(data) == 2 + length_size + length
 
     # draft-ietf-moq-transport-23 §9.1.5 (MOQT IMPLEMENTATION) の option type は
     # 0x07 で、値は長さ付きバイト列として実装名を運ぶ。
     value = implementation.encode()
-    assert b"\x07" + encode_varint(len(value)) + value in data[4:]
+    assert b"\x07" + encode_varint(len(value)) + value in data[2:]
 
 
 def test_receive_control_waits_for_the_complete_setup_message() -> None:
@@ -362,7 +360,8 @@ def test_receive_control_waits_for_the_complete_setup_message() -> None:
     client.start()
     server_setup = server.start()
 
-    # 先頭の 1 バイトは stream type の vi64 の途中であり、まだ何も処理できない。
+    # 先頭の 1 バイトは SETUP の Type (0x2F00) の vi64 の途中であり、
+    # まだ何も処理できない。
     assert client.receive_control(server_setup[:1]) == []
     assert not client.established
 
@@ -370,20 +369,6 @@ def test_receive_control_waits_for_the_complete_setup_message() -> None:
     events = client.receive_control(server_setup[1:])
     assert [event.kind for event in events] == ["established"]
     assert client.established
-
-
-def test_receive_control_rejects_an_unexpected_stream_type() -> None:
-    """
-    peer 制御ストリームの stream type が SETUP でない場合に拒否することを確認する。
-
-    制御ストリームの stream type は SETUP (0x2F00) でなければならない。
-    """
-    client = Session.client("moqt-py-test-client")
-    client.start()
-
-    # stream type 0x00 は制御ストリームでもデータストリームでもない。
-    with pytest.raises(RuntimeError, match="unexpected control stream type"):
-        client.receive_control(b"\x00\x00")
 
 
 def test_client_rejects_an_implementation_option_over_the_wire_limit() -> None:
@@ -658,20 +643,20 @@ def test_decode_message_reads_a_setup_from_the_wire() -> None:
     制御ストリームの生バイト列から SETUP をデコードできることを確認する。
 
     `moqt.moqt.decode_message` はセッションを介さずにメッセージ 1 件を取り出す。
-    制御ストリームの先頭 2 バイトは stream type であるため読み飛ばす。
+    制御ストリームの先頭 varint は SETUP メッセージの Type であり、
+    ストリーム種別を兼ねる。
     """
     server = Session.server("moqt-py-test-server")
     data = server.start()
 
-    # 先頭 2 バイトは制御ストリームの stream type (0x2F00) である。
-    message, consumed = decode_message(data[2:])
+    message, consumed = decode_message(data)
 
     assert message.kind == "setup"
     assert message.type_id == 0x2F00
     # SETUP は request ではないため Request ID を持たない。
     assert message.request_id is None
-    assert message.raw == data[2 : 2 + consumed]
-    assert b"moqt-py-test-server" in data[2:]
+    assert message.raw == data[:consumed]
+    assert b"moqt-py-test-server" in data
 
 
 def test_decode_message_consumes_exactly_one_message() -> None:
@@ -689,7 +674,7 @@ def test_decode_message_consumes_exactly_one_message() -> None:
     client.receive_control(server_setup)
 
     # SETUP 交換が済むと GOAWAY を送れるようになる。
-    first = server_setup[2:]
+    first = server_setup
     goaway = _event_data(server.send_goaway(b"", 5000)[0])
 
     message, consumed = decode_message(first + goaway)
@@ -709,7 +694,7 @@ def test_decode_message_rejects_a_truncated_message() -> None:
 
     エラーメッセージには期待バイト数と実際のバイト数が入る。
     """
-    data = Session.server("moqt-py-test-server").start()[2:]
+    data = Session.server("moqt-py-test-server").start()
     truncated = data[:-1]
 
     with pytest.raises(
@@ -735,7 +720,7 @@ def test_message_equality_is_based_on_the_wire_bytes() -> None:
     `Message` は frozen な値オブジェクトであり、テストで受信結果を
     期待値と比較するために使う。
     """
-    data = Session.server("moqt-py-test-server").start()[2:]
+    data = Session.server("moqt-py-test-server").start()
 
     first, _ = decode_message(data)
     second, _ = decode_message(data)
